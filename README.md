@@ -2,7 +2,7 @@
 
 **The Verified Language Modernization Engine**
 
-> Modernize legacy Java systems to Java 17/21/25 — safely, verifiably, and provably — with the strongest trust guarantees in the market.
+> Modernize legacy Java systems to Java 17/21/25, safely, verifiably, and provably, with the strongest trust guarantees in the market.
 
 ---
 
@@ -10,10 +10,10 @@
 
 ShadowStack is a production-grade enterprise platform for **verified code modernization**. It transforms legacy codebases into modern, maintainable systems through a pipeline that is:
 
-- **Verifiable** — Every transformation is proven correct through multi-layer verification
-- **Auditable** — Every action is recorded in an immutable audit log
-- **Human-Controlled** — No automatic final conversion. Every change requires explicit developer approval
-- **Intelligent** — A migration corpus learns from every accepted and rejected transformation
+- **Verifiable**: Every transformation is proven correct through multi-layer verification
+- **Auditable**: Every action is recorded in an immutable audit log
+- **Human-Controlled**: No automatic final conversion. Every change requires explicit developer approval
+- **Intelligent**: A migration corpus learns from every accepted and rejected transformation
 
 ShadowStack does not compete on autocomplete. It competes on **trust, proof, controlled transformation, and recorded migration intelligence**.
 
@@ -87,7 +87,7 @@ Phase 0              Phase 1              Phase 2              Phase 3
 
 ## First Refactor Rule: Anonymous Class → Lambda
 
-The flagship rule converts anonymous class instances to Java 8+ lambda expressions — **only when provably safe**:
+The flagship rule converts anonymous class instances to Java 8+ lambda expressions, **only when provably safe**:
 
 **Safety Invariants (ALL must pass):**
 - ✅ Target is a functional interface (single abstract method)
@@ -124,15 +124,15 @@ Changes above the configured risk threshold are **automatically blocked** from a
 
 **No automatic final conversion.** Every transformation must be:
 
-1. **Proposed** — Generated as an atomic, independently verifiable patch
-2. **Verified** — Passed through all 7 verification layers
-3. **Reviewed** — Presented to a developer with:
+1. **Proposed**: Generated as an atomic, independently verifiable patch
+2. **Verified**: Passed through all 7 verification layers
+3. **Reviewed**: Presented to a developer with:
    - Unified diff
    - Human-readable rationale
    - Safety invariant checklist
    - Risk score with visual gauge
    - Full verification evidence
-4. **Explicitly accepted or rejected** — With rejection reason recorded
+4. **Explicitly accepted or rejected**: With rejection reason recorded
 
 Both accepted and rejected transformations feed the **Migration Intelligence Corpus**.
 
@@ -300,5 +300,5 @@ Proprietary. All rights reserved.
 ---
 
 <p align="center">
-<strong>ShadowStack</strong> — More serious. More verifiable. More enterprise-ready.
+<strong>ShadowStack</strong>. More serious. More verifiable. More enterprise-ready.
 </p>
