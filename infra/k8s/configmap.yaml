@@ -1,0 +1,35 @@
+# ═══════════════════════════════════════════════════════════════════
+#  ShadowStack ConfigMap — Shared non-sensitive configuration
+# ═══════════════════════════════════════════════════════════════════
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shadowstack-config
+  namespace: shadowstack
+  labels:
+    app.kubernetes.io/name: config
+    app.kubernetes.io/part-of: shadowstack
+data:
+  # ─── Database ──────────────────────────────────────────────────
+  DB_NAME: "shadowstack"
+  DB_PORT: "5432"
+
+  # ─── Worker ────────────────────────────────────────────────────
+  WORKER_POOL_CORE: "4"
+  WORKER_POOL_MAX: "8"
+  WORKER_QUEUE_CAPACITY: "50"
+  WORKER_POLL_INTERVAL_MS: "5000"
+
+  # ─── Verification ─────────────────────────────────────────────
+  VERIFICATION_RISK_THRESHOLD: "0.7"
+  VERIFICATION_FAIL_FAST: "false"
+
+  # ─── Embedder ──────────────────────────────────────────────────
+  EMBEDDER_MODEL: "all-MiniLM-L6-v2"
+  EMBEDDER_BATCH_SIZE: "32"
+
+  # ─── Logging ───────────────────────────────────────────────────
+  LOG_LEVEL: "INFO"
+
+  # ─── Web ───────────────────────────────────────────────────────
+  NEXT_PUBLIC_API_URL: "http://api:8080"

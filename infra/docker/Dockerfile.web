@@ -1,0 +1,65 @@
+# ═══════════════════════════════════════════════════════════════════
+#  ShadowStack Web UI — Multi-stage Docker Build
+#  Node 20 · Next.js · Standalone output · Production-optimized
+# ═══════════════════════════════════════════════════════════════════
+
+# ─── Stage 1: Dependencies ───────────────────────────────────────
+FROM node:20-alpine AS deps
+
+RUN apk add --no-cache libc6-compat
+
+WORKDIR /app
+
+COPY apps/web/package.json apps/web/package-lock.json* ./
+
+RUN if [ -f package-lock.json ]; then \
+      npm ci --ignore-scripts; \
+    else \
+      npm install --ignore-scripts; \
+    fi
+
+# ─── Stage 2: Build ─────────────────────────────────────────────
+FROM node:20-alpine AS build
+
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY apps/web/ .
+
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+
+RUN npm run build
+
+# ─── Stage 3: Runtime ───────────────────────────────────────────
+FROM node:20-alpine AS runtime
+
+LABEL maintainer="ShadowStack <engineering@shadowstack.dev>"
+LABEL description="ShadowStack Web UI"
+LABEL org.opencontainers.image.source="https://github.com/shadowstack/shadowstack"
+
+RUN addgroup --system --gid 1001 shadowstack && \
+    adduser --system --uid 1001 --ingroup shadowstack shadowstack
+
+WORKDIR /app
+
+COPY --from=build --chown=shadowstack:shadowstack /app/public ./public
+
+RUN mkdir -p .next && chown shadowstack:shadowstack .next
+
+COPY --from=build --chown=shadowstack:shadowstack /app/.next/standalone ./
+COPY --from=build --chown=shadowstack:shadowstack /app/.next/static ./.next/static
+
+USER shadowstack
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME="0.0.0.0"
+ENV PORT=3000
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
+
+CMD ["node", "server.js"]

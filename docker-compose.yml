@@ -1,0 +1,196 @@
+# ═══════════════════════════════════════════════════════════════════
+#  ShadowStack — Docker Compose (Development / CI)
+#  Verified Language Modernization Engine
+# ═══════════════════════════════════════════════════════════════════
+
+services:
+
+  # ─── PostgreSQL with pgvector ────────────────────────────────────
+  postgres:
+    image: ankane/pgvector:v0.7.4-pg16
+    container_name: shadowstack-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-shadowstack}
+      POSTGRES_USER: ${DB_USER:-shadowstack}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-shadowstack_dev}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-shadowstack} -d ${DB_NAME:-shadowstack}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - shadowstack
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ─── Spring Boot API ────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.api
+    container_name: shadowstack-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-shadowstack}
+      DB_USER: ${DB_USER:-shadowstack}
+      DB_PASSWORD: ${DB_PASSWORD:-shadowstack_dev}
+      SPRING_PROFILES_ACTIVE: docker
+      JAVA_OPTS: >-
+        -XX:+UseG1GC
+        -XX:MaxRAMPercentage=75.0
+        -XX:+UseContainerSupport
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${API_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/actuator/health/liveness"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - shadowstack
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+
+  # ─── Worker Service ─────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.worker
+    container_name: shadowstack-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-shadowstack}
+      DB_USER: ${DB_USER:-shadowstack}
+      DB_PASSWORD: ${DB_PASSWORD:-shadowstack_dev}
+      SPRING_PROFILES_ACTIVE: docker,worker
+      WORKER_POOL_CORE: ${WORKER_POOL_CORE:-4}
+      WORKER_POOL_MAX: ${WORKER_POOL_MAX:-8}
+      WORKER_QUEUE_CAPACITY: ${WORKER_QUEUE_CAPACITY:-50}
+      WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-5000}
+      VERIFICATION_RISK_THRESHOLD: ${VERIFICATION_RISK_THRESHOLD:-0.7}
+      JAVA_OPTS: >-
+        -XX:+UseG1GC
+        -XX:MaxRAMPercentage=75.0
+        -XX:+UseContainerSupport
+        -XX:+HeapDumpOnOutOfMemoryError
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${WORKER_PORT:-8082}:8082"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8082/actuator/health/liveness"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - shadowstack
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "4.0"
+        reservations:
+          memory: 1G
+
+  # ─── Next.js Web UI ─────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.web
+    container_name: shadowstack-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:8080
+      NODE_ENV: production
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - shadowstack
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+        reservations:
+          memory: 128M
+
+  # ─── Python Embedder Service ────────────────────────────────────
+  embedder:
+    build:
+      context: packages/embedder
+      dockerfile: Dockerfile
+    container_name: shadowstack-embedder
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-shadowstack}
+      DB_USER: ${DB_USER:-shadowstack}
+      DB_PASSWORD: ${DB_PASSWORD:-shadowstack_dev}
+      MODEL_NAME: ${EMBEDDER_MODEL:-all-MiniLM-L6-v2}
+      BATCH_SIZE: ${EMBEDDER_BATCH_SIZE:-32}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${EMBEDDER_PORT:-8081}:8081"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - shadowstack
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+
+volumes:
+  pgdata:
+    driver: local
+
+networks:
+  shadowstack:
+    driver: bridge
+    name: shadowstack-network

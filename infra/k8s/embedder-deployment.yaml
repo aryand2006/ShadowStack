@@ -1,0 +1,135 @@
+# ═══════════════════════════════════════════════════════════════════
+#  ShadowStack Embedder — Deployment + Service
+# ═══════════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: embedder
+  namespace: shadowstack
+  labels:
+    app.kubernetes.io/name: embedder
+    app.kubernetes.io/component: ml
+    app.kubernetes.io/part-of: shadowstack
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: embedder
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: embedder
+        app.kubernetes.io/component: ml
+        app.kubernetes.io/part-of: shadowstack
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: embedder
+          image: shadowstack/embedder:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081
+              name: http
+              protocol: TCP
+          env:
+            - name: DB_HOST
+              value: postgres
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: shadowstack-config
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: shadowstack-secrets
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: shadowstack-secrets
+                  key: DB_PASSWORD
+            - name: MODEL_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: shadowstack-config
+                  key: EMBEDDER_MODEL
+            - name: BATCH_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: shadowstack-config
+                  key: EMBEDDER_BATCH_SIZE
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: shadowstack-config
+                  key: LOG_LEVEL
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 12
+          volumeMounts:
+            - name: model-cache
+              mountPath: /app/.cache
+      volumes:
+        - name: model-cache
+          emptyDir:
+            sizeLimit: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: embedder
+  namespace: shadowstack
+  labels:
+    app.kubernetes.io/name: embedder
+    app.kubernetes.io/component: ml
+    app.kubernetes.io/part-of: shadowstack
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8081
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: embedder

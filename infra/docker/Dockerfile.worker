@@ -1,0 +1,84 @@
+# ═══════════════════════════════════════════════════════════════════
+#  ShadowStack Worker — Multi-stage Docker Build
+#  Eclipse Temurin JDK 21 · Spring Boot 3.3 · Production-optimized
+# ═══════════════════════════════════════════════════════════════════
+
+# ─── Stage 1: Dependency Resolution ──────────────────────────────
+FROM eclipse-temurin:21-jdk-jammy AS deps
+
+WORKDIR /build
+
+COPY packages/core-analysis/pom.xml       packages/core-analysis/pom.xml
+COPY packages/refactor-engine/pom.xml     packages/refactor-engine/pom.xml
+COPY packages/verify-engine/pom.xml       packages/verify-engine/pom.xml
+COPY packages/migration-corpus/pom.xml    packages/migration-corpus/pom.xml
+COPY packages/language-adapters/pom.xml   packages/language-adapters/pom.xml
+COPY apps/worker/pom.xml                  apps/worker/pom.xml
+
+RUN --mount=type=cache,target=/root/.m2 \
+    apt-get update && apt-get install -y --no-install-recommends maven && \
+    cd /build/packages/language-adapters && mvn dependency:go-offline -B -q || true && \
+    cd /build/packages/core-analysis && mvn dependency:go-offline -B -q || true && \
+    cd /build/packages/refactor-engine && mvn dependency:go-offline -B -q || true && \
+    cd /build/packages/verify-engine && mvn dependency:go-offline -B -q || true && \
+    cd /build/packages/migration-corpus && mvn dependency:go-offline -B -q || true && \
+    cd /build/apps/worker && mvn dependency:go-offline -B -q || true
+
+# ─── Stage 2: Build ─────────────────────────────────────────────
+FROM eclipse-temurin:21-jdk-jammy AS build
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends maven && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=deps /root/.m2 /root/.m2
+
+COPY packages/ packages/
+COPY apps/worker/ apps/worker/
+
+RUN cd packages/language-adapters && mvn install -DskipTests -B -q && \
+    cd /build/packages/core-analysis && mvn install -DskipTests -B -q && \
+    cd /build/packages/refactor-engine && mvn install -DskipTests -B -q && \
+    cd /build/packages/verify-engine && mvn install -DskipTests -B -q && \
+    cd /build/packages/migration-corpus && mvn install -DskipTests -B -q && \
+    cd /build/apps/worker && mvn package -DskipTests -B -q
+
+RUN mkdir -p /build/extracted && \
+    java -Djarmode=layertools -jar /build/apps/worker/target/*.jar extract --destination /build/extracted
+
+# ─── Stage 3: Runtime ───────────────────────────────────────────
+FROM eclipse-temurin:21-jre-jammy AS runtime
+
+LABEL maintainer="ShadowStack <engineering@shadowstack.dev>"
+LABEL description="ShadowStack Worker Service"
+LABEL org.opencontainers.image.source="https://github.com/shadowstack/shadowstack"
+
+RUN groupadd --system --gid 1001 shadowstack && \
+    useradd --system --uid 1001 --gid shadowstack --shell /bin/false shadowstack && \
+    mkdir -p /app /app/logs /app/tmp /app/workdir && \
+    chown -R shadowstack:shadowstack /app
+
+WORKDIR /app
+
+COPY --from=build --chown=shadowstack:shadowstack /build/extracted/dependencies/ ./
+COPY --from=build --chown=shadowstack:shadowstack /build/extracted/spring-boot-loader/ ./
+COPY --from=build --chown=shadowstack:shadowstack /build/extracted/snapshot-dependencies/ ./
+COPY --from=build --chown=shadowstack:shadowstack /build/extracted/application/ ./
+
+USER shadowstack
+
+ENV JAVA_OPTS="-XX:+UseG1GC \
+  -XX:MaxRAMPercentage=75.0 \
+  -XX:+UseContainerSupport \
+  -XX:+HeapDumpOnOutOfMemoryError \
+  -XX:HeapDumpPath=/app/logs/heapdump.hprof \
+  -Djava.security.egd=file:/dev/./urandom \
+  -Djava.io.tmpdir=/app/tmp"
+
+EXPOSE 8082
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -sf http://localhost:8082/actuator/health/liveness || exit 1
+
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS org.springframework.boot.loader.launch.JarLauncher"]

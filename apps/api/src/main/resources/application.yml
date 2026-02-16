@@ -1,0 +1,98 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: shadowstack-api
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:shadowstack}
+    username: ${DB_USERNAME:shadowstack}
+    password: ${DB_PASSWORD:shadowstack}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 300000
+      connection-timeout: 20000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+
+  security:
+    user:
+      name: ${SECURITY_USER:admin}
+      password: ${SECURITY_PASSWORD:shadowstack}
+      roles: ADMIN
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when_authorized
+      probes:
+        enabled: true
+  info:
+    env:
+      enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.shadowstack: DEBUG
+    org.springframework.security: INFO
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+    org.flywaydb: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+shadowstack:
+  risk:
+    low-threshold: 0.3
+    medium-threshold: 0.6
+    high-threshold: 0.85
+    auto-apply-enabled: false
+    max-auto-apply-risk: 0.2
+  retention:
+    audit-log-days: 365
+    patch-history-days: 180
+    verification-evidence-days: 90
+  security:
+    jwt-secret: ${JWT_SECRET:changeme-in-production-this-is-a-placeholder-secret-key-minimum-256-bits}
+    jwt-expiration-ms: 86400000
+    cors-allowed-origins: ${CORS_ORIGINS:http://localhost:3000,http://localhost:5173}
+  pipeline:
+    max-concurrent-analyses: 4
+    verification-timeout-seconds: 300
+    default-language: java
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha

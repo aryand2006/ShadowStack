@@ -1,0 +1,447 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         ShadowStack Parent POM
+         Enterprise Verified Language Modernization Engine
+
+         This is the reactor root for the ShadowStack multi-module project.
+         It defines shared dependency versions, plugin configurations, and
+         build settings inherited by all child modules.
+         ═══════════════════════════════════════════════════════════════════ -->
+
+    <groupId>com.shadowstack</groupId>
+    <artifactId>shadowstack-parent</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <name>ShadowStack Parent</name>
+    <description>
+        Parent POM for ShadowStack — an enterprise verified language modernization engine.
+        Manages dependency versions, plugin configurations, and reactor module ordering
+        for the full ShadowStack platform.
+    </description>
+
+    <url>https://github.com/shadowstack/shadowstack</url>
+
+    <licenses>
+        <license>
+            <name>Proprietary</name>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         Reactor Modules
+         ═══════════════════════════════════════════════════════════════════
+
+         Build order is determined by inter-module dependencies:
+           1. language-adapters    (no internal deps)
+           2. core-analysis        (depends on language-adapters)
+           3. refactor-engine      (depends on language-adapters)
+           4. verify-engine        (depends on language-adapters, refactor-engine)
+           5. migration-corpus     (standalone Spring Boot module)
+           6. apps/api             (depends on all packages)
+           7. apps/worker          (depends on all packages)
+         ═══════════════════════════════════════════════════════════════════ -->
+
+    <modules>
+        <module>packages/language-adapters</module>
+        <module>packages/core-analysis</module>
+        <module>packages/refactor-engine</module>
+        <module>packages/verify-engine</module>
+        <module>packages/migration-corpus</module>
+        <module>apps/api</module>
+        <module>apps/worker</module>
+    </modules>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         Properties
+         ═══════════════════════════════════════════════════════════════════ -->
+
+    <properties>
+        <!-- Java version -->
+        <java.version>21</java.version>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <!-- ShadowStack version (for inter-module references) -->
+        <shadowstack.version>1.0.0-SNAPSHOT</shadowstack.version>
+
+        <!-- Spring Boot & Framework -->
+        <spring-boot.version>3.3.0</spring-boot.version>
+
+        <!-- Eclipse JDT Core — full Java AST parsing with type resolution -->
+        <eclipse.jdt.core.version>3.36.0</eclipse.jdt.core.version>
+
+        <!-- ASM — bytecode analysis and transformation -->
+        <asm.version>9.7</asm.version>
+
+        <!-- Jackson — JSON serialization -->
+        <jackson.version>2.17.0</jackson.version>
+
+        <!-- Logging -->
+        <slf4j.version>2.0.12</slf4j.version>
+        <logback.version>1.5.3</logback.version>
+
+        <!-- Google Guava — immutable collections, hashing, utilities -->
+        <guava.version>33.1.0-jre</guava.version>
+
+        <!-- Database -->
+        <postgresql.version>42.7.3</postgresql.version>
+        <pgvector.version>0.1.6</pgvector.version>
+        <flyway.version>10.8.1</flyway.version>
+
+        <!-- API Documentation -->
+        <springdoc.version>2.3.0</springdoc.version>
+
+        <!-- JWT -->
+        <jjwt.version>0.12.5</jjwt.version>
+
+        <!-- Testing -->
+        <junit.version>5.10.2</junit.version>
+        <junit.platform.version>1.10.2</junit.platform.version>
+
+        <!-- Plugin versions -->
+        <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
+        <maven-surefire-plugin.version>3.2.5</maven-surefire-plugin.version>
+        <maven-javadoc-plugin.version>3.6.3</maven-javadoc-plugin.version>
+        <maven-source-plugin.version>3.3.0</maven-source-plugin.version>
+        <maven-enforcer-plugin.version>3.4.1</maven-enforcer-plugin.version>
+        <spring-boot-maven-plugin.version>${spring-boot.version}</spring-boot-maven-plugin.version>
+    </properties>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         Dependency Management
+         ═══════════════════════════════════════════════════════════════════
+
+         Centralizes version declarations so child modules can declare
+         dependencies without specifying versions. Modules opt-in to
+         dependencies; nothing is forced.
+         ═══════════════════════════════════════════════════════════════════ -->
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Spring Boot BOM — manages all Spring dependency versions -->
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- ── ShadowStack Internal Modules ────────────────────────── -->
+            <dependency>
+                <groupId>com.shadowstack</groupId>
+                <artifactId>language-adapters</artifactId>
+                <version>${shadowstack.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.shadowstack</groupId>
+                <artifactId>core-analysis</artifactId>
+                <version>${shadowstack.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.shadowstack</groupId>
+                <artifactId>refactor-engine</artifactId>
+                <version>${shadowstack.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.shadowstack</groupId>
+                <artifactId>verify-engine</artifactId>
+                <version>${shadowstack.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.shadowstack</groupId>
+                <artifactId>migration-corpus</artifactId>
+                <version>${shadowstack.version}</version>
+            </dependency>
+
+            <!-- ── Eclipse JDT Core ────────────────────────────────────── -->
+            <dependency>
+                <groupId>org.eclipse.jdt</groupId>
+                <artifactId>org.eclipse.jdt.core</artifactId>
+                <version>${eclipse.jdt.core.version}</version>
+            </dependency>
+
+            <!-- ── ASM Bytecode Analysis ───────────────────────────────── -->
+            <dependency>
+                <groupId>org.ow2.asm</groupId>
+                <artifactId>asm</artifactId>
+                <version>${asm.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.ow2.asm</groupId>
+                <artifactId>asm-tree</artifactId>
+                <version>${asm.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.ow2.asm</groupId>
+                <artifactId>asm-util</artifactId>
+                <version>${asm.version}</version>
+            </dependency>
+
+            <!-- ── Jackson JSON ────────────────────────────────────────── -->
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-annotations</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.datatype</groupId>
+                <artifactId>jackson-datatype-jsr310</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+
+            <!-- ── Logging ─────────────────────────────────────────────── -->
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-api</artifactId>
+                <version>${slf4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-classic</artifactId>
+                <version>${logback.version}</version>
+            </dependency>
+
+            <!-- ── Google Guava ────────────────────────────────────────── -->
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>${guava.version}</version>
+            </dependency>
+
+            <!-- ── Database ────────────────────────────────────────────── -->
+            <dependency>
+                <groupId>org.postgresql</groupId>
+                <artifactId>postgresql</artifactId>
+                <version>${postgresql.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.pgvector</groupId>
+                <artifactId>pgvector</artifactId>
+                <version>${pgvector.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-core</artifactId>
+                <version>${flyway.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-database-postgresql</artifactId>
+                <version>${flyway.version}</version>
+            </dependency>
+
+            <!-- ── API Documentation ───────────────────────────────────── -->
+            <dependency>
+                <groupId>org.springdoc</groupId>
+                <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+                <version>${springdoc.version}</version>
+            </dependency>
+
+            <!-- ── JWT ─────────────────────────────────────────────────── -->
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-api</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-impl</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-jackson</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+
+            <!-- ── Testing ─────────────────────────────────────────────── -->
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.platform</groupId>
+                <artifactId>junit-platform-launcher</artifactId>
+                <version>${junit.platform.version}</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         Plugin Management
+         ═══════════════════════════════════════════════════════════════════
+
+         Centralizes plugin versions and default configurations.
+         Child modules inherit these settings but can override them.
+         ═══════════════════════════════════════════════════════════════════ -->
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <!-- Java Compiler — Java 21 with preview features -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${maven-compiler-plugin.version}</version>
+                    <configuration>
+                        <source>${java.version}</source>
+                        <target>${java.version}</target>
+                        <compilerArgs>
+                            <arg>--enable-preview</arg>
+                            <arg>-Xlint:all</arg>
+                        </compilerArgs>
+                        <enablePreview>true</enablePreview>
+                    </configuration>
+                </plugin>
+
+                <!-- Surefire — test execution with preview features -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${maven-surefire-plugin.version}</version>
+                    <configuration>
+                        <argLine>--enable-preview</argLine>
+                    </configuration>
+                </plugin>
+
+                <!-- Javadoc — with preview features enabled -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-javadoc-plugin</artifactId>
+                    <version>${maven-javadoc-plugin.version}</version>
+                    <configuration>
+                        <additionalOptions>--enable-preview</additionalOptions>
+                        <source>${java.version}</source>
+                    </configuration>
+                </plugin>
+
+                <!-- Source JAR — for IDE support -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-source-plugin</artifactId>
+                    <version>${maven-source-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>attach-sources</id>
+                            <goals>
+                                <goal>jar-no-fork</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+
+                <!-- Spring Boot Maven Plugin — for bootable JAR packaging -->
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>${spring-boot-maven-plugin.version}</version>
+                    <configuration>
+                        <layers>
+                            <enabled>true</enabled>
+                        </layers>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <goals>
+                                <goal>repackage</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+
+                <!-- Enforcer — build environment requirements -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-enforcer-plugin</artifactId>
+                    <version>${maven-enforcer-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>enforce-versions</id>
+                            <goals>
+                                <goal>enforce</goal>
+                            </goals>
+                            <configuration>
+                                <rules>
+                                    <requireJavaVersion>
+                                        <version>[21,)</version>
+                                        <message>ShadowStack requires Java 21 or later.</message>
+                                    </requireJavaVersion>
+                                    <requireMavenVersion>
+                                        <version>[3.9.0,)</version>
+                                        <message>ShadowStack requires Maven 3.9.0 or later.</message>
+                                    </requireMavenVersion>
+                                </rules>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+
+        <!-- Plugins applied to the parent build itself -->
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         Profiles
+         ═══════════════════════════════════════════════════════════════════ -->
+
+    <profiles>
+        <!-- Fast build: skip tests and static analysis -->
+        <profile>
+            <id>fast</id>
+            <properties>
+                <skipTests>true</skipTests>
+                <maven.javadoc.skip>true</maven.javadoc.skip>
+            </properties>
+        </profile>
+
+        <!-- CI: full build with all checks -->
+        <profile>
+            <id>ci</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

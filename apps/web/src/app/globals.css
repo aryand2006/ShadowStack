@@ -1,0 +1,109 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+@layer base {
+  * {
+    @apply border-shadow-border;
+  }
+
+  body {
+    @apply bg-shadow-bg text-shadow-text antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-shadow-border-bright rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-shadow-text-muted;
+  }
+
+  ::selection {
+    @apply bg-shadow-accent/30 text-white;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-shadow-surface/80 backdrop-blur-xl border border-shadow-border rounded-xl;
+  }
+
+  .glass-panel-interactive {
+    @apply glass-panel transition-all duration-200 hover:border-shadow-border-bright hover:bg-shadow-surface-hover;
+  }
+
+  .section-header {
+    @apply text-xs font-semibold uppercase tracking-wider text-shadow-text-muted;
+  }
+
+  .gradient-text {
+    @apply bg-gradient-to-r from-shadow-accent to-shadow-accent-bright bg-clip-text text-transparent;
+  }
+
+  .stat-value {
+    @apply text-2xl font-bold tracking-tight text-shadow-text;
+  }
+
+  .badge-base {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .diff-added {
+    @apply bg-emerald-500/10 text-emerald-400 border-l-2 border-emerald-500/40;
+  }
+
+  .diff-removed {
+    @apply bg-red-500/10 text-red-400 border-l-2 border-red-500/40;
+  }
+
+  .diff-context {
+    @apply text-shadow-text-secondary;
+  }
+
+  .diff-header {
+    @apply bg-shadow-accent/10 text-shadow-accent-bright font-medium;
+  }
+
+  .glow-border {
+    @apply border border-shadow-accent/30 shadow-glow;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .animate-in {
+    animation: slideUp 0.3s ease-out, fadeIn 0.3s ease-in-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}

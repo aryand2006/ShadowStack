@@ -1,0 +1,141 @@
+# ═══════════════════════════════════════════════════════════════════
+#  ShadowStack Worker — Deployment
+# ═══════════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: shadowstack
+  labels:
+    app.kubernetes.io/name: worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: shadowstack
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: worker
+        app.kubernetes.io/component: worker
+        app.kubernetes.io/part-of: shadowstack
+    spec:
+      serviceAccountName: default
+      securityContext:
+        runAsUser: 1001
+        runAsGroup: 1001
+        runAsNonRoot: true
+        fsGroup: 1001
+      terminationGracePeriodSeconds: 90
+      containers:
+        - name: worker
+          image: shadowstack/worker:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8082
+              name: http
+              protocol: TCP
+          env:
+            - name: DB_HOST
+              value: postgres
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: shadowstack-config
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: shadowstack-secrets
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: shadowstack-secrets
+                  key: DB_PASSWORD
+            - name: SPRING_PROFILES_ACTIVE
+              value: kubernetes,worker
+            - name: WORKER_POOL_CORE
+              valueFrom:
+                configMapKeyRef:
+                  name: shadowstack-config
+                  key: WORKER_POOL_CORE
+            - name: WORKER_POOL_MAX
+              valueFrom:
+                configMapKeyRef:
+                  name: shadowstack-config
+                  key: WORKER_POOL_MAX
+            - name: WORKER_QUEUE_CAPACITY
+              valueFrom:
+                configMapKeyRef:
+                  name: shadowstack-config
+                  key: WORKER_QUEUE_CAPACITY
+            - name: VERIFICATION_RISK_THRESHOLD
+              valueFrom:
+                configMapKeyRef:
+                  name: shadowstack-config
+                  key: VERIFICATION_RISK_THRESHOLD
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: shadowstack-config
+                  key: LOG_LEVEL
+            - name: JAVA_OPTS
+              value: >-
+                -XX:+UseG1GC
+                -XX:MaxRAMPercentage=75.0
+                -XX:+UseContainerSupport
+                -XX:+HeapDumpOnOutOfMemoryError
+                -XX:HeapDumpPath=/app/logs/heapdump.hprof
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 24
+          volumeMounts:
+            - name: worker-tmp
+              mountPath: /app/tmp
+            - name: worker-logs
+              mountPath: /app/logs
+      volumes:
+        - name: worker-tmp
+          emptyDir:
+            sizeLimit: 2Gi
+        - name: worker-logs
+          emptyDir:
+            sizeLimit: 500Mi

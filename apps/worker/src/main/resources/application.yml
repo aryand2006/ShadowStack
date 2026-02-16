@@ -1,0 +1,91 @@
+spring:
+  application:
+    name: shadowstack-worker
+
+  profiles:
+    active: worker
+
+  # ─── Database ──────────────────────────────────────────────────────
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:shadowstack}
+    username: ${DB_USER:shadowstack}
+    password: ${DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      idle-timeout: 300000
+      connection-timeout: 20000
+      max-lifetime: 1200000
+      pool-name: ss-worker-pool
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+
+# ─── Worker Configuration ──────────────────────────────────────────
+shadowstack:
+  worker:
+    poll-interval-ms: ${WORKER_POLL_INTERVAL_MS:5000}
+    shutdown-timeout-seconds: ${WORKER_SHUTDOWN_TIMEOUT:60}
+    pool:
+      core-size: ${WORKER_POOL_CORE:4}
+      max-size: ${WORKER_POOL_MAX:8}
+      queue-capacity: ${WORKER_QUEUE_CAPACITY:50}
+      keep-alive-seconds: 120
+
+  verification:
+    risk-threshold: ${VERIFICATION_RISK_THRESHOLD:0.7}
+    fail-fast: ${VERIFICATION_FAIL_FAST:false}
+
+# ─── Actuator / Health ─────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+  health:
+    db:
+      enabled: true
+    diskspace:
+      enabled: true
+
+server:
+  port: ${WORKER_PORT:8082}
+
+# ─── Logging ───────────────────────────────────────────────────────
+logging:
+  level:
+    com.shadowstack: ${LOG_LEVEL:INFO}
+    com.shadowstack.worker: INFO
+    com.shadowstack.worker.tasks: INFO
+    org.hibernate.SQL: WARN
+    org.flywaydb: INFO
+    org.springframework: WARN
+  pattern:
+    console: "%d{ISO8601} [%thread] %-5level %logger{36} - %msg%n"
