@@ -23,12 +23,12 @@ ShadowStack does not compete on autocomplete. It competes on **trust, proof, con
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     ShadowStack Platform                     │
+│                     ShadowStack Platform                    │
 ├──────────┬──────────┬──────────┬──────────┬─────────────────┤
 │  Web UI  │   API    │  Worker  │ Embedder │   Postgres +    │
 │ (Next.js)│ (Spring) │  (Java)  │ (Python) │   pgvector      │
 ├──────────┴──────────┴──────────┴──────────┴─────────────────┤
-│                    Core Engine Packages                       │
+│                    Core Engine Packages                     │
 ├──────────┬──────────┬──────────┬──────────┬─────────────────┤
 │ Language │   Core   │ Refactor │  Verify  │   Migration     │
 │ Adapters │ Analysis │  Engine  │  Engine  │    Corpus       │
