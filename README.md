@@ -56,8 +56,8 @@ Phase 0              Phase 1              Phase 2              Phase 3
 │ Capture  │    │  Semantic    │    │  Generation  │    │ Verification  │
 │          │    │  Modeling    │    │  (atomic)    │    │  (7 layers)   │
 └──────────┘    └──────────────┘    └──────────────┘    └───────┬───────┘
-  • Compile       • Call Graph        • Independent       │
-  • Test          • Data Flow         • Non-overlapping   ▼
+  • Compile       • Call Graph        • Independent             │
+  • Test          • Data Flow         • Non-overlapping         ▼
   • Snapshot      • Mutation          • Metadata-rich   ┌───────────────┐
   • Fingerprint   • Purity/Risk       • Rationale       │ Human Review  │
                                                         │ Accept/Reject │
