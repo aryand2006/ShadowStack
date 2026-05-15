@@ -5,6 +5,7 @@ import com.shadowstack.verify.VerificationLayer;
 import com.shadowstack.verify.model.VerificationContext;
 import com.shadowstack.verify.model.VerificationLayerResult;
 import com.shadowstack.verify.model.Verdict;
+import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.core.dom.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -175,7 +176,7 @@ public class APISignatureDiffVerifier implements VerificationLayer {
 
     private String buildTypeSignature(TypeDeclaration node) {
         StringBuilder sb = new StringBuilder();
-        sb.append(Modifier.toString(node.getModifiers())).append(' ');
+        sb.append(java.lang.reflect.Modifier.toString(node.getModifiers())).append(' ');
         sb.append(node.isInterface() ? "interface" : "class").append(' ');
         sb.append(node.getName().getIdentifier());
 

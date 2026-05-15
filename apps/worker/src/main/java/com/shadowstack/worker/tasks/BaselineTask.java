@@ -108,19 +108,19 @@ public class BaselineTask {
                         projectId.toString(),
                         actorId,
                         "worker",
-                        Map.of(
-                                "taskId", taskId.toString(),
-                                "durationMs", elapsed.toMillis(),
-                                "compileSuccess", snapshot.compileSuccess(),
-                                "totalTests", snapshot.testResults().totalTests(),
-                                "passedTests", snapshot.testResults().passed(),
-                                "failedTests", snapshot.testResults().failed(),
-                                "apiSignatureCount", snapshot.apiSignatures().size(),
-                                "reflectionUsageCount", snapshot.reflectionUsages().size(),
-                                "concurrencyPatternCount", snapshot.concurrencyPatterns().size(),
-                                "ioBoundaryCount", snapshot.ioBoundaries().size(),
-                                "complexityEntryCount", snapshot.complexityMetrics().size(),
-                                "fingerprintCount", snapshot.semanticFingerprints().size()
+                        Map.ofEntries(
+                                Map.entry("taskId", taskId.toString()),
+                                Map.entry("durationMs", elapsed.toMillis()),
+                                Map.entry("compileSuccess", snapshot.compileSuccess()),
+                                Map.entry("totalTests", snapshot.testResults().totalTests()),
+                                Map.entry("passedTests", snapshot.testResults().passed()),
+                                Map.entry("failedTests", snapshot.testResults().failed()),
+                                Map.entry("apiSignatureCount", snapshot.apiSignatures().size()),
+                                Map.entry("reflectionUsageCount", snapshot.reflectionUsages().size()),
+                                Map.entry("concurrencyPatternCount", snapshot.concurrencyPatterns().size()),
+                                Map.entry("ioBoundaryCount", snapshot.ioBoundaries().size()),
+                                Map.entry("complexityEntryCount", snapshot.complexityMetrics().size()),
+                                Map.entry("fingerprintCount", snapshot.semanticFingerprints().size())
                         )
                 );
 

@@ -3,6 +3,7 @@ package com.shadowstack.adapters.java;
 import com.shadowstack.adapters.LanguageAdapter;
 import com.shadowstack.adapters.model.*;
 import org.eclipse.jdt.core.JavaCore;
+import org.eclipse.jdt.core.compiler.IProblem;
 import org.eclipse.jdt.core.dom.*;
 import org.eclipse.jdt.core.dom.rewrite.ASTRewrite;
 import org.eclipse.jface.text.Document;
@@ -413,9 +414,12 @@ public class JavaAdapter implements LanguageAdapter {
 
         String calleeSig = buildMethodSignature(calleeClass, calleeName, calleeParamTypes);
         int callSiteLine = cu.getLineNumber(node.getStartPosition());
+        ITypeBinding declaringClass = methodBinding.getDeclaringClass();
+        boolean declaringClassFinal = declaringClass != null
+                && Modifier.isFinal(declaringClass.getModifiers());
         boolean isVirtual = !Modifier.isStatic(methodBinding.getModifiers())
                 && !Modifier.isFinal(methodBinding.getModifiers())
-                && !methodBinding.getDeclaringClass().isFinal();
+                && !declaringClassFinal;
 
         modelBuilder.addCallGraphEdge(new SemanticModel.CallGraphEdge(
                 callerSig, calleeSig, callSiteLine, isVirtual));

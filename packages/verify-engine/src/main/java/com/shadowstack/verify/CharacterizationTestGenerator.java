@@ -1,6 +1,7 @@
 package com.shadowstack.verify;
 
 import com.shadowstack.refactor.model.PatchUnit;
+import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.core.dom.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

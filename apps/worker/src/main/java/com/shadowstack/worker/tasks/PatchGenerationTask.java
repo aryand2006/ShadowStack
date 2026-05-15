@@ -119,7 +119,11 @@ public class PatchGenerationTask {
                         CompilationUnit cu = parseCompilationUnit(source, javaFile);
                         String relativePath = sourceRoot.relativize(javaFile).toString();
 
-                        SemanticContext context = new SemanticContext(relativePath, source);
+                        SemanticContext context = SemanticContext.builder()
+                                .compilationUnit(cu)
+                                .sourceFilePath(relativePath)
+                                .sourceCode(source)
+                                .build();
                         List<PatchUnit> patches = engine.scan(cu, context);
 
                         allPatches.addAll(patches);
