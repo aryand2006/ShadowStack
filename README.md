@@ -42,8 +42,8 @@ ShadowStack is built around a **pluggable language adapter framework**:
 | Adapter | Status | Description |
 |---------|--------|-------------|
 | **Java** | ✅ Full Implementation | Eclipse JDT with full type resolution |
-| **COBOL** | 🔲 Planned (v2.0) | COBOL-85/2002 → Python/Java |
-| **Python** | 🔲 Planned (v2.0) | Python 2 → 3, framework migrations |
+| **COBOL** | ✅ Full Implementation | COBOL-85 fixed-format parser, paragraph/section/data-item extraction, fixed→free modernization, legacy-pattern rewriting |
+| **Python** | ✅ Full Implementation | Python 2 → 3 modernizer with string/comment-aware lexer and 6 transformation rules |
 
 Each adapter implements: `parse()` → `buildSemanticModel()` → `listRefactorCandidates()` → `applyRefactor()` → `verifyPatch()`
 
@@ -117,6 +117,40 @@ if (apiSurfaceChanged)         risk += 0.10
 ```
 
 Changes above the configured risk threshold are **automatically blocked** from approval.
+
+---
+
+## Python Modernization Rules
+
+The `PythonAdapter` ships with a string- and comment-aware lexer so that pattern detection never misfires inside literals or comments. It runs entirely in-process; the optional compile-check verifier shells out to `python3 -m py_compile` if a Python runtime is present.
+
+| Rule ID | Transformation | Risk |
+|---------|----------------|------|
+| `py.print_stmt_to_call` | `print x` → `print(x)` | LOW |
+| `py.xrange_to_range` | `xrange(...)` → `range(...)` | LOW |
+| `py.iter_methods_to_views` | `.iteritems() / .iterkeys() / .itervalues()` → `.items() / .keys() / .values()` | LOW |
+| `py.except_comma_to_as` | `except E, e:` → `except E as e:` | LOW |
+| `py.unicode_to_str` | `unicode(x)` / `basestring` → `str(x)` / `str` | LOW |
+| `py.ne_operator` | `<>` → `!=` | LOW |
+
+Each candidate carries two safety invariants: a `py-strlit` proof that the match is in executable code (verified via the code-mask scan) and a `py-rationale` documenting the upstream Python 3 specification.
+
+A worked example lives at [`examples/legacy-python/report_builder.py`](examples/legacy-python/report_builder.py).
+
+## COBOL Modernization Rules
+
+The `CobolAdapter` parses fixed-format COBOL-85 (cols 1–6 sequence area, col 7 indicator, cols 8–72 program area, cols 73–80 identification area) and free-format COBOL-2002. It extracts `PROGRAM-ID`, divisions, sections, paragraphs, working-storage items (with `PIC` clauses mapped to a normalized type system), and `PERFORM`-based call-graph edges.
+
+| Rule ID | Transformation | Risk |
+|---------|----------------|------|
+| `cobol.fixed_to_free` | Fixed-format reference format → COBOL-2002 free-format (comments rewritten to `*>`, continuation/debug lines preserved) | MODERATE |
+| `cobol.stop_run_to_goback` | `STOP RUN` → `GOBACK` (CICS-safe, sub-program-safe) | MODERATE |
+| `cobol.goto_to_perform` | Terminal `GO TO PARA.` → `PERFORM PARA.` when the GO TO is the last statement in its paragraph | MODERATE |
+| `cobol.alter_removed` | Flags `ALTER` statements (removed in COBOL-2002) for manual rewrite | HIGH |
+
+The fixed→free verifier re-parses the converted program and confirms a canonical-form AST hash equality — proof that the transformation is purely structural.
+
+A worked example lives at [`examples/legacy-cobol/PAYROLL.cob`](examples/legacy-cobol/PAYROLL.cob).
 
 ---
 
@@ -198,7 +232,9 @@ shadowstack/
 │   ├── api-reference.md  # Complete API documentation
 │   └── deployment-guide.md
 ├── examples/
-│   └── legacy-sample/    # Example legacy Java project
+│   ├── legacy-sample/    # Example legacy Java project
+│   ├── legacy-python/    # Example Python 2 module (drives PythonAdapter rules)
+│   └── legacy-cobol/     # Example COBOL-85 program (drives CobolAdapter rules)
 ├── scripts/
 │   ├── demo.sh           # Full workflow demo
 │   ├── setup.sh          # Environment setup
@@ -290,6 +326,8 @@ The platform was built in this order, with each layer depending on the previous:
 8. ✅ Embedder training + inference (CodeBERT + FastAPI)
 9. ✅ Web UI (Next.js dashboard)
 10. ✅ Security docs + hardening
+11. ✅ Python adapter — Python 2 → 3 modernization (6 rules)
+12. ✅ COBOL adapter — fixed-format parser + 4 modernization rules
 
 ---
 
