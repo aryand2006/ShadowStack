@@ -18,6 +18,6 @@ echo "== Compiling API + worker =="
 (cd "$ROOT" && mvn -q -pl apps/api,apps/worker -am package -DskipTests)
 
 echo "== OK =="
-echo "Java (13): lambda, diamond, List.sort, StringBuffer, Vector, Hashtable, Stack, valueOf, isEmpty, indexOf→contains, Class.newInstance, literal-first equals, Locale.ROOT case"
-echo "Python (27+): lib2to3/modernize classics + unichr/reload/intern/StandardError/next/backtick + cPickle/cStringIO/__builtin__/Cookie/..."
-echo "COBOL (17): fixed→free, STOP/GOTO/ALTER, DISPLAY/MOVE/COMPUTE/PERFORM/ADD/SUBTRACT/ACCEPT/MULTIPLY/DIVIDE/INITIALIZE/EXIT/STRING/SET"
+echo "Java (17): lambda, diamond, List.sort, StringBuffer, Vector, Hashtable, Stack, valueOf, isEmpty, indexOf→contains, Class.newInstance, literal-first equals, Locale.ROOT case, EMPTY_*→empty*(), getBytes(UTF_8), URLEncoder UTF-8, trim→strip"
+echo "Python (44): lib2to3/modernize classics + print>> + imap/izip/ifilter + reduce + commands/urlparse/httplib/BaseHTTPServer/md5/sha/sets/UserDict/robotparser"
+echo "COBOL (25): fixed→free, STOP/GOTO/ALTER, verbs, INSPECT/UNSTRING/OPEN/CLOSE/READ/WRITE/CALL/CONTINUE"

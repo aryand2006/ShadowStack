@@ -41,9 +41,9 @@ ShadowStack is built around a **pluggable language adapter framework**:
 
 | Adapter | Status | Description |
 |---------|--------|-------------|
-| **Java** | ✅ Full | OpenRewrite/Sonar classics: anon→lambda, diamond, `List.sort`, `StringBuffer`→`StringBuilder`, `Vector`→`ArrayList`, `Hashtable`→`HashMap`, `Stack`→`ArrayDeque`, boxing `valueOf`, `size()==0`→`isEmpty()`, `indexOf`→`contains`, `Class.newInstance`, literal-first `equals`, `toUpper/LowerCase(Locale.ROOT)` |
-| **Python** | ✅ Full | lib2to3/modernize set: print, xrange, iter*, unicode/basestring, except/as, `<>`, has_key, raw_input, long, raise, file, apply, urllib2/ConfigParser/Queue/thread, execfile, u-prefix, unichr, reload, intern, StandardError, `.next()`, backticks, cPickle/cStringIO/__builtin__/Cookie/... |
-| **COBOL** | ✅ Partial | Enterprise COBOL→modern: fixed→free, STOP RUN→GOBACK, GO TO→PERFORM, DISPLAY/MOVE/COMPUTE/PERFORM/ADD/SUBTRACT/ACCEPT/MULTIPLY/DIVIDE/INITIALIZE/EXIT PROGRAM/STRING/SET, ALTER flags |
+| **Java** | ✅ Full | OpenRewrite/Sonar classics: anon→lambda, diamond, `List.sort`, `StringBuffer`→`StringBuilder`, `Vector`→`ArrayList`, `Hashtable`→`HashMap`, `Stack`→`ArrayDeque`, boxing `valueOf`, `size()==0`→`isEmpty()`, `indexOf`→`contains`, `Class.newInstance`, literal-first `equals`, `toUpper/LowerCase(Locale.ROOT)`, `Collections.EMPTY_*`→`empty*()`, `getBytes(UTF_8)`, `URLEncoder` UTF-8, `trim`→`strip`
+| **Python** | ✅ Full | lib2to3/modernize set: print/print>>, xrange, iter*, imap/izip/ifilter, reduce→functools, unicode/basestring, except/as, `<>`, has_key, raw_input, long, raise, file, apply, urllib2/ConfigParser/Queue/thread/commands/urlparse/httplib/BaseHTTPServer/md5/sha/sets/UserDict/robotparser, execfile, u-prefix, unichr, reload, intern, StandardError, `.next()`, backticks, cPickle/cStringIO/__builtin__/Cookie/...
+| **COBOL** | ✅ Partial | Enterprise COBOL→modern: fixed→free, STOP RUN→GOBACK, GO TO→PERFORM, DISPLAY/MOVE/COMPUTE/PERFORM/ADD/SUBTRACT/ACCEPT/MULTIPLY/DIVIDE/INITIALIZE/EXIT PROGRAM/STRING/SET, INSPECT/UNSTRING/OPEN/CLOSE/READ/WRITE/CALL/CONTINUE, ALTER flags
 
 Each adapter implements: `parse()` → `buildSemanticModel()` → `listRefactorCandidates()` → `applyRefactor()` → `verifyPatch()`
 
@@ -326,8 +326,8 @@ The platform was built in this order, with each layer depending on the previous:
 8. ✅ Embedder training + inference (CodeBERT + FastAPI)
 9. ✅ Web UI (Next.js dashboard)
 10. ✅ Security docs + hardening
-11. ✅ Python adapter — Python 2 → 3 modernization (18 rules)
-12. ✅ COBOL adapter — fixed-format parser + 17 modernization rules
+11. ✅ Python adapter — Python 2 → 3 modernization (44 rules)
+12. ✅ COBOL adapter — fixed-format parser + 25 modernization rules
 
 ---
 

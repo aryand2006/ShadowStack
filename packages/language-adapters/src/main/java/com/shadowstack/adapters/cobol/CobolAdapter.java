@@ -212,6 +212,14 @@ public class CobolAdapter implements LanguageAdapter {
         out.addAll(detectExitProgram(source, relPath, fixed));
         out.addAll(detectStringInto(source, relPath, fixed));
         out.addAll(detectSetToTrue(source, relPath, fixed));
+        out.addAll(detectInspectReplacing(source, relPath, fixed));
+        out.addAll(detectUnstring(source, relPath, fixed));
+        out.addAll(detectOpenFile(source, relPath, fixed));
+        out.addAll(detectCloseFile(source, relPath, fixed));
+        out.addAll(detectReadFile(source, relPath, fixed));
+        out.addAll(detectWriteFile(source, relPath, fixed));
+        out.addAll(detectCallProgram(source, relPath, fixed));
+        out.addAll(detectContinue(source, relPath, fixed));
         return out;
     }
 
@@ -432,6 +440,22 @@ public class CobolAdapter implements LanguageAdapter {
             Pattern.compile("(?i)^(\\s*)STRING\\s+(.+?)\\s+INTO\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
     private static final Pattern SET_TRUE_STMT =
             Pattern.compile("(?i)^(\\s*)SET\\s+([A-Z0-9-]+)\\s+TO\\s+TRUE\\s*\\.?\\s*$");
+    private static final Pattern INSPECT_REPLACING_STMT =
+            Pattern.compile("(?i)^(\\s*)INSPECT\\s+([A-Z0-9-]+)\\s+REPLACING\\s+(.+?)\\s*\\.?\\s*$");
+    private static final Pattern UNSTRING_STMT =
+            Pattern.compile("(?i)^(\\s*)UNSTRING\\s+([A-Z0-9-]+)\\s+DELIMITED\\s+BY\\s+(\"[^\"]*\"|'[^']*'|[A-Z0-9-]+)\\s+INTO\\s+(.+?)\\s*\\.?\\s*$");
+    private static final Pattern OPEN_STMT =
+            Pattern.compile("(?i)^(\\s*)OPEN\\s+(INPUT|OUTPUT|I-O|EXTEND)\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern CLOSE_STMT =
+            Pattern.compile("(?i)^(\\s*)CLOSE\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern READ_STMT =
+            Pattern.compile("(?i)^(\\s*)READ\\s+([A-Z0-9-]+)(?:\\s+INTO\\s+([A-Z0-9-]+))?\\s*\\.?\\s*$");
+    private static final Pattern WRITE_STMT =
+            Pattern.compile("(?i)^(\\s*)WRITE\\s+([A-Z0-9-]+)(?:\\s+FROM\\s+([A-Z0-9-]+))?\\s*\\.?\\s*$");
+    private static final Pattern CALL_STMT =
+            Pattern.compile("(?i)^(\\s*)CALL\\s+(\"[^\"]+\"|'[^']+'|[A-Z0-9-]+)(?:\\s+USING\\s+.+?)?\\s*\\.?\\s*$");
+    private static final Pattern CONTINUE_STMT =
+            Pattern.compile("(?i)^(\\s*)CONTINUE\\s*\\.?\\s*$");
 
     private List<RefactorCandidate> detectDisplayToPrint(String source, String relPath, boolean fixed) {
         return detectLinePattern(source, relPath, fixed, DISPLAY_STMT, "cobol.display_to_print",
@@ -572,6 +596,115 @@ public class CobolAdapter implements LanguageAdapter {
                         + toJavaIdent(m.group(2)) + " = true;",
                 0.88, RiskTier.LOW,
                 "88-level SET TO TRUE becomes a boolean assignment");
+    }
+
+
+    private List<RefactorCandidate> detectInspectReplacing(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, INSPECT_REPLACING_STMT, "cobol.inspect_replacing",
+                "INSPECT REPLACING → String.replace",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String target = toJavaIdent(m.group(2));
+                    return indent + target + " = " + target + ".replace(/* " + m.group(3).trim()
+                            + " */);";
+                }, 0.68, RiskTier.MODERATE,
+                "INSPECT REPLACING maps to String.replace / replaceAll");
+    }
+
+    private List<RefactorCandidate> detectUnstring(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, UNSTRING_STMT, "cobol.unstring_to_split",
+                "UNSTRING → split",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String src = toJavaIdent(m.group(2));
+                    String delim = m.group(3);
+                    if (!(delim.startsWith("\"") || delim.startsWith("'"))) {
+                        delim = toJavaIdent(delim);
+                    } else if (delim.startsWith("'")) {
+                        delim = "\"" + delim.substring(1, delim.length() - 1) + "\"";
+                    }
+                    String[] parts = m.group(4).trim().split("\\s+");
+                    String first = toJavaIdent(parts[0]);
+                    return indent + "String[] __parts = " + src + ".split(" + delim + "); "
+                            + first + " = __parts.length > 0 ? __parts[0] : \"\";";
+                }, 0.65, RiskTier.MODERATE,
+                "UNSTRING DELIMITED BY maps to String.split");
+    }
+
+    private List<RefactorCandidate> detectOpenFile(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, OPEN_STMT, "cobol.open_to_stream",
+                "OPEN → stream open",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String mode = m.group(2).toUpperCase();
+                    String file = toJavaIdent(m.group(3));
+                    String javaMode = switch (mode) {
+                        case "INPUT" -> "READ";
+                        case "OUTPUT" -> "WRITE";
+                        case "EXTEND" -> "APPEND";
+                        default -> "READ_WRITE";
+                    };
+                    return indent + "/* OPEN " + mode + " */ " + file
+                            + " = java.nio.file.Files.newByteChannel(" + file
+                            + "Path, java.nio.file.StandardOpenOption." + javaMode + ");";
+                }, 0.6, RiskTier.HIGH,
+                "OPEN maps to NIO channel/stream open");
+    }
+
+    private List<RefactorCandidate> detectCloseFile(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, CLOSE_STMT, "cobol.close_to_close",
+                "CLOSE → close()",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + toJavaIdent(m.group(2)) + ".close();",
+                0.75, RiskTier.MODERATE,
+                "CLOSE maps to Closeable.close()");
+    }
+
+    private List<RefactorCandidate> detectReadFile(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, READ_STMT, "cobol.read_to_read",
+                "READ → stream read",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String file = toJavaIdent(m.group(2));
+                    String into = m.group(3) != null ? toJavaIdent(m.group(3)) : file + "Record";
+                    return indent + into + " = /* READ */ " + file + ".read();";
+                }, 0.62, RiskTier.HIGH,
+                "READ maps to a stream/channel read into a record buffer");
+    }
+
+    private List<RefactorCandidate> detectWriteFile(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, WRITE_STMT, "cobol.write_to_write",
+                "WRITE → stream write",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String rec = toJavaIdent(m.group(2));
+                    String from = m.group(3) != null ? toJavaIdent(m.group(3)) : rec;
+                    return indent + "/* WRITE */ " + rec + "Writer.write(" + from + ");";
+                }, 0.62, RiskTier.HIGH,
+                "WRITE maps to a stream/channel write");
+    }
+
+    private List<RefactorCandidate> detectCallProgram(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, CALL_STMT, "cobol.call_to_invoke",
+                "CALL → method/program invoke",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String target = m.group(2);
+                    if (target.startsWith("\"") || target.startsWith("'")) {
+                        String name = target.substring(1, target.length() - 1);
+                        return indent + toCamel(name) + "();";
+                    }
+                    return indent + toCamel(target) + "();";
+                }, 0.7, RiskTier.MODERATE,
+                "CALL maps to a method or program invocation");
+    }
+
+    private List<RefactorCandidate> detectContinue(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, CONTINUE_STMT, "cobol.continue_to_empty",
+                "CONTINUE → no-op / continue",
+                m -> (m.group(1) != null ? m.group(1) : "") + "/* CONTINUE */ ;",
+                0.85, RiskTier.LOW,
+                "CONTINUE is a no-op placeholder in modern control flow");
     }
 
     @FunctionalInterface

@@ -9,7 +9,11 @@ import com.shadowstack.refactor.rules.IndexOfToContainsRule;
 import com.shadowstack.refactor.rules.LegacyTypeMigrationRule;
 import com.shadowstack.refactor.rules.SizeZeroToIsEmptyRule;
 import com.shadowstack.refactor.rules.StringEqualsLiteralFirstRule;
+import com.shadowstack.refactor.rules.CollectionsEmptyConstantRule;
+import com.shadowstack.refactor.rules.StringGetBytesCharsetRule;
+import com.shadowstack.refactor.rules.StringTrimToStripRule;
 import com.shadowstack.refactor.rules.ToUpperLowerLocaleRootRule;
+import com.shadowstack.refactor.rules.UrlEncoderCharsetRule;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -37,16 +41,22 @@ public final class RuleCatalog {
         rules.add(new ClassNewInstanceRule());
         rules.add(new StringEqualsLiteralFirstRule());
         rules.add(new ToUpperLowerLocaleRootRule());
+        rules.add(new CollectionsEmptyConstantRule());
+        rules.add(new StringGetBytesCharsetRule());
+        rules.add(new UrlEncoderCharsetRule());
+        rules.add(new StringTrimToStripRule());
         return rules;
     }
 
     public static String supportSummary() {
         return """
-                Java (13): ANON_TO_LAMBDA, DIAMOND_OPERATOR, COLLECTIONS_SORT_TO_LIST_SORT,
+                Java (17): ANON_TO_LAMBDA, DIAMOND_OPERATOR, COLLECTIONS_SORT_TO_LIST_SORT,
                   STRINGBUFFER_TO_STRINGBUILDER, VECTOR_TO_ARRAYLIST, HASHTABLE_TO_HASHMAP,
                   STACK_TO_ARRAYDEQUE, BOXING_CONSTRUCTOR_TO_VALUEOF, SIZE_ZERO_TO_ISEMPTY,
                   INDEXOF_TO_CONTAINS, CLASS_NEWINSTANCE_TO_GETDECLAREDCONSTRUCTOR,
-                  STRING_EQUALS_LITERAL_FIRST, TOUPPERLOWER_LOCALE_ROOT
+                  STRING_EQUALS_LITERAL_FIRST, TOUPPERLOWER_LOCALE_ROOT,
+                  COLLECTIONS_EMPTY_CONSTANT, STRING_GETBYTES_CHARSET, URLENCODER_CHARSET,
+                  STRING_TRIM_TO_STRIP
                 Python (lib2to3/modernize classics via PythonAdapter)
                 COBOL (enterprise patterns via CobolAdapter)
                 """;

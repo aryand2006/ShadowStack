@@ -43,3 +43,20 @@ class ReportBuilder:
             return urllib2.urlopen("https://example.invalid/api").read()
         except StandardError, e:
             raise ValueError, e
+
+
+# Wave-3 lib2to3 / modernize extras
+import commands
+import urlparse
+import httplib
+import BaseHTTPServer
+import md5
+import sha
+import sets
+import UserDict
+import robotparser
+from itertools import imap, izip, ifilter
+
+def log_err(msg):
+    print >>sys.stderr, msg
+    return reduce(lambda a, b: a + b, imap(str, [msg]), "")

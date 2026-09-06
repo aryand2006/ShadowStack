@@ -45,4 +45,12 @@
 004080     STRING "EMP-" EMP-ID INTO EMP-NAME.                          00004080
 004090     SET WS-ACTIVE TO TRUE.                                       00004090
 004095     EXIT PROGRAM.                                                00004095
+004092     INSPECT EMP-NAME REPLACING ALL " " BY "0".                   00409200
+004093     UNSTRING EMP-NAME DELIMITED BY "," INTO EMP-ID EMP-NAME.     00409300
+004094     OPEN INPUT EMP-FILE.                                         00409400
+004095     READ EMP-FILE INTO EMPLOYEE-RECORD.                          00409500
+004096     WRITE EMPLOYEE-RECORD FROM EMPLOYEE-RECORD.                  00409600
+004097     CLOSE EMP-FILE.                                              00409700
+004098     CALL "TAXCALC".                                              00409800
+004099     CONTINUE                                                     00409900
 004100     STOP RUN.                                                    00004100

@@ -22,9 +22,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class IndustryJavaModernizationRulesTest {
 
     @Test
-    void catalogRegistersThirteenIndustryRules() {
+    void catalogRegistersSeventeenIndustryRules() {
         List<RefactorRule> rules = RuleCatalog.javaRules();
-        assertEquals(13, rules.size());
+        assertEquals(17, rules.size());
         Set<String> ids = rules.stream().map(RefactorRule::ruleId).collect(Collectors.toSet());
         assertTrue(ids.contains("ANON_TO_LAMBDA"));
         assertTrue(ids.contains("DIAMOND_OPERATOR"));
@@ -39,6 +39,10 @@ class IndustryJavaModernizationRulesTest {
         assertTrue(ids.contains("CLASS_NEWINSTANCE_TO_GETDECLAREDCONSTRUCTOR"));
         assertTrue(ids.contains("STRING_EQUALS_LITERAL_FIRST"));
         assertTrue(ids.contains("TOUPPERLOWER_LOCALE_ROOT"));
+        assertTrue(ids.contains("COLLECTIONS_EMPTY_CONSTANT"));
+        assertTrue(ids.contains("STRING_GETBYTES_CHARSET"));
+        assertTrue(ids.contains("URLENCODER_CHARSET"));
+        assertTrue(ids.contains("STRING_TRIM_TO_STRIP"));
     }
 
     @Test
@@ -65,6 +69,10 @@ class IndustryJavaModernizationRulesTest {
                       return;
                     }
                     String up = name.toUpperCase();
+                    List empty = Collections.EMPTY_LIST;
+                    byte[] bytes = name.getBytes();
+                    String enc = java.net.URLEncoder.encode(name);
+                    String trimmed = name.trim();
                   }
                 }
                 """;
@@ -99,6 +107,68 @@ class IndustryJavaModernizationRulesTest {
         assertTrue(patches.stream().anyMatch(p ->
                 p.getRuleId().equals("STRING_EQUALS_LITERAL_FIRST")
                         && p.getAfterSnippet().contains("\"admin\".equals")));
+        assertTrue(ids.contains("COLLECTIONS_EMPTY_CONSTANT"), ids.toString());
+        assertTrue(ids.contains("STRING_GETBYTES_CHARSET"), ids.toString());
+        assertTrue(ids.contains("URLENCODER_CHARSET"), ids.toString());
+        assertTrue(ids.contains("STRING_TRIM_TO_STRIP"), ids.toString());
+    }
+
+    @Test
+    void collectionsEmptyConstant_migrates() {
+        assertRuleFires("""
+                import java.util.Collections;
+                import java.util.List;
+                class Demo {
+                  List empty = Collections.EMPTY_LIST;
+                }
+                """, "COLLECTIONS_EMPTY_CONSTANT", "emptyList()");
+    }
+
+    @Test
+    void stringGetBytesCharset_migrates() {
+        assertRuleFires("""
+                class Demo {
+                  byte[] b = "hi".getBytes();
+                }
+                """, "STRING_GETBYTES_CHARSET", "StandardCharsets.UTF_8");
+    }
+
+    @Test
+    void urlEncoderCharset_migrates() {
+        assertRuleFires("""
+                import java.net.URLEncoder;
+                class Demo {
+                  String e = URLEncoder.encode("a=b");
+                }
+                """, "URLENCODER_CHARSET", "StandardCharsets.UTF_8");
+    }
+
+    @Test
+    void stringTrimToStrip_migrates() {
+        assertRuleFires("""
+                class Demo {
+                  String s = "  x  ".trim();
+                }
+                """, "STRING_TRIM_TO_STRIP", "strip()");
+    }
+
+    private static void assertRuleFires(String source, String ruleId, String afterContains) {
+        CompilationUnit cu = parse(source);
+        SemanticContext ctx = SemanticContext.builder()
+                .compilationUnit(cu)
+                .sourceFilePath("Demo.java")
+                .sourceCode(source)
+                .build();
+        RefactorEngine engine = new RefactorEngine(0.5, RiskTier.CRITICAL);
+        for (RefactorRule rule : RuleCatalog.javaRules()) {
+            if (ruleId.equals(rule.ruleId())) {
+                engine.registerRule(rule);
+            }
+        }
+        List<PatchUnit> patches = engine.scan(cu, ctx);
+        assertTrue(patches.stream().anyMatch(p -> ruleId.equals(p.getRuleId())
+                        && p.getAfterSnippet().contains(afterContains)),
+                () -> patches.stream().map(PatchUnit::getRuleId).toList().toString());
     }
 
     private static CompilationUnit parse(String source) {

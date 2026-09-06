@@ -147,4 +147,66 @@ class PythonAdapterTest {
         assertTrue(candidates.isEmpty(), () -> candidates.stream()
                 .map(RefactorCandidate::ruleId).toList().toString());
     }
+
+    @Test
+    void printChevron_detects(@TempDir Path tmp) throws Exception {
+        assertDetects(tmp, "legacy_print_chevron.py",
+                "print >>sys.stderr, 'err'\n", "py.print_chevron_to_file");
+    }
+
+    @Test
+    void itertoolsAliases_detect(@TempDir Path tmp) throws Exception {
+        Set<String> ids = detectIds(tmp, "legacy_itertools.py",
+                "from itertools import imap, izip, ifilter\n");
+        assertTrue(ids.contains("py.imap_to_map"), ids.toString());
+        assertTrue(ids.contains("py.izip_to_zip"), ids.toString());
+        assertTrue(ids.contains("py.ifilter_to_filter"), ids.toString());
+    }
+
+    @Test
+    void reduceBuiltin_detects(@TempDir Path tmp) throws Exception {
+        assertDetects(tmp, "legacy_reduce.py",
+                "total = reduce(lambda a, b: a + b, [1, 2, 3])\n",
+                "py.reduce_to_functools");
+    }
+
+    @Test
+    void moreLegacyImports_detect(@TempDir Path tmp) throws Exception {
+        String source = String.join("\n",
+                "import commands",
+                "import urlparse",
+                "import httplib",
+                "import BaseHTTPServer",
+                "import md5",
+                "import sha",
+                "import sets",
+                "import UserDict",
+                "import robotparser",
+                "");
+        Set<String> ids = detectIds(tmp, "legacy_more_imports.py", source);
+        assertTrue(ids.contains("py.import_commands"), ids.toString());
+        assertTrue(ids.contains("py.import_urlparse"), ids.toString());
+        assertTrue(ids.contains("py.import_httplib"), ids.toString());
+        assertTrue(ids.contains("py.import_basehttpserver"), ids.toString());
+        assertTrue(ids.contains("py.import_md5"), ids.toString());
+        assertTrue(ids.contains("py.import_sha"), ids.toString());
+        assertTrue(ids.contains("py.import_sets"), ids.toString());
+        assertTrue(ids.contains("py.import_userdict"), ids.toString());
+        assertTrue(ids.contains("py.import_robotparser"), ids.toString());
+    }
+
+    private static void assertDetects(Path tmp, String name, String source, String ruleId)
+            throws Exception {
+        Set<String> ids = detectIds(tmp, name, source);
+        assertTrue(ids.contains(ruleId), ids.toString());
+    }
+
+    private static Set<String> detectIds(Path tmp, String name, String source) throws Exception {
+        Path module = tmp.resolve(name);
+        Files.writeString(module, source, StandardCharsets.UTF_8);
+        PythonAdapter adapter = new PythonAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        return adapter.listRefactorCandidates(model, LanguageAdapter.RefactorRuleSet.empty())
+                .stream().map(RefactorCandidate::ruleId).collect(Collectors.toSet());
+    }
 }

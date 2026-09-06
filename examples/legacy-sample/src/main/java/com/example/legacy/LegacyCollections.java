@@ -48,4 +48,14 @@ public class LegacyCollections {
         Object probe = type.newInstance();
         return normalized != null && probe != null;
     }
+
+    public java.util.List emptyLegacy() {
+        return java.util.Collections.EMPTY_LIST;
+    }
+
+    public String charsetLegacy(String name) throws java.io.UnsupportedEncodingException {
+        byte[] raw = name.getBytes();
+        String encoded = java.net.URLEncoder.encode(name);
+        return new String(raw) + encoded.trim();
+    }
 }

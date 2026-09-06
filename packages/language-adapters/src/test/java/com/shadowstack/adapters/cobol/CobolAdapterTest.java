@@ -125,4 +125,64 @@ class CobolAdapterTest {
         assertTrue(vr.compileSuccess(),
                 "post-conversion program must still re-parse cleanly");
     }
+
+    @Test
+    void inspectReplacing_detects(@TempDir Path tmp) throws Exception {
+        assertDetects(tmp, "inspect.cob",
+                "       INSPECT WS-NAME REPLACING ALL \" \" BY \"0\".\n",
+                "cobol.inspect_replacing");
+    }
+
+    @Test
+    void unstring_detects(@TempDir Path tmp) throws Exception {
+        assertDetects(tmp, "unstring.cob",
+                "       UNSTRING WS-CSV DELIMITED BY \",\" INTO WS-A WS-B.\n",
+                "cobol.unstring_to_split");
+    }
+
+    @Test
+    void openClose_detect(@TempDir Path tmp) throws Exception {
+        Set<String> openIds = detectIds(tmp.resolve("open"), "open.cob",
+                "       OPEN INPUT CUST-FILE.\n");
+        Set<String> closeIds = detectIds(tmp.resolve("close"), "close.cob",
+                "       CLOSE CUST-FILE.\n");
+        assertTrue(openIds.contains("cobol.open_to_stream"), openIds.toString());
+        assertTrue(closeIds.contains("cobol.close_to_close"), closeIds.toString());
+    }
+
+    @Test
+    void readWrite_detect(@TempDir Path tmp) throws Exception {
+        Set<String> readIds = detectIds(tmp.resolve("read"), "read.cob",
+                "       READ CUST-FILE INTO WS-REC.\n");
+        Set<String> writeIds = detectIds(tmp.resolve("write"), "write.cob",
+                "       WRITE CUST-REC FROM WS-REC.\n");
+        assertTrue(readIds.contains("cobol.read_to_read"), readIds.toString());
+        assertTrue(writeIds.contains("cobol.write_to_write"), writeIds.toString());
+    }
+
+    @Test
+    void callContinue_detect(@TempDir Path tmp) throws Exception {
+        Set<String> callIds = detectIds(tmp.resolve("call"), "call.cob",
+                "       CALL \"CALC\".\n");
+        Set<String> contIds = detectIds(tmp.resolve("continue"), "continue.cob",
+                "       CONTINUE\n");
+        assertTrue(callIds.contains("cobol.call_to_invoke"), callIds.toString());
+        assertTrue(contIds.contains("cobol.continue_to_empty"), contIds.toString());
+    }
+
+    private static void assertDetects(Path tmp, String name, String source, String ruleId)
+            throws Exception {
+        Set<String> ids = detectIds(tmp, name, source);
+        assertTrue(ids.contains(ruleId), ids.toString());
+    }
+
+    private static Set<String> detectIds(Path dir, String name, String source) throws Exception {
+        Files.createDirectories(dir);
+        Path file = dir.resolve(name);
+        Files.writeString(file, source, StandardCharsets.UTF_8);
+        CobolAdapter adapter = new CobolAdapter();
+        SemanticModel model = adapter.buildSemanticModel(dir);
+        return adapter.listRefactorCandidates(model, LanguageAdapter.RefactorRuleSet.empty())
+                .stream().map(RefactorCandidate::ruleId).collect(Collectors.toSet());
+    }
 }

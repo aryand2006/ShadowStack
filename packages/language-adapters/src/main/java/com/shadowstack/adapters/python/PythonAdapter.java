@@ -340,6 +340,10 @@ public class PythonAdapter implements LanguageAdapter {
         candidates.addAll(detectIteratorNext(source, codeMask, lines, relPath));
         candidates.addAll(detectBacktickRepr(source, codeMask, lines, relPath));
         candidates.addAll(detectExtraLegacyImports(lines, codeMask, source, relPath));
+        candidates.addAll(detectPrintChevron(lines, codeMask, source, relPath));
+        candidates.addAll(detectItertoolsAliases(source, codeMask, lines, relPath));
+        candidates.addAll(detectReduce(source, codeMask, lines, relPath));
+        candidates.addAll(detectMoreLegacyImports(lines, codeMask, source, relPath));
         return candidates;
     }
 
@@ -722,6 +726,95 @@ public class PythonAdapter implements LanguageAdapter {
     }
 
     // ── Generic detectors ────────────────────────────────────────────────
+
+
+    private List<RefactorCandidate> detectPrintChevron(
+            String[] lines, boolean[] codeMask, String source, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        Pattern p = Pattern.compile("^([ \\t]*)print[ \\t]*>>[ \\t]*([^,\\n]+)[ \\t]*,[ \\t]*(.+)$");
+        int offset = 0;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            Matcher m = p.matcher(line);
+            if (m.matches()) {
+                int printAt = line.indexOf("print");
+                if (printAt >= 0 && isCodeAt(codeMask, offset + printAt)) {
+                    String indent = m.group(1);
+                    String fileExpr = m.group(2).trim();
+                    String args = m.group(3).trim();
+                    String replaced = indent + "print(" + args + ", file=" + fileExpr + ")";
+                    out.add(buildCandidate(relPath, i + 1, i + 1, line, replaced,
+                            "py.print_chevron_to_file", "print >>f, x → print(x, file=f)", "MODERNIZATION",
+                            0.9, RiskTier.LOW, "Python 3 print uses the file= keyword instead of >>."));
+                }
+            }
+            offset += line.length() + 1;
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectItertoolsAliases(String source, boolean[] codeMask,
+                                                           String[] lines, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        String[][] pairs = {
+                {"imap", "map", "py.imap_to_map", "itertools.imap → map"},
+                {"izip", "zip", "py.izip_to_zip", "itertools.izip → zip"},
+                {"ifilter", "filter", "py.ifilter_to_filter", "itertools.ifilter → filter"}
+        };
+        for (String[] pair : pairs) {
+            out.addAll(detectIdentifierRewrite(source, codeMask, lines, relPath,
+                    pair[0], pair[1], pair[2], pair[3],
+                    pair[0] + " was removed; use builtin " + pair[1] + " in Python 3."));
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectReduce(String source, boolean[] codeMask,
+                                                 String[] lines, String relPath) {
+        return detectIdentifierRewrite(source, codeMask, lines, relPath,
+                "reduce", "functools.reduce", "py.reduce_to_functools",
+                "reduce() → functools.reduce()",
+                "Builtin reduce moved to functools in Python 3.");
+    }
+
+    private List<RefactorCandidate> detectMoreLegacyImports(
+            String[] lines, boolean[] codeMask, String source, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        String[][] imports = {
+                {"commands", "subprocess as commands", "py.import_commands", "commands → subprocess"},
+                {"urlparse", "urllib.parse as urlparse", "py.import_urlparse", "urlparse → urllib.parse"},
+                {"httplib", "http.client as httplib", "py.import_httplib", "httplib → http.client"},
+                {"BaseHTTPServer", "http.server as BaseHTTPServer", "py.import_basehttpserver",
+                        "BaseHTTPServer → http.server"},
+                {"md5", "hashlib as md5", "py.import_md5", "md5 → hashlib"},
+                {"sha", "hashlib as sha", "py.import_sha", "sha → hashlib"},
+                {"sets", "collections  # was sets; use builtin set()", "py.import_sets", "sets module removed"},
+                {"UserDict", "collections as UserDict", "py.import_userdict", "UserDict → collections"},
+                {"robotparser", "urllib.robotparser as robotparser", "py.import_robotparser",
+                        "robotparser → urllib.robotparser"}
+        };
+        int offset = 0;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            String trimmed = line.stripLeading();
+            for (String[] pair : imports) {
+                String needle = "import " + pair[0];
+                int at = line.indexOf(needle);
+                if (trimmed.startsWith(needle) && !trimmed.contains(" as ")
+                        && at >= 0 && isCodeAt(codeMask, offset + at)) {
+                    String replaced = line.replaceFirst(
+                            "\\bimport\\s+" + Pattern.quote(pair[0]) + "\\b",
+                            "import " + pair[1]);
+                    out.add(buildCandidate(relPath, i + 1, i + 1, line, replaced,
+                            pair[2], pair[3], "MODERNIZATION",
+                            0.9, RiskTier.LOW,
+                            "Module renamed in Python 3; keep alias for call-site compatibility."));
+                }
+            }
+            offset += line.length() + 1;
+        }
+        return out;
+    }
 
     private List<RefactorCandidate> detectIdentifierRewrite(
             String source, boolean[] codeMask, String[] lines, String relPath,
