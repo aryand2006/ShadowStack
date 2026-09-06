@@ -43,7 +43,9 @@ ShadowStack is built around a **pluggable language adapter framework**:
 |---------|--------|-------------|
 | **Java** | ✅ Full | OpenRewrite/Sonar classics: anon→lambda, diamond, `List.sort`, `StringBuffer`→`StringBuilder`, `Vector`→`ArrayList`, `Hashtable`→`HashMap`, `Stack`→`ArrayDeque`, boxing `valueOf`, `size()==0`→`isEmpty()`, `indexOf`→`contains`, `Class.newInstance`, literal-first `equals`, `toUpper/LowerCase(Locale.ROOT)`, `Collections.EMPTY_*`→`empty*()`, `getBytes(UTF_8)`, `URLEncoder` UTF-8, `trim`→`strip`
 | **Python** | ✅ Full | lib2to3/modernize set: print/print>>, xrange, iter*, imap/izip/ifilter, reduce→functools, unicode/basestring, except/as, `<>`, has_key, raw_input, long, raise, file, apply, urllib2/ConfigParser/Queue/thread/commands/urlparse/httplib/BaseHTTPServer/md5/sha/sets/UserDict/robotparser, execfile, u-prefix, unichr, reload, intern, StandardError, `.next()`, backticks, cPickle/cStringIO/__builtin__/Cookie/...
-| **COBOL** | ✅ Partial | Enterprise COBOL→modern: fixed→free, STOP RUN→GOBACK, GO TO→PERFORM, DISPLAY/MOVE/COMPUTE/PERFORM/ADD/SUBTRACT/ACCEPT/MULTIPLY/DIVIDE/INITIALIZE/EXIT PROGRAM/STRING/SET, INSPECT/UNSTRING/OPEN/CLOSE/READ/WRITE/CALL/CONTINUE, ALTER flags
+| **COBOL** | ✅ Partial | Enterprise COBOL→modern: fixed→free, STOP RUN→GOBACK, GO TO→PERFORM, DISPLAY/MOVE/COMPUTE/PERFORM/ADD/SUBTRACT/ACCEPT/MULTIPLY/DIVIDE/INITIALIZE/EXIT PROGRAM/STRING/SET, INSPECT/UNSTRING/OPEN/CLOSE/READ/WRITE/CALL/CONTINUE/REWRITE/DELETE/SORT/MERGE/EVALUATE/SEARCH/START, ALTER flags
+| **JavaScript/TS** | ✅ Partial | ES5/CommonJS→modern: var→let, ==→===, require→import, module.exports→export, __dirname/__filename→import.meta, substr→substring, escape/unescape, indexOf→includes
+| **C#** | ✅ Partial | Framework→modern: ArrayList/Hashtable, WebClient→HttpClient, BinaryFormatter/Remoting/Thread.Abort removals, string.Format→interpolation, nameof, nullable enable
 
 Each adapter implements: `parse()` → `buildSemanticModel()` → `listRefactorCandidates()` → `applyRefactor()` → `verifyPatch()`
 
@@ -216,7 +218,7 @@ shadowstack/
 │   ├── web/              # Next.js 14 dashboard UI
 │   └── worker/           # Async task processing service
 ├── packages/
-│   ├── language-adapters/ # LanguageAdapter interface + Java/COBOL/Python
+│   ├── language-adapters/ # LanguageAdapter interface + Java/COBOL/Python/JS/C#
 │   ├── core-analysis/     # Baseline capture, call graph, risk scoring
 │   ├── refactor-engine/   # Refactor rules + patch generation
 │   ├── verify-engine/     # 7-layer verification pipeline
@@ -234,7 +236,9 @@ shadowstack/
 ├── examples/
 │   ├── legacy-sample/    # Example legacy Java project
 │   ├── legacy-python/    # Example Python 2 module (drives PythonAdapter rules)
-│   └── legacy-cobol/     # Example COBOL-85 program (drives CobolAdapter rules)
+│   ├── legacy-cobol/     # Example COBOL-85 program (drives CobolAdapter rules)
+│   ├── legacy-javascript/ # Example CommonJS/ES5 module
+│   └── legacy-csharp/    # Example legacy .NET Framework snippet
 ├── scripts/
 │   ├── demo.sh           # Full workflow demo
 │   ├── setup.sh          # Environment setup
@@ -349,8 +353,11 @@ The platform was built in this order, with each layer depending on the previous:
 8. ✅ Embedder training + inference (CodeBERT + FastAPI)
 9. ✅ Web UI (Next.js dashboard)
 10. ✅ Security docs + hardening
-11. ✅ Python adapter — Python 2 → 3 modernization (44 rules)
-12. ✅ COBOL adapter — fixed-format parser + 25 modernization rules
+11. ✅ Python adapter — Python 2 → 3 modernization (83 rules)
+12. ✅ COBOL adapter — fixed-format parser + 46 modernization rules
+13. ✅ JavaScript/TypeScript adapter — CommonJS/ES5 → modern ESM (16 rules)
+14. ✅ C# adapter — .NET Framework → modern patterns (16 rules)
+15. ✅ Java industry rule catalog expanded to 45 OpenRewrite/Sonar/JDK rules
 
 ---
 

@@ -22,9 +22,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class IndustryJavaModernizationRulesTest {
 
     @Test
-    void catalogRegistersSeventeenIndustryRules() {
+    void catalogRegistersExpandedIndustryRules() {
         List<RefactorRule> rules = RuleCatalog.javaRules();
-        assertEquals(17, rules.size());
+        assertEquals(45, rules.size());
         Set<String> ids = rules.stream().map(RefactorRule::ruleId).collect(Collectors.toSet());
         assertTrue(ids.contains("ANON_TO_LAMBDA"));
         assertTrue(ids.contains("DIAMOND_OPERATOR"));
@@ -43,6 +43,12 @@ class IndustryJavaModernizationRulesTest {
         assertTrue(ids.contains("STRING_GETBYTES_CHARSET"));
         assertTrue(ids.contains("URLENCODER_CHARSET"));
         assertTrue(ids.contains("STRING_TRIM_TO_STRIP"));
+
+        assertTrue(ids.contains("PATHS_GET_TO_PATH_OF"));
+        assertTrue(ids.contains("ARRAYS_ASLIST_TO_LISTOF"));
+        assertTrue(ids.contains("UNMODIFIABLE_TO_COPYOF"));
+        assertTrue(ids.contains("URL_CTOR_TO_URI"));
+        assertTrue(ids.contains("BOOLEAN_CTOR_TO_VALUEOF"));
     }
 
     @Test
@@ -150,6 +156,46 @@ class IndustryJavaModernizationRulesTest {
                   String s = "  x  ".trim();
                 }
                 """, "STRING_TRIM_TO_STRIP", "strip()");
+    }
+
+
+    @Test
+    void pathsGetToPathOf_migrates() {
+        assertRuleFires("""
+                import java.nio.file.Paths;
+                class Demo {
+                  Object p = Paths.get("a");
+                }
+                """, "PATHS_GET_TO_PATH_OF", "Path.of");
+    }
+
+    @Test
+    void arraysAsListToListOf_migrates() {
+        assertRuleFires("""
+                import java.util.Arrays;
+                class Demo {
+                  Object x = Arrays.asList("a", "b");
+                }
+                """, "ARRAYS_ASLIST_TO_LISTOF", "List.of");
+    }
+
+    @Test
+    void booleanCtorToValueOf_migrates() {
+        assertRuleFires("""
+                class Demo {
+                  Boolean b = new Boolean(true);
+                }
+                """, "BOOLEAN_CTOR_TO_VALUEOF", "Boolean.valueOf");
+    }
+
+    @Test
+    void collectionsEmptyListToListOf_migrates() {
+        assertRuleFires("""
+                import java.util.Collections;
+                class Demo {
+                  Object x = Collections.emptyList();
+                }
+                """, "COLLECTIONS_EMPTYLIST_TO_LISTOF", "List.of()");
     }
 
     private static void assertRuleFires(String source, String ruleId, String afterContains) {

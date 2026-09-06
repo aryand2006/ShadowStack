@@ -344,6 +344,16 @@ public class PythonAdapter implements LanguageAdapter {
         candidates.addAll(detectItertoolsAliases(source, codeMask, lines, relPath));
         candidates.addAll(detectReduce(source, codeMask, lines, relPath));
         candidates.addAll(detectMoreLegacyImports(lines, codeMask, source, relPath));
+        candidates.addAll(detectEvenMoreLegacyImports(lines, codeMask, source, relPath));
+        candidates.addAll(detectCmpFunction(source, codeMask, lines, relPath));
+        candidates.addAll(detectExecStatement(lines, codeMask, source, relPath));
+        candidates.addAll(detectOctalLiterals(source, codeMask, lines, relPath));
+        candidates.addAll(detectMapNone(source, codeMask, lines, relPath));
+        candidates.addAll(detectFilterNone(source, codeMask, lines, relPath));
+        candidates.addAll(detectTypesModuleAliases(source, codeMask, lines, relPath));
+        candidates.addAll(detectOldMetaclass(lines, codeMask, source, relPath));
+        candidates.addAll(detectPercentStringFormat(lines, codeMask, source, relPath));
+        candidates.addAll(detectDictKeysList(source, codeMask, lines, relPath));
         return candidates;
     }
 
@@ -815,6 +825,271 @@ public class PythonAdapter implements LanguageAdapter {
         }
         return out;
     }
+
+    private List<RefactorCandidate> detectEvenMoreLegacyImports(
+            String[] lines, boolean[] codeMask, String source, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        String[][] imports = {
+                {"CGIHTTPServer", "http.server as CGIHTTPServer", "py.import_cgihttpserver",
+                        "CGIHTTPServer → http.server"},
+                {"SimpleHTTPServer", "http.server as SimpleHTTPServer", "py.import_simplehttpserver",
+                        "SimpleHTTPServer → http.server"},
+                {"Cookie", "http.cookies as Cookie", "py.import_cookie", "Cookie → http.cookies"},
+                {"cookielib", "http.cookiejar as cookielib", "py.import_cookielib",
+                        "cookielib → http.cookiejar"},
+                {"htmlentitydefs", "html.entities as htmlentitydefs", "py.import_htmlentitydefs",
+                        "htmlentitydefs → html.entities"},
+                {"HTMLParser", "html.parser as HTMLParser", "py.import_htmlparser",
+                        "HTMLParser → html.parser"},
+                {"Tkinter", "tkinter as Tkinter", "py.import_tkinter", "Tkinter → tkinter"},
+                {"tkFileDialog", "tkinter.filedialog as tkFileDialog", "py.import_tkfiledialog",
+                        "tkFileDialog → tkinter.filedialog"},
+                {"anydbm", "dbm as anydbm", "py.import_anydbm", "anydbm → dbm"},
+                {"whichdb", "dbm as whichdb", "py.import_whichdb", "whichdb → dbm"},
+                {"dumbdbm", "dbm.dumb as dumbdbm", "py.import_dumbdbm", "dumbdbm → dbm.dumb"},
+                {"gdbm", "dbm.gnu as gdbm", "py.import_gdbm", "gdbm → dbm.gnu"},
+                {"xmlrpclib", "xmlrpc.client as xmlrpclib", "py.import_xmlrpclib",
+                        "xmlrpclib → xmlrpc.client"},
+                {"SimpleXMLRPCServer", "xmlrpc.server as SimpleXMLRPCServer", "py.import_simplexmlrpcserver",
+                        "SimpleXMLRPCServer → xmlrpc.server"},
+                {"DocXMLRPCServer", "xmlrpc.server as DocXMLRPCServer", "py.import_docxmlrpcserver",
+                        "DocXMLRPCServer → xmlrpc.server"},
+                {"SocketServer", "socketserver as SocketServer", "py.import_socketserver_alias",
+                        "SocketServer → socketserver"},
+                {"__builtin__", "builtins as __builtin__", "py.import_builtin_dunder",
+                        "__builtin__ → builtins"},
+                {"imp", "importlib as imp", "py.import_imp", "imp → importlib"},
+                {"_winreg", "winreg as _winreg", "py.import_winreg", "_winreg → winreg"},
+                {"copy_reg", "copyreg as copy_reg", "py.import_copy_reg", "copy_reg → copyreg"},
+                {"repr", "reprlib as repr", "py.import_reprlib", "repr → reprlib"},
+                {"dummy_thread", "_thread as dummy_thread", "py.import_dummy_thread",
+                        "dummy_thread → _thread"},
+                {"future_builtins", "builtins as future_builtins", "py.import_future_builtins",
+                        "future_builtins removed"}
+        };
+        int offset = 0;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            String trimmed = line.stripLeading();
+            for (String[] pair : imports) {
+                String needleImp = "import " + pair[0];
+                int at = line.indexOf(needleImp);
+                if (trimmed.startsWith(needleImp) && !trimmed.contains(" as ")
+                        && at >= 0 && isCodeAt(codeMask, offset + at)) {
+                    String replaced = line.replaceFirst(
+                            "\\bimport\\s+" + Pattern.quote(pair[0]) + "\\b",
+                            "import " + pair[1]);
+                    out.add(buildCandidate(relPath, i + 1, i + 1, line, replaced,
+                            pair[2], pair[3], "MODERNIZATION",
+                            0.9, RiskTier.LOW,
+                            "Module renamed in Python 3; keep alias for call-site compatibility."));
+                }
+            }
+            offset += line.length() + 1;
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectCmpFunction(String source, boolean[] codeMask,
+                                                      String[] lines, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        Pattern p = Pattern.compile("\\bcmp\\s*\\(");
+        Matcher m = p.matcher(source);
+        while (m.find()) {
+            if (!isCodeAt(codeMask, m.start())) continue;
+            int lineNumber = lineOf(source, m.start());
+            String original = lines[lineNumber - 1];
+            String replaced = original.replaceFirst("\\bcmp\\s*\\(", "((a, b) and (a > b) - (a < b) or 0) and (lambda a, b: (a > b) - (a < b))(");
+            // Prefer a clean lambda call form:
+            replaced = original.replaceFirst("\\bcmp\\s*\\(", "(lambda a, b: (a > b) - (a < b))(");
+            out.add(buildCandidate(relPath, lineNumber, lineNumber, original, replaced,
+                    "py.cmp_removed", "cmp() removed → rich comparison lambda",
+                    "MODERNIZATION", 0.7, RiskTier.MODERATE,
+                    "cmp() was removed in Python 3."));
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectExecStatement(String[] lines, boolean[] codeMask,
+                                                        String source, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        int offset = 0;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            String trimmed = line.stripLeading();
+            if (trimmed.startsWith("exec ") && !trimmed.startsWith("exec(")) {
+                int at = line.indexOf("exec");
+                if (at >= 0 && isCodeAt(codeMask, offset + at)) {
+                    String rest = trimmed.substring(4).stripLeading();
+                    String indent = line.substring(0, line.length() - trimmed.length());
+                    String replaced = indent + "exec(" + rest + ")";
+                    out.add(buildCandidate(relPath, i + 1, i + 1, line, replaced,
+                            "py.exec_stmt_to_call", "exec statement → exec()",
+                            "MODERNIZATION", 0.85, RiskTier.MODERATE,
+                            "exec is a function in Python 3."));
+                }
+            }
+            offset += line.length() + 1;
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectOctalLiterals(String source, boolean[] codeMask,
+                                                        String[] lines, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        Pattern p = Pattern.compile("\\b0([0-7]+)\\b");
+        Matcher m = p.matcher(source);
+        while (m.find()) {
+            if (!isCodeAt(codeMask, m.start())) continue;
+            // skip if already 0o or 0x/0b
+            if (m.start() > 0) {
+                char prev = source.charAt(m.start() - 1);
+                if (Character.isLetter(prev)) continue;
+            }
+            int lineNumber = lineOf(source, m.start());
+            String original = lines[lineNumber - 1];
+            String replaced = original.replaceFirst("\\b0" + m.group(1) + "\\b", "0o" + m.group(1));
+            if (!replaced.equals(original)) {
+                out.add(buildCandidate(relPath, lineNumber, lineNumber, original, replaced,
+                        "py.octal_literal_0o", "0NNN → 0oNNN octal literal",
+                        "MODERNIZATION", 0.8, RiskTier.LOW,
+                        "Python 3 requires the 0o prefix for octal literals."));
+            }
+        }
+        return out;
+    }
+
+
+    private List<RefactorCandidate> detectMapNone(String source, boolean[] codeMask,
+                                                  String[] lines, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        Pattern p = Pattern.compile("\\bmap\\s*\\(\\s*None\\s*,");
+        Matcher m = p.matcher(source);
+        while (m.find()) {
+            if (!isCodeAt(codeMask, m.start())) continue;
+            int lineNumber = lineOf(source, m.start());
+            String original = lines[lineNumber - 1];
+            String replaced = original.replaceFirst("\\bmap\\s*\\(\\s*None\\s*,", "list(zip(");
+            // crude: map(None, a, b) ≈ list(zip(a, b)) — closing paren still wrong; mark as review
+            out.add(buildCandidate(relPath, lineNumber, lineNumber, original, replaced + "  # REVIEW: was map(None,...)",
+                    "py.map_none_to_zip", "map(None, ...) → zip(...)",
+                    "MODERNIZATION", 0.55, RiskTier.MODERATE,
+                    "map(None, ...) zip behavior was removed; use zip and review parentheses."));
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectFilterNone(String source, boolean[] codeMask,
+                                                     String[] lines, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        Pattern p = Pattern.compile("\\bfilter\\s*\\(\\s*None\\s*,");
+        Matcher m = p.matcher(source);
+        while (m.find()) {
+            if (!isCodeAt(codeMask, m.start())) continue;
+            int lineNumber = lineOf(source, m.start());
+            String original = lines[lineNumber - 1];
+            String replaced = original.replaceFirst("\\bfilter\\s*\\(\\s*None\\s*,", "list(filter(None,");
+            out.add(buildCandidate(relPath, lineNumber, lineNumber, original, replaced,
+                    "py.filter_none_list", "filter(None, x) → list(filter(None, x))",
+                    "MODERNIZATION", 0.7, RiskTier.LOW,
+                    "filter returns an iterator in Python 3; list() preserves Py2 materialization."));
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectTypesModuleAliases(String source, boolean[] codeMask,
+                                                             String[] lines, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        String[][] pairs = {
+                {"types.StringType", "str", "py.types_stringtype", "types.StringType → str"},
+                {"types.UnicodeType", "str", "py.types_unicodetype", "types.UnicodeType → str"},
+                {"types.IntType", "int", "py.types_inttype", "types.IntType → int"},
+                {"types.LongType", "int", "py.types_longtype", "types.LongType → int"},
+                {"types.FloatType", "float", "py.types_floattype", "types.FloatType → float"},
+                {"types.BooleanType", "bool", "py.types_booleantype", "types.BooleanType → bool"},
+                {"types.ListType", "list", "py.types_listtype", "types.ListType → list"},
+                {"types.DictType", "dict", "py.types_dicttype", "types.DictType → dict"},
+                {"types.TupleType", "tuple", "py.types_tupletype", "types.TupleType → tuple"},
+                {"types.NoneType", "type(None)", "py.types_nonetype", "types.NoneType → type(None)"}
+        };
+        for (String[] pair : pairs) {
+            out.addAll(detectIdentifierRewrite(source, codeMask, lines, relPath,
+                    pair[0], pair[1], pair[2], pair[3],
+                    pair[0] + " was removed; use " + pair[1] + " in Python 3."));
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectOldMetaclass(String[] lines, boolean[] codeMask,
+                                                       String source, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        Pattern p = Pattern.compile("^([ \\t]*)__metaclass__\\s*=\\s*(.+)$");
+        int offset = 0;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            Matcher m = p.matcher(line);
+            if (m.matches()) {
+                int at = line.indexOf("__metaclass__");
+                if (at >= 0 && isCodeAt(codeMask, offset + at)) {
+                    String indent = m.group(1);
+                    String meta = m.group(2).strip();
+                    String replaced = indent + "# PYTHON3: move metaclass=" + meta + " into class declaration";
+                    out.add(buildCandidate(relPath, i + 1, i + 1, line, replaced,
+                            "py.metaclass_attr_to_kwarg", "__metaclass__ → class Foo(metaclass=...)",
+                            "MODERNIZATION", 0.75, RiskTier.MODERATE,
+                            "Python 3 uses metaclass= class keyword argument."));
+                }
+            }
+            offset += line.length() + 1;
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectPercentStringFormat(String[] lines, boolean[] codeMask,
+                                                              String source, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        Pattern p = Pattern.compile("^([ \\t]*)(.+?)\\s*%\\s*([^#]+)$");
+        int offset = 0;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            String trimmed = line.stripLeading();
+            if (trimmed.contains("%") && (trimmed.contains("\"") || trimmed.contains("'"))
+                    && !trimmed.startsWith("#") && !trimmed.contains("%.") && !trimmed.contains("% =")) {
+                int pct = line.indexOf('%');
+                if (pct > 0 && isCodeAt(codeMask, offset + pct)
+                        && (line.contains("%s") || line.contains("%d") || line.contains("%r") || line.contains("%("))) {
+                    String indent = line.substring(0, line.length() - trimmed.length());
+                    String replaced = indent + "# TODO pyupgrade: convert % formatting → f-string/format: " + trimmed;
+                    out.add(buildCandidate(relPath, i + 1, i + 1, line, replaced,
+                            "py.percent_format_to_fstring", "% formatting → f-string/format review",
+                            "MODERNIZATION", 0.5, RiskTier.LOW,
+                            "Prefer f-strings or str.format over % formatting."));
+                }
+            }
+            offset += line.length() + 1;
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectDictKeysList(String source, boolean[] codeMask,
+                                                       String[] lines, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        Pattern p = Pattern.compile("\\blist\\(\\s*([A-Za-z_][\\w.]*)\\.(keys|values|items)\\(\\s*\\)\\s*\\)");
+        Matcher m = p.matcher(source);
+        while (m.find()) {
+            if (!isCodeAt(codeMask, m.start())) continue;
+            int lineNumber = lineOf(source, m.start());
+            String original = lines[lineNumber - 1];
+            // In Py3 these already return views; list() may be intentional. Suggest review only when assigned from py2 style.
+            String replaced = original.replace(m.group(), m.group(1) + "." + m.group(2) + "()");
+            out.add(buildCandidate(relPath, lineNumber, lineNumber, original, replaced,
+                    "py.list_dict_views_optional", "list(d.keys()) → d.keys() (view)",
+                    "MODERNIZATION", 0.45, RiskTier.LOW,
+                    "dict views are iterable in Python 3; drop list() if materialization is unnecessary."));
+        }
+        return out;
+    }
+
 
     private List<RefactorCandidate> detectIdentifierRewrite(
             String source, boolean[] codeMask, String[] lines, String relPath,

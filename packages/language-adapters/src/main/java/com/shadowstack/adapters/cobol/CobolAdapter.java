@@ -220,6 +220,27 @@ public class CobolAdapter implements LanguageAdapter {
         out.addAll(detectWriteFile(source, relPath, fixed));
         out.addAll(detectCallProgram(source, relPath, fixed));
         out.addAll(detectContinue(source, relPath, fixed));
+        out.addAll(detectRewrite(source, relPath, fixed));
+        out.addAll(detectDelete(source, relPath, fixed));
+        out.addAll(detectSort(source, relPath, fixed));
+        out.addAll(detectMerge(source, relPath, fixed));
+        out.addAll(detectEvaluate(source, relPath, fixed));
+        out.addAll(detectSearch(source, relPath, fixed));
+        out.addAll(detectStart(source, relPath, fixed));
+        out.addAll(detectRelease(source, relPath, fixed));
+        out.addAll(detectReturnFile(source, relPath, fixed));
+        out.addAll(detectCancel(source, relPath, fixed));
+        out.addAll(detectExitSection(source, relPath, fixed));
+        out.addAll(detectExitParagraph(source, relPath, fixed));
+        out.addAll(detectMoveCorresponding(source, relPath, fixed));
+        out.addAll(detectInspectTallying(source, relPath, fixed));
+        out.addAll(detectPerformUntil(source, relPath, fixed));
+        out.addAll(detectPerformVarying(source, relPath, fixed));
+        out.addAll(detectPerformTimes(source, relPath, fixed));
+        out.addAll(detectGoDepending(source, relPath, fixed));
+        out.addAll(detectSetAddress(source, relPath, fixed));
+        out.addAll(detectAllocate(source, relPath, fixed));
+        out.addAll(detectFree(source, relPath, fixed));
         return out;
     }
 
@@ -454,6 +475,50 @@ public class CobolAdapter implements LanguageAdapter {
             Pattern.compile("(?i)^(\\s*)WRITE\\s+([A-Z0-9-]+)(?:\\s+FROM\\s+([A-Z0-9-]+))?\\s*\\.?\\s*$");
     private static final Pattern CALL_STMT =
             Pattern.compile("(?i)^(\\s*)CALL\\s+(\"[^\"]+\"|'[^']+'|[A-Z0-9-]+)(?:\\s+USING\\s+.+?)?\\s*\\.?\\s*$");
+
+    private static final Pattern REWRITE_STMT =
+            Pattern.compile("(?i)^(\\s*)REWRITE\\s+([A-Z0-9-]+)(?:\\s+FROM\\s+([A-Z0-9-]+))?\\s*\\.?\\s*$");
+    private static final Pattern DELETE_STMT =
+            Pattern.compile("(?i)^(\\s*)DELETE\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern SORT_STMT =
+            Pattern.compile("(?i)^(\\s*)SORT\\s+([A-Z0-9-]+)\\b.*$");
+    private static final Pattern MERGE_STMT =
+            Pattern.compile("(?i)^(\\s*)MERGE\\s+([A-Z0-9-]+)\\b.*$");
+    private static final Pattern EVALUATE_STMT =
+            Pattern.compile("(?i)^(\\s*)EVALUATE\\s+(.+?)\\s*\\.?\\s*$");
+    private static final Pattern SEARCH_STMT =
+            Pattern.compile("(?i)^(\\s*)SEARCH\\s+([A-Z0-9-]+)\\b.*$");
+    private static final Pattern START_STMT =
+            Pattern.compile("(?i)^(\\s*)START\\s+([A-Z0-9-]+)\\b.*$");
+    private static final Pattern RELEASE_STMT =
+            Pattern.compile("(?i)^(\\s*)RELEASE\\s+([A-Z0-9-]+)(?:\\s+FROM\\s+([A-Z0-9-]+))?\\s*\\.?\\s*$");
+    private static final Pattern RETURN_FILE_STMT =
+            Pattern.compile("(?i)^(\\s*)RETURN\\s+([A-Z0-9-]+)(?:\\s+INTO\\s+([A-Z0-9-]+))?\\s*\\.?\\s*$");
+    private static final Pattern CANCEL_STMT =
+            Pattern.compile("(?i)^(\\s*)CANCEL\\s+(\"[^\"]+\"|'[^']+'|[A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern EXIT_SECTION_STMT =
+            Pattern.compile("(?i)^(\\s*)EXIT\\s+SECTION\\s*\\.?\\s*$");
+    private static final Pattern EXIT_PARAGRAPH_STMT =
+            Pattern.compile("(?i)^(\\s*)EXIT\\s+PARAGRAPH\\s*\\.?\\s*$");
+    private static final Pattern MOVE_CORR_STMT =
+            Pattern.compile("(?i)^(\\s*)MOVE\\s+CORRESPONDING\\s+([A-Z0-9-]+)\\s+TO\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern INSPECT_TALLYING_STMT =
+            Pattern.compile("(?i)^(\\s*)INSPECT\\s+([A-Z0-9-]+)\\s+TALLYING\\b.*$");
+    private static final Pattern PERFORM_UNTIL_STMT =
+            Pattern.compile("(?i)^(\\s*)PERFORM\\s+([A-Z0-9-]+)\\s+UNTIL\\s+(.+?)\\s*\\.?\\s*$");
+    private static final Pattern PERFORM_VARYING_STMT =
+            Pattern.compile("(?i)^(\\s*)PERFORM\\s+([A-Z0-9-]+)\\s+VARYING\\b.*$");
+    private static final Pattern PERFORM_TIMES_STMT =
+            Pattern.compile("(?i)^(\\s*)PERFORM\\s+([A-Z0-9-]+)\\s+([0-9]+|[A-Z0-9-]+)\\s+TIMES\\s*\\.?\\s*$");
+    private static final Pattern GO_DEPENDING_STMT =
+            Pattern.compile("(?i)^(\\s*)GO\\s+TO\\s+(.+?)\\s+DEPENDING\\s+ON\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern SET_ADDRESS_STMT =
+            Pattern.compile("(?i)^(\\s*)SET\\s+ADDRESS\\s+OF\\s+([A-Z0-9-]+)\\s+TO\\s+(.+?)\\s*\\.?\\s*$");
+    private static final Pattern ALLOCATE_STMT =
+            Pattern.compile("(?i)^(\\s*)ALLOCATE\\s+([A-Z0-9-]+)\\b.*$");
+    private static final Pattern FREE_STMT =
+            Pattern.compile("(?i)^(\\s*)FREE\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+
     private static final Pattern CONTINUE_STMT =
             Pattern.compile("(?i)^(\\s*)CONTINUE\\s*\\.?\\s*$");
 
@@ -698,6 +763,225 @@ public class CobolAdapter implements LanguageAdapter {
                 }, 0.7, RiskTier.MODERATE,
                 "CALL maps to a method or program invocation");
     }
+
+
+    private List<RefactorCandidate> detectRewrite(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, REWRITE_STMT, "cobol.rewrite_to_update",
+                "REWRITE → record update",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String rec = toJavaIdent(m.group(2));
+                    String from = m.group(3) != null ? toJavaIdent(m.group(3)) : rec;
+                    return indent + "/* REWRITE */ " + rec + "Writer.update(" + from + ");";
+                }, 0.62, RiskTier.HIGH,
+                "REWRITE maps to an update of an existing indexed/relative record");
+    }
+
+    private List<RefactorCandidate> detectDelete(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, DELETE_STMT, "cobol.delete_to_delete",
+                "DELETE → record delete",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + "/* DELETE */ " + toJavaIdent(m.group(2)) + "Writer.delete();",
+                0.62, RiskTier.HIGH,
+                "DELETE removes the current record from a file");
+    }
+
+    private List<RefactorCandidate> detectSort(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, SORT_STMT, "cobol.sort_to_sort",
+                "SORT → Collections.sort / stream sorted",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + "java.util.Collections.sort(" + toJavaIdent(m.group(2)) + ");",
+                0.55, RiskTier.HIGH,
+                "SORT file/table maps to an in-memory or external sort service");
+    }
+
+    private List<RefactorCandidate> detectMerge(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, MERGE_STMT, "cobol.merge_to_merge",
+                "MERGE → stream merge",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + "/* MERGE */ " + toJavaIdent(m.group(2)) + " = mergeSortedInputs();",
+                0.55, RiskTier.HIGH,
+                "MERGE combines sorted inputs into a sorted output");
+    }
+
+    private List<RefactorCandidate> detectEvaluate(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, EVALUATE_STMT, "cobol.evaluate_to_switch",
+                "EVALUATE → switch/expression",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + "switch (" + toJavaIdent(m.group(2).trim().split("\\s+")[0]) + ") { /* EVALUATE */ }",
+                0.6, RiskTier.MODERATE,
+                "EVALUATE TRUE/subject maps to switch or if-else chains");
+    }
+
+    private List<RefactorCandidate> detectSearch(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, SEARCH_STMT, "cobol.search_to_lookup",
+                "SEARCH → table lookup",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + "/* SEARCH */ " + toJavaIdent(m.group(2)) + ".stream().filter(/* WHEN */).findFirst();",
+                0.58, RiskTier.HIGH,
+                "SEARCH/SEARCH ALL maps to linear/binary lookup over a table");
+    }
+
+    private List<RefactorCandidate> detectStart(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, START_STMT, "cobol.start_to_position",
+                "START → cursor position",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + "/* START */ " + toJavaIdent(m.group(2)) + ".position(/* KEY */);",
+                0.58, RiskTier.HIGH,
+                "START positions a file for subsequent READ NEXT operations");
+    }
+
+    private List<RefactorCandidate> detectRelease(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, RELEASE_STMT, "cobol.release_to_emit",
+                "RELEASE → sort emit",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String rec = toJavaIdent(m.group(2));
+                    String from = m.group(3) != null ? toJavaIdent(m.group(3)) : rec;
+                    return indent + "/* RELEASE */ " + rec + "Sort.emit(" + from + ");";
+                }, 0.6, RiskTier.HIGH,
+                "RELEASE feeds records into a SORT/MERGE work file");
+    }
+
+    private List<RefactorCandidate> detectReturnFile(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, RETURN_FILE_STMT, "cobol.return_to_poll",
+                "RETURN → sort output poll",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String file = toJavaIdent(m.group(2));
+                    String into = m.group(3) != null ? toJavaIdent(m.group(3)) : file + "Record";
+                    return indent + into + " = /* RETURN */ " + file + "Sort.poll();";
+                }, 0.6, RiskTier.HIGH,
+                "RETURN retrieves the next record from SORT/MERGE output");
+    }
+
+    private List<RefactorCandidate> detectCancel(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, CANCEL_STMT, "cobol.cancel_to_unload",
+                "CANCEL → unload module",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String target = m.group(2);
+                    char q = target.isEmpty() ? 0 : target.charAt(0);
+                    if ((q == '"' || q == '\'') && target.length() >= 2 && target.charAt(target.length() - 1) == q) {
+                        String name = target.substring(1, target.length() - 1);
+                        return indent + "/* CANCEL */ unload(" + "\"" + name + "\"" + ");";
+                    }
+                    return indent + "/* CANCEL */ unload(" + toCamel(target) + ");";
+                }, 0.65, RiskTier.MODERATE,
+                "CANCEL unloads a dynamically called program module");
+    }
+
+
+    private List<RefactorCandidate> detectExitSection(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, EXIT_SECTION_STMT, "cobol.exit_section_to_return",
+                "EXIT SECTION → return",
+                m -> (m.group(1) != null ? m.group(1) : "") + "return; // EXIT SECTION",
+                0.85, RiskTier.LOW,
+                "EXIT SECTION returns from the current section/method");
+    }
+
+    private List<RefactorCandidate> detectExitParagraph(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, EXIT_PARAGRAPH_STMT, "cobol.exit_paragraph_to_return",
+                "EXIT PARAGRAPH → return",
+                m -> (m.group(1) != null ? m.group(1) : "") + "return; // EXIT PARAGRAPH",
+                0.85, RiskTier.LOW,
+                "EXIT PARAGRAPH returns from the current paragraph/method");
+    }
+
+    private List<RefactorCandidate> detectMoveCorresponding(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, MOVE_CORR_STMT, "cobol.move_corresponding",
+                "MOVE CORRESPONDING → field-wise copy",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + "/* MOVE CORRESPONDING */ copyCorresponding("
+                        + toJavaIdent(m.group(2)) + ", " + toJavaIdent(m.group(3)) + ");",
+                0.7, RiskTier.MODERATE,
+                "MOVE CORRESPONDING copies matching subordinate fields by name");
+    }
+
+    private List<RefactorCandidate> detectInspectTallying(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, INSPECT_TALLYING_STMT, "cobol.inspect_tallying",
+                "INSPECT TALLYING → count matches",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String target = toJavaIdent(m.group(2));
+                    return indent + "/* INSPECT TALLYING */ int tally = countMatches(" + target + ");";
+                }, 0.68, RiskTier.MODERATE,
+                "INSPECT TALLYING counts character/string occurrences");
+    }
+
+    private List<RefactorCandidate> detectPerformUntil(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, PERFORM_UNTIL_STMT, "cobol.perform_until_to_while",
+                "PERFORM … UNTIL → while",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String para = toCamel(m.group(2));
+                    String cond = m.group(3).trim().replace('-', '_');
+                    return indent + "while (!(" + cond + ")) { " + para + "(); }";
+                }, 0.7, RiskTier.MODERATE,
+                "PERFORM UNTIL becomes a while loop with inverted condition");
+    }
+
+    private List<RefactorCandidate> detectPerformVarying(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, PERFORM_VARYING_STMT, "cobol.perform_varying_to_for",
+                "PERFORM VARYING → for",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + "for (/* VARYING */ ; ; ) { " + toCamel(m.group(2)) + "(); }",
+                0.65, RiskTier.MODERATE,
+                "PERFORM VARYING maps to a counted for-loop");
+    }
+
+    private List<RefactorCandidate> detectPerformTimes(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, PERFORM_TIMES_STMT, "cobol.perform_times_to_for",
+                "PERFORM n TIMES → for",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String para = toCamel(m.group(2));
+                    String times = toJavaIdent(m.group(3));
+                    return indent + "for (int __i = 0; __i < " + times + "; __i++) { " + para + "(); }";
+                }, 0.78, RiskTier.LOW,
+                "PERFORM n TIMES becomes a simple counted loop");
+    }
+
+    private List<RefactorCandidate> detectGoDepending(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, GO_DEPENDING_STMT, "cobol.goto_depending_to_switch",
+                "GO TO … DEPENDING ON → switch",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String targets = m.group(2).trim();
+                    String key = toJavaIdent(m.group(3));
+                    return indent + "switch (" + key + ") { /* GO TO " + targets + " DEPENDING ON */ }";
+                }, 0.72, RiskTier.MODERATE,
+                "GO TO DEPENDING ON is a classic switch dispatch");
+    }
+
+    private List<RefactorCandidate> detectSetAddress(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, SET_ADDRESS_STMT, "cobol.set_address_to_pointer",
+                "SET ADDRESS OF → pointer assign",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + "/* SET ADDRESS OF */ " + toJavaIdent(m.group(2))
+                        + "Ptr = " + m.group(3).trim().replace('-', '_') + ";",
+                0.6, RiskTier.HIGH,
+                "SET ADDRESS OF manipulates based storage pointers");
+    }
+
+    private List<RefactorCandidate> detectAllocate(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, ALLOCATE_STMT, "cobol.allocate_to_new",
+                "ALLOCATE → new",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + toJavaIdent(m.group(2)) + " = new " + toJavaIdent(m.group(2)) + "Type();",
+                0.65, RiskTier.MODERATE,
+                "ALLOCATE acquires based storage / heap memory");
+    }
+
+    private List<RefactorCandidate> detectFree(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, FREE_STMT, "cobol.free_to_null",
+                "FREE → release/null",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + toJavaIdent(m.group(2)) + " = null; // FREE",
+                0.7, RiskTier.MODERATE,
+                "FREE releases based storage");
+    }
+
 
     private List<RefactorCandidate> detectContinue(String source, String relPath, boolean fixed) {
         return detectLinePattern(source, relPath, fixed, CONTINUE_STMT, "cobol.continue_to_empty",
