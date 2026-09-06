@@ -2,18 +2,21 @@
 
 **The Verified Language Modernization Engine**
 
-> Modernize legacy Java systems to Java 17/21/25, safely, verifiably, and provably, with the strongest trust guarantees in the market.
+> Modernize legacy systems with compile- and syntax-gated patches, and attach verification evidence to every item in the review queue.
 
 ---
 
 ## What Is ShadowStack?
 
-ShadowStack is a production-grade enterprise platform for **verified code modernization**. It transforms legacy codebases into modern, maintainable systems through a pipeline that is:
+ShadowStack is an enterprise modernization workbench for **verified code conversion**.
+Java changes are compile-gated; Python and JavaScript use runtime syntax checks; COBOL and C# use structural gates (plus optional toolchains when installed). Soft/WARN results do **not** enter the review queue.
 
-- **Verifiable**: Every transformation is proven correct through multi-layer verification
+The pipeline is:
+
+- **Fail-closed**: Only hard verification PASS promotes a patch to pending review
 - **Auditable**: Every action is recorded in an immutable audit log
-- **Human-Controlled**: No automatic final conversion. Every change requires explicit developer approval
-- **Intelligent**: A migration corpus learns from every accepted and rejected transformation
+- **Human-Controlled**: No automatic final conversion — every change requires explicit developer approval
+- **Multi-language**: Java, Python, COBOL, JavaScript, and C# adapters with honest capability status
 
 ShadowStack does not compete on autocomplete. It competes on **trust, proof, controlled transformation, and recorded migration intelligence**.
 
@@ -41,11 +44,11 @@ ShadowStack is built around a **pluggable language adapter framework**:
 
 | Adapter | Status | Description |
 |---------|--------|-------------|
-| **Java** | ✅ Full | OpenRewrite/Sonar classics: anon→lambda, diamond, `List.sort`, `StringBuffer`→`StringBuilder`, `Vector`→`ArrayList`, `Hashtable`→`HashMap`, `Stack`→`ArrayDeque`, boxing `valueOf`, `size()==0`→`isEmpty()`, `indexOf`→`contains`, `Class.newInstance`, literal-first `equals`, `toUpper/LowerCase(Locale.ROOT)`, `Collections.EMPTY_*`→`empty*()`, `getBytes(UTF_8)`, `URLEncoder` UTF-8, `trim`→`strip`
-| **Python** | ✅ Adapter (live convert) | lib2to3/modernize set: print/print>>, xrange, iter*, imap/izip/ifilter, reduce→functools, unicode/basestring, except/as, `<>`, has_key, raw_input, long, raise, file, apply, urllib2/ConfigParser/Queue/thread/commands/urlparse/httplib/BaseHTTPServer/md5/sha/sets/UserDict/robotparser, execfile, u-prefix, unichr, reload, intern, StandardError, `.next()`, backticks, cPickle/cStringIO/__builtin__/Cookie/...
-| **COBOL** | ✅ Adapter (live convert) | Enterprise COBOL→modern: fixed→free, STOP RUN→GOBACK, GO TO→PERFORM, DISPLAY/MOVE/COMPUTE/PERFORM/ADD/SUBTRACT/ACCEPT/MULTIPLY/DIVIDE/INITIALIZE/EXIT PROGRAM/STRING/SET, INSPECT/UNSTRING/OPEN/CLOSE/READ/WRITE/CALL/CONTINUE/REWRITE/DELETE/SORT/MERGE/EVALUATE/SEARCH/START, ALTER flags
-| **JavaScript/TS** | ✅ Full | ES5/CommonJS→modern: var→let, ==→===, require→import, module.exports→export, __dirname/__filename→import.meta, substr→substring, escape/unescape, indexOf→includes
-| **C#** | ✅ Adapter (live convert) | Framework→modern: ArrayList/Hashtable, WebClient→HttpClient, BinaryFormatter/Remoting/Thread.Abort removals, string.Format→interpolation, nameof, nullable enable
+| **Java** | ✅ Full (compile-gated) | OpenRewrite/Sonar classics: anon→lambda, diamond, `List.sort`, `StringBuffer`→`StringBuilder`, `Vector`→`ArrayList`, `Hashtable`→`HashMap`, `Stack`→`ArrayDeque`, boxing `valueOf`, `size()==0`→`isEmpty()`, `indexOf`→`contains`, `Class.newInstance`, literal-first `equals`, `toUpper/LowerCase(Locale.ROOT)`, `Collections.EMPTY_*`→`empty*()`, `getBytes(UTF_8)`, `URLEncoder` UTF-8, `trim`→`strip`
+| **Python** | ✅ Adapter (py_compile-gated) | lib2to3/modernize set: print/print>>, xrange, iter*, imap/izip/ifilter, reduce→functools, unicode/basestring, except/as, `<>`, has_key, raw_input, long, raise, file, apply, urllib2/ConfigParser/Queue/thread/commands/urlparse/httplib/BaseHTTPServer/md5/sha/sets/UserDict/robotparser, execfile, u-prefix, unichr, reload, intern, StandardError, `.next()`, backticks, cPickle/cStringIO/__builtin__/Cookie/...
+| **COBOL** | ✅ Adapter (COBOL-preserving auto-apply) | Enterprise COBOL→modern: fixed→free, STOP RUN→GOBACK, GO TO→PERFORM, DISPLAY/MOVE/COMPUTE/PERFORM/ADD/SUBTRACT/ACCEPT/MULTIPLY/DIVIDE/INITIALIZE/EXIT PROGRAM/STRING/SET, INSPECT/UNSTRING/OPEN/CLOSE/READ/WRITE/CALL/CONTINUE/REWRITE/DELETE/SORT/MERGE/EVALUATE/SEARCH/START, ALTER flags
+| **JavaScript/TS** | ✅ Adapter (node --check) | ES5/CommonJS→modern: var→let, ==→===, require→import, module.exports→export, __dirname/__filename→import.meta, substr→substring, escape/unescape, indexOf→includes
+| **C#** | ✅ Adapter (safe-rename auto-apply) | Framework→modern: ArrayList/Hashtable, WebClient→HttpClient, BinaryFormatter/Remoting/Thread.Abort removals, string.Format→interpolation, nameof, nullable enable
 
 Each adapter implements: `parse()` → `buildSemanticModel()` → `listRefactorCandidates()` → `applyRefactor()` → `verifyPatch()`
 

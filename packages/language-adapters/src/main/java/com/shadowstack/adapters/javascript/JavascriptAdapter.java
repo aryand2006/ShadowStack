@@ -42,7 +42,7 @@ public class JavascriptAdapter implements LanguageAdapter {
     private static final Pattern CALLBACK_ERR =
             Pattern.compile("function\\s*\\(\\s*err\\s*,");
     private static final Pattern OBJECT_ASSIGN =
-            Pattern.compile("\\bObject\\.assign\\s*\\(\\s*\\{\\s*\\}\\s*,");
+            Pattern.compile("\\bObject\\.assign\\s*\\(\\s*\\{\\s*\\}\\s*,\\s*([^)]+)\\)");
     private static final Pattern INDEXOF_STARTS =
             Pattern.compile("\\.indexOf\\(([^)]+)\\)\\s*===\\s*0");
     private static final Pattern STRING_CHARAT0 =
@@ -322,12 +322,8 @@ public class JavascriptAdapter implements LanguageAdapter {
             detect(line, offset, i + 1, relPath, codeMask, CALLBACK_ERR,
                     "js.callback_err_first", "err-first callback → Promise/async",
                     "/* prefer async/await */ function(err,", 0.60, RiskTier.MODERATE, out);
-            detect(line, offset, i + 1, relPath, codeMask, OBJECT_ASSIGN,
-                    "js.object_assign_to_spread", "Object.assign({}, x) → ({...x})",
-                    "({.../* Object.assign */", 0.80, RiskTier.LOW, out);
-            detect(line, offset, i + 1, relPath, codeMask, INDEXOF_STARTS,
-                    "js.indexof_zero_to_startswith", "indexOf(x) === 0 → startsWith(x)",
-                    ".startsWith(", 0.88, RiskTier.LOW, out);
+            detectObjectAssign(line, offset, i + 1, relPath, codeMask, out);
+            detectIndexOfStartsWith(line, offset, i + 1, relPath, codeMask, out);
             detect(line, offset, i + 1, relPath, codeMask, STRING_CHARAT0,
                     "js.charat0_to_at", "charAt(0) → at(0) / [0]",
                     ".at(0)", 0.70, RiskTier.LOW, out);
@@ -409,6 +405,30 @@ public class JavascriptAdapter implements LanguageAdapter {
             out.add(candidate(relPath, lineNumber, line, after,
                     "js.indexof_to_includes", "indexOf membership check → includes",
                     0.92, RiskTier.LOW));
+        }
+    }
+
+    private void detectObjectAssign(String line, int offset, int lineNumber, String relPath,
+                                    boolean[] mask, List<RefactorCandidate> out) {
+        Matcher matcher = OBJECT_ASSIGN.matcher(line);
+        while (matcher.find()) {
+            if (!isCodeAt(mask, offset + matcher.start())) continue;
+            String after = replaceMatch(line, matcher, "({..." + matcher.group(1).trim() + "})");
+            out.add(candidate(relPath, lineNumber, line, after,
+                    "js.object_assign_to_spread", "Object.assign({}, x) → ({...x})",
+                    0.80, RiskTier.LOW));
+        }
+    }
+
+    private void detectIndexOfStartsWith(String line, int offset, int lineNumber, String relPath,
+                                         boolean[] mask, List<RefactorCandidate> out) {
+        Matcher matcher = INDEXOF_STARTS.matcher(line);
+        while (matcher.find()) {
+            if (!isCodeAt(mask, offset + matcher.start())) continue;
+            String after = replaceMatch(line, matcher, ".startsWith(" + matcher.group(1) + ")");
+            out.add(candidate(relPath, lineNumber, line, after,
+                    "js.indexof_zero_to_startswith", "indexOf(x) === 0 → startsWith(x)",
+                    0.88, RiskTier.LOW));
         }
     }
 

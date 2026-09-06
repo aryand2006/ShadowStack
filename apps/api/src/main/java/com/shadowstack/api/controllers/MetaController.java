@@ -126,7 +126,7 @@ public class MetaController {
                 Map.of(
                         "id", "cobol",
                         "status", "adapter",
-                        "industryAligned", List.of("enterprise COBOL→Java catalogs"),
+                        "industryAligned", List.of("COBOL-preserving modernization (fixed→free, GOBACK, PERFORM)"),
                         "rules", List.of(
                                 "cobol.accept_to_input",
                                 "cobol.add_to_assign",

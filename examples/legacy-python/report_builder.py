@@ -1,83 +1,18 @@
-import types
-# Legacy Python 2 module — ShadowStack modernization demo.
-# Triggers the full lib2to3 / modernize catalog shipped in PythonAdapter.
+# Legacy Python 2 / early-3 modernization corpus (detection-rich).
+# Prefer the single-issue modules below for verify-gated demo patches.
 
 import urllib2
 import ConfigParser
 import Queue
-import thread
-import cPickle
-import cStringIO
-import __builtin__
 
-
-class ReportBuilder:
-    def __init__(self, rows):
-        self.rows = rows
-
-    def render(self):
-        print "Rendering", len(self.rows), "rows"
-        for i in xrange(len(self.rows)):
-            row = self.rows[i]
-            for k, v in row.iteritems():
-                print k, unicode(v)
-        if len(self.rows) <> 0:
-            return self._summarize()
-        return None
-
-    def _summarize(self):
-        try:
-            name = raw_input("name")
-            if self.rows[0].has_key(name):
-                return self.rows[0][name]
-            n = long(1)
-            apply(str, (n,))
-            data = file("seed.txt").read()
-            execfile("hooks.py")
-            msg = u"ok"
-            ch = unichr(65)
-            reload(sys)
-            intern(name)
-            it = iter(self.rows)
-            nxt = it.next()
-            label = `n`
-            return urllib2.urlopen("https://example.invalid/api").read()
-        except StandardError, e:
-            raise ValueError, e
-
-
-# Wave-3 lib2to3 / modernize extras
-import commands
-import urlparse
-import httplib
-import BaseHTTPServer
-import md5
-import sha
-import sets
-import UserDict
-import robotparser
-from itertools import imap, izip, ifilter
-
-def log_err(msg):
-    print >>sys.stderr, msg
-    return reduce(lambda a, b: a + b, imap(str, [msg]), "")
-
-# Additional 2to3 / modernize classics for demo coverage
-import Tkinter
-import tkFileDialog
-import imp
-import copy_reg
-import xmlrpclib
-
-class MetaThing:
-    __metaclass__ = type
-
-def legacy_bits(a, b, path):
-    if cmp(a, b) > 0:
-        exec "x = 1"
-    mode = 0755
-    kinds = (types.IntType, types.StringType, types.DictType)
-    cleaned = filter(None, [a, b, None])
-    zipped = map(None, [a], [b])
-    msg = "path=%s value=%s" % (path, a)
-    return list(d.keys())
+def render(rows):
+    print "Rendering", len(rows), "rows"
+    for i in xrange(len(rows)):
+        row = rows[i]
+        for k, v in row.iteritems():
+            print k, unicode(v)
+    if len(rows) <> 0:
+        name = raw_input("name")
+        if rows[0].has_key(name):
+            return rows[0][name]
+    return None

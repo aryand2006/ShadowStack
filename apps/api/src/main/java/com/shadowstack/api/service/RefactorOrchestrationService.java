@@ -201,7 +201,7 @@ public class RefactorOrchestrationService {
                         .transformedSource(transformed)
                         .build();
                 VerificationPipeline.PipelineResult pipelineResult = pipeline.execute(unit, context);
-                passed = pipelineResult.verdict() != Verdict.FAIL;
+                passed = pipelineResult.verdict() == Verdict.PASS;
                 checks = pipelineResult.layerResults().stream()
                         .map(RefactorOrchestrationService::toCheck)
                         .toList();
@@ -251,7 +251,8 @@ public class RefactorOrchestrationService {
 
                     VerificationResult vr = adapter.verifyPatch(
                             applied, tempRoot, LanguageAdapter.VerificationConfig.defaults());
-                    passed = vr.passed() || vr.verdict() == VerificationResult.Verdict.WARN;
+                    // Company-demo bar: WARN / structural-only must NOT enter PENDING_REVIEW.
+                    passed = vr.verdict() == VerificationResult.Verdict.PASS;
                     checks = vr.layerResults().stream()
                             .map(layer -> new InvariantCheck(
                                     layer.layerName(),
@@ -359,8 +360,13 @@ public class RefactorOrchestrationService {
     public List<PatchDetailResponse> runFullPipeline(UUID projectId) {
         List<CandidateInfo> candidates = runAnalysis(projectId);
         List<PatchDetailResponse> out = new ArrayList<>();
+        String language = projectLanguage.getOrDefault(projectId, "java");
         for (CandidateInfo candidate : candidates) {
             try {
+                if (!isAutoApplicable(language, candidate.ruleName())) {
+                    log.debug("Skipping detect-only rule {} for demo auto-apply", candidate.ruleName());
+                    continue;
+                }
                 PatchDetailResponse generated = generatePatch(projectId, candidate.candidateId());
                 try {
                     runVerification(generated.patchId());
@@ -611,4 +617,56 @@ public class RefactorOrchestrationService {
             return patchId;
         }
     }
+
+    /**
+     * Rules safe to auto-apply into the company-demo review queue.
+     * Detect-only / migration-hint rules stay visible as candidates but are not
+     * promoted to PENDING_REVIEW (they inject cross-language stubs or leave files broken).
+     */
+    static boolean isAutoApplicable(String language, String ruleId) {
+        if (ruleId == null || language == null) {
+            return false;
+        }
+        String lang = language.toLowerCase(java.util.Locale.ROOT);
+        return switch (lang) {
+            case "java" -> true;
+            case "python", "python3", "py" -> ruleId.startsWith("py.");
+            case "cobol", "cbl", "cob" -> Set.of(
+                    "cobol.fixed_to_free",
+                    "cobol.stop_run_to_goback",
+                    "cobol.goto_to_perform",
+                    "cobol.exit_program_to_return",
+                    "cobol.exit_section_to_return",
+                    "cobol.exit_paragraph_to_return",
+                    "cobol.continue_to_empty",
+                    "cobol.alter_removed"
+            ).contains(ruleId);
+            case "javascript", "js", "typescript", "ts" -> Set.of(
+                    "js.var_to_let",
+                    "js.==_to_===",
+                    "js.!=_to_!==",
+                    "js.substr_to_substring",
+                    "js.indexof_to_includes",
+                    "js.indexof_zero_to_startswith",
+                    "js.charat0_to_at",
+                    "js.object_assign_to_spread",
+                    "js.escape_to_encodeuri",
+                    "js.unescape_to_decodeuri",
+                    "js.string_concat_plus"
+            ).contains(ruleId);
+            case "csharp", "cs", "c#" -> Set.of(
+                    "cs.arraylist_to_list",
+                    "cs.hashtable_to_dictionary",
+                    "cs.string_format_to_interpolation",
+                    "cs.stringbuilder_appendformat",
+                    "cs.string_isempty",
+                    "cs.nameof_for_literals",
+                    "cs.nullable_enable",
+                    "cs.readonlycollection_to_ilist",
+                    "cs.concurrentdict_tryadd"
+            ).contains(ruleId);
+            default -> false;
+        };
+    }
+
 }

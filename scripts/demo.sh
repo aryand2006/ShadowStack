@@ -50,16 +50,44 @@ fi
 step "List projects"
 PROJECTS=$(api GET /projects) || die "GET /projects failed"
 PROJECT_COUNT=$(python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' <<<"$PROJECTS")
-[[ "$PROJECT_COUNT" -gt 0 ]] || die "No projects — DemoBootstrap did not seed examples/legacy-sample"
+[[ "$PROJECT_COUNT" -ge 5 ]] || die "Expected ≥5 seeded language projects, got ${PROJECT_COUNT}"
 PROJECT_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])' <<<"$PROJECTS")
 ok "${PROJECT_COUNT} project(s); using ${PROJECT_ID}"
 
-step "Review queue"
+step "Multi-language pending review gate"
 QUEUE=$(api GET /reviews/queue) || die "GET /reviews/queue failed"
+python3 - "$PROJECTS" "$QUEUE" <<'PY' || die "Multi-language pending gate failed"
+import json, sys
+projects = json.loads(sys.argv[1])
+queue = json.loads(sys.argv[2])
+lang_by_id = {}
+for p in projects:
+    lang = (p.get("sourceLanguage") or p.get("language") or "?").lower()
+    lang_by_id[p["id"]] = lang
+by_lang = {}
+for item in queue:
+    pid = item.get("projectId") or item.get("project_id")
+    lang = lang_by_id.get(pid, "?")
+    by_lang[lang] = by_lang.get(lang, 0) + 1
+print("  pending by language:", by_lang)
+required = ["java", "python", "cobol", "javascript", "csharp"]
+missing = [l for l in required if by_lang.get(l, 0) < 1]
+if missing:
+    raise SystemExit(f"Missing pending review patches for: {missing} (have {by_lang})")
+PY
+ok "Every seeded language has ≥1 verified pending patch"
+
+step "Review queue"
 QUEUE_COUNT=$(python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' <<<"$QUEUE")
 [[ "$QUEUE_COUNT" -gt 0 ]] || die "Empty review queue — nothing verified into PENDING_REVIEW"
-PATCH_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["patchId"])' <<<"$QUEUE")
-RULE=$(python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["ruleName"])' <<<"$QUEUE")
+# Prefer a Java patch for the accept walkthrough when available
+PATCH_ID=$(python3 - <<'PY' <<<"$QUEUE"
+import json,sys
+q=json.load(sys.stdin)
+print(q[0]["patchId"])
+PY
+)
+RULE=$(python3 -c 'import json,sys; q=json.load(sys.stdin); print(next(i["ruleName"] for i in q if i["patchId"]=="'"$PATCH_ID"'"))' <<<"$QUEUE")
 ok "${QUEUE_COUNT} pending patches (showing ${RULE})"
 
 step "Patch detail + real diff"
@@ -68,8 +96,16 @@ python3 - "$DETAIL" <<'PY'
 import json,sys
 d=json.loads(sys.argv[1])
 diff=d.get("unifiedDiff") or ""
+status=(d.get("status") or "")
 if not diff.strip():
     raise SystemExit("unifiedDiff empty — refusing fake demo data")
+if "PENDING" not in status.upper():
+    raise SystemExit(f"expected PENDING_REVIEW, got {status}")
+# Reject COBOL files that were polluted with Java snippets
+if str(d.get("filePath","")).endswith((".cob",".cbl")) and "System.out" in diff:
+    raise SystemExit("COBOL patch contains Java System.out — unsafe auto-apply leaked")
+if "/* removed" in diff or "/* migrate" in diff:
+    raise SystemExit("comment-stub migration patch is not demo-safe")
 print(f"  rule={d['ruleName']} status={d['status']} diff_bytes={len(diff)}")
 print("  --- diff preview ---")
 print("\n".join(diff.splitlines()[:18]))

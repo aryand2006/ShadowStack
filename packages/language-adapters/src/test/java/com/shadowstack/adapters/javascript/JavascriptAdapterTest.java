@@ -82,28 +82,78 @@ class JavascriptAdapterTest {
         assertTrue(updated.contains("let"), updated);
         VerificationResult verification = adapter.verifyPatch(
                 patch, tmp, LanguageAdapter.VerificationConfig.defaults());
-        assertNotNull(verification.verdict());
+        assertEquals(VerificationResult.Verdict.PASS, verification.verdict(),
+                () -> String.valueOf(verification.layerResults()));
+        assertTrue(verification.compileSuccess());
     }
 
 
     @Test
     void applies_and_verifies_loose_equality(@TempDir Path tmp) throws Exception {
         Path file = tmp.resolve("eq.js");
-        Files.writeString(file, "var x = 1;\nif (x == \"1\") console.log(x);\n",
+        Files.writeString(file, "function isOne(x) {\n  return x == \"1\";\n}\n",
                 StandardCharsets.UTF_8);
         JavascriptAdapter adapter = new JavascriptAdapter();
         SemanticModel model = adapter.buildSemanticModel(tmp);
         RefactorCandidate target = adapter.listRefactorCandidates(
                         model, LanguageAdapter.RefactorRuleSet.empty()).stream()
-                .filter(c -> "js.==_to_===".equals(c.ruleId()) || "js.var_to_let".equals(c.ruleId()))
+                .filter(c -> "js.==_to_===".equals(c.ruleId()))
                 .findFirst()
                 .orElseThrow();
         PatchResult patch = adapter.applyRefactor(target, tmp);
         assertTrue(patch.success(), () -> String.valueOf(patch.errorMessage()));
+        String updated = Files.readString(file);
+        assertTrue(updated.contains("==="), updated);
         VerificationResult verification = adapter.verifyPatch(
                 patch, tmp, LanguageAdapter.VerificationConfig.defaults());
-        assertNotNull(verification.verdict());
-        assertTrue(verification.compileSuccess()
-                || verification.verdict() != VerificationResult.Verdict.FAIL);
+        assertEquals(VerificationResult.Verdict.PASS, verification.verdict(),
+                () -> String.valueOf(verification.layerResults()));
+        assertTrue(verification.compileSuccess());
+    }
+
+    @Test
+    void applies_and_verifies_object_assign_spread(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("assign.js");
+        Files.writeString(file, "function merge(value) {\n  return Object.assign({}, value);\n}\n",
+                StandardCharsets.UTF_8);
+        JavascriptAdapter adapter = new JavascriptAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        RefactorCandidate target = adapter.listRefactorCandidates(
+                        model, LanguageAdapter.RefactorRuleSet.empty()).stream()
+                .filter(c -> "js.object_assign_to_spread".equals(c.ruleId()))
+                .findFirst()
+                .orElseThrow();
+        PatchResult patch = adapter.applyRefactor(target, tmp);
+        assertTrue(patch.success(), () -> String.valueOf(patch.errorMessage()));
+        String updated = Files.readString(file);
+        assertTrue(updated.contains("{...value}"), updated);
+        assertFalse(updated.contains("Object.assign"), updated);
+        VerificationResult verification = adapter.verifyPatch(
+                patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+        assertEquals(VerificationResult.Verdict.PASS, verification.verdict(),
+                () -> String.valueOf(verification.layerResults()));
+    }
+
+    @Test
+    void applies_and_verifies_startswith(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("starts.js");
+        Files.writeString(file,
+                "function startsWithValue(list, value) {\n  return list.indexOf(value) === 0;\n}\n",
+                StandardCharsets.UTF_8);
+        JavascriptAdapter adapter = new JavascriptAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        RefactorCandidate target = adapter.listRefactorCandidates(
+                        model, LanguageAdapter.RefactorRuleSet.empty()).stream()
+                .filter(c -> "js.indexof_zero_to_startswith".equals(c.ruleId()))
+                .findFirst()
+                .orElseThrow();
+        PatchResult patch = adapter.applyRefactor(target, tmp);
+        assertTrue(patch.success(), () -> String.valueOf(patch.errorMessage()));
+        String updated = Files.readString(file);
+        assertTrue(updated.contains(".startsWith(value)"), updated);
+        VerificationResult verification = adapter.verifyPatch(
+                patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+        assertEquals(VerificationResult.Verdict.PASS, verification.verdict(),
+                () -> String.valueOf(verification.layerResults()));
     }
 }

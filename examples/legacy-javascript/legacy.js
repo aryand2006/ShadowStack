@@ -31,9 +31,9 @@ function legacyHelpers(list, value) {
   var merged = Object.assign({}, value);
   var starts = list.indexOf(value) === 0;
   var first = String(value).charAt(0);
-  function (err, data) {
+  var onDone = function (err, data) {
     if (err) throw err;
     return data;
-  }
-  return { merged, starts, first };
+  };
+  return { merged, starts, first, onDone };
 }

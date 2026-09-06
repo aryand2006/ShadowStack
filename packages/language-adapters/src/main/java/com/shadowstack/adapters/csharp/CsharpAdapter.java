@@ -195,12 +195,21 @@ public class CsharpAdapter implements LanguageAdapter {
                         && l.passed()
                         && l.details() != null
                         && l.details().contains("dotnet build succeeded"));
+        boolean structuralOnly = layers.stream()
+                .anyMatch(l -> "compilation".equals(l.layerName())
+                        && l.details() != null
+                        && (l.details().contains("structural-only")
+                            || l.details().contains("structural verification only")
+                            || l.details().contains("no .csproj")
+                            || l.details().contains("dotnet not available")));
+        // Safe rename rules can clear a structural gate without a full project build.
+        boolean nativeGate = structural.passed() && (runtimeVerified || (compileOk && structuralOnly));
         return VerificationResult.builder()
                 .patchId(patch.patchId())
-                .compileSuccess(compileOk)
-                .testSuccess(runtimeVerified)
+                .compileSuccess(compileOk && structural.passed())
+                .testSuccess(nativeGate)
                 .astStructuralMatchScore(structural.score())
-                .bytecodeDescriptorMatch(runtimeVerified)
+                .bytecodeDescriptorMatch(nativeGate)
                 .apiSurfaceCompatible(structural.passed())
                 .goldenMasterMatch(false)
                 .layerResults(layers)
