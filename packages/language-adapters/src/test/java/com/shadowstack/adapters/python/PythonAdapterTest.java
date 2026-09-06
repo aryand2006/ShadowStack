@@ -21,6 +21,9 @@ class PythonAdapterTest {
             import ConfigParser
             import Queue
             import thread
+            import cPickle
+            import cStringIO
+            import __builtin__
 
             class Counter:
                 def render(self, rows):
@@ -43,6 +46,13 @@ class PythonAdapterTest {
                         data = file("x").read()
                         execfile("y.py")
                         msg = u"ok"
+                        ch = unichr(65)
+                        reload(sys)
+                        intern(name)
+                        it = iter(rows)
+                        nxt = it.next()
+                        label = `n`
+                        raise StandardError, "boom"
                         return urllib2.urlopen("https://example.invalid").read()
                     except Exception, e:
                         raise ValueError, e
@@ -85,6 +95,15 @@ class PythonAdapterTest {
         assertTrue(ruleIds.contains("py.import_thread"));
         assertTrue(ruleIds.contains("py.execfile_to_exec"));
         assertTrue(ruleIds.contains("py.unicode_literal_prefix"));
+        assertTrue(ruleIds.contains("py.unichr_to_chr"));
+        assertTrue(ruleIds.contains("py.reload_to_importlib"));
+        assertTrue(ruleIds.contains("py.intern_to_sys"));
+        assertTrue(ruleIds.contains("py.standarderror_to_exception"));
+        assertTrue(ruleIds.contains("py.next_method_to_builtin"));
+        assertTrue(ruleIds.contains("py.backtick_to_repr"));
+        assertTrue(ruleIds.contains("py.import_cpickle"));
+        assertTrue(ruleIds.contains("py.import_cstringio"));
+        assertTrue(ruleIds.contains("py.import_builtin"));
     }
 
     @Test

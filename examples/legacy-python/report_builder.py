@@ -5,6 +5,9 @@ import urllib2
 import ConfigParser
 import Queue
 import thread
+import cPickle
+import cStringIO
+import __builtin__
 
 
 class ReportBuilder:
@@ -31,6 +34,12 @@ class ReportBuilder:
             data = file("seed.txt").read()
             execfile("hooks.py")
             msg = u"ok"
+            ch = unichr(65)
+            reload(sys)
+            intern(name)
+            it = iter(self.rows)
+            nxt = it.next()
+            label = `n`
             return urllib2.urlopen("https://example.invalid/api").read()
-        except Exception, e:
+        except StandardError, e:
             raise ValueError, e

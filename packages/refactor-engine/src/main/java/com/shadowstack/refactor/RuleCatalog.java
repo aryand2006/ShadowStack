@@ -2,10 +2,14 @@ package com.shadowstack.refactor;
 
 import com.shadowstack.refactor.rules.AnonymousClassToLambdaRule;
 import com.shadowstack.refactor.rules.BoxingConstructorRule;
+import com.shadowstack.refactor.rules.ClassNewInstanceRule;
 import com.shadowstack.refactor.rules.CollectionsSortToListSortRule;
 import com.shadowstack.refactor.rules.DiamondOperatorRule;
+import com.shadowstack.refactor.rules.IndexOfToContainsRule;
 import com.shadowstack.refactor.rules.LegacyTypeMigrationRule;
 import com.shadowstack.refactor.rules.SizeZeroToIsEmptyRule;
+import com.shadowstack.refactor.rules.StringEqualsLiteralFirstRule;
+import com.shadowstack.refactor.rules.ToUpperLowerLocaleRootRule;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -29,14 +33,20 @@ public final class RuleCatalog {
         rules.add(LegacyTypeMigrationRule.stack());
         rules.add(new BoxingConstructorRule());
         rules.add(new SizeZeroToIsEmptyRule());
+        rules.add(new IndexOfToContainsRule());
+        rules.add(new ClassNewInstanceRule());
+        rules.add(new StringEqualsLiteralFirstRule());
+        rules.add(new ToUpperLowerLocaleRootRule());
         return rules;
     }
 
     public static String supportSummary() {
         return """
-                Java (9): ANON_TO_LAMBDA, DIAMOND_OPERATOR, COLLECTIONS_SORT_TO_LIST_SORT,
+                Java (13): ANON_TO_LAMBDA, DIAMOND_OPERATOR, COLLECTIONS_SORT_TO_LIST_SORT,
                   STRINGBUFFER_TO_STRINGBUILDER, VECTOR_TO_ARRAYLIST, HASHTABLE_TO_HASHMAP,
-                  STACK_TO_ARRAYDEQUE, BOXING_CONSTRUCTOR_TO_VALUEOF, SIZE_ZERO_TO_ISEMPTY
+                  STACK_TO_ARRAYDEQUE, BOXING_CONSTRUCTOR_TO_VALUEOF, SIZE_ZERO_TO_ISEMPTY,
+                  INDEXOF_TO_CONTAINS, CLASS_NEWINSTANCE_TO_GETDECLAREDCONSTRUCTOR,
+                  STRING_EQUALS_LITERAL_FIRST, TOUPPERLOWER_LOCALE_ROOT
                 Python (lib2to3/modernize classics via PythonAdapter)
                 COBOL (enterprise patterns via CobolAdapter)
                 """;

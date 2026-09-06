@@ -22,9 +22,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class IndustryJavaModernizationRulesTest {
 
     @Test
-    void catalogRegistersNineIndustryRules() {
+    void catalogRegistersThirteenIndustryRules() {
         List<RefactorRule> rules = RuleCatalog.javaRules();
-        assertEquals(9, rules.size());
+        assertEquals(13, rules.size());
         Set<String> ids = rules.stream().map(RefactorRule::ruleId).collect(Collectors.toSet());
         assertTrue(ids.contains("ANON_TO_LAMBDA"));
         assertTrue(ids.contains("DIAMOND_OPERATOR"));
@@ -35,6 +35,10 @@ class IndustryJavaModernizationRulesTest {
         assertTrue(ids.contains("STACK_TO_ARRAYDEQUE"));
         assertTrue(ids.contains("BOXING_CONSTRUCTOR_TO_VALUEOF"));
         assertTrue(ids.contains("SIZE_ZERO_TO_ISEMPTY"));
+        assertTrue(ids.contains("INDEXOF_TO_CONTAINS"));
+        assertTrue(ids.contains("CLASS_NEWINSTANCE_TO_GETDECLAREDCONSTRUCTOR"));
+        assertTrue(ids.contains("STRING_EQUALS_LITERAL_FIRST"));
+        assertTrue(ids.contains("TOUPPERLOWER_LOCALE_ROOT"));
     }
 
     @Test
@@ -42,7 +46,7 @@ class IndustryJavaModernizationRulesTest {
         String source = """
                 import java.util.*;
                 class Demo {
-                  void m(List<String> list) {
+                  void m(List<String> list, Class<?> type, String name) throws Exception {
                     StringBuffer sb = new StringBuffer("x");
                     Vector<String> v = new Vector<String>();
                     Hashtable<String, String> h = new Hashtable<String, String>();
@@ -53,6 +57,14 @@ class IndustryJavaModernizationRulesTest {
                     }
                     Collections.sort(list);
                     List<String> copy = new ArrayList<String>();
+                    if (name.indexOf("x") >= 0) {
+                      return;
+                    }
+                    Object o = type.newInstance();
+                    if (name.equals("admin")) {
+                      return;
+                    }
+                    String up = name.toUpperCase();
                   }
                 }
                 """;
@@ -77,12 +89,16 @@ class IndustryJavaModernizationRulesTest {
         assertTrue(ids.contains("SIZE_ZERO_TO_ISEMPTY"), ids.toString());
         assertTrue(ids.contains("COLLECTIONS_SORT_TO_LIST_SORT"), ids.toString());
         assertTrue(ids.contains("DIAMOND_OPERATOR"), ids.toString());
+        assertTrue(ids.contains("INDEXOF_TO_CONTAINS"), ids.toString());
+        assertTrue(ids.contains("CLASS_NEWINSTANCE_TO_GETDECLAREDCONSTRUCTOR"), ids.toString());
+        assertTrue(ids.contains("STRING_EQUALS_LITERAL_FIRST"), ids.toString());
+        assertTrue(ids.contains("TOUPPERLOWER_LOCALE_ROOT"), ids.toString());
         assertTrue(patches.stream().anyMatch(p ->
-                p.getRuleId().equals("BOXING_CONSTRUCTOR_TO_VALUEOF")
-                        && p.getAfterSnippet().contains("Integer.valueOf")));
+                p.getRuleId().equals("INDEXOF_TO_CONTAINS")
+                        && p.getAfterSnippet().contains("contains(")));
         assertTrue(patches.stream().anyMatch(p ->
-                p.getRuleId().equals("SIZE_ZERO_TO_ISEMPTY")
-                        && p.getAfterSnippet().contains("isEmpty()")));
+                p.getRuleId().equals("STRING_EQUALS_LITERAL_FIRST")
+                        && p.getAfterSnippet().contains("\"admin\".equals")));
     }
 
     private static CompilationUnit parse(String source) {

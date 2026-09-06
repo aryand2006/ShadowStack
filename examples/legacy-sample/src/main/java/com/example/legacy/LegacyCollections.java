@@ -38,4 +38,14 @@ public class LegacyCollections {
         stack.push("top");
         return stack;
     }
+
+    public boolean matchesRole(String role) throws Exception {
+        if (role.indexOf("admin") >= 0) {
+            return role.equals("admin");
+        }
+        String normalized = role.toUpperCase();
+        Class<?> type = String.class;
+        Object probe = type.newInstance();
+        return normalized != null && probe != null;
+    }
 }

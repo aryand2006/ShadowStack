@@ -332,6 +332,14 @@ public class PythonAdapter implements LanguageAdapter {
         candidates.addAll(detectLegacyImports(lines, codeMask, source, relPath));
         candidates.addAll(detectExecfile(source, codeMask, lines, relPath));
         candidates.addAll(detectUnicodeLiteralPrefix(source, codeMask, lines, relPath));
+        // Additional lib2to3 / modernize classics
+        candidates.addAll(detectUnichr(source, codeMask, lines, relPath));
+        candidates.addAll(detectReload(source, codeMask, lines, relPath));
+        candidates.addAll(detectIntern(source, codeMask, lines, relPath));
+        candidates.addAll(detectStandardError(source, codeMask, lines, relPath));
+        candidates.addAll(detectIteratorNext(source, codeMask, lines, relPath));
+        candidates.addAll(detectBacktickRepr(source, codeMask, lines, relPath));
+        candidates.addAll(detectExtraLegacyImports(lines, codeMask, source, relPath));
         return candidates;
     }
 
@@ -550,6 +558,7 @@ public class PythonAdapter implements LanguageAdapter {
                 {"Queue", "queue as Queue", "py.import_queue", "Queue → queue"},
                 {"thread", "_thread as thread", "py.import_thread", "thread → _thread"}
         };
+        // note: extra imports handled in detectExtraLegacyImports
         int offset = 0;
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i];
@@ -607,6 +616,107 @@ public class PythonAdapter implements LanguageAdapter {
             out.add(buildCandidate(relPath, lineNumber, lineNumber, original, replaced,
                     "py.unicode_literal_prefix", "u'' prefix removal", "MODERNIZATION",
                     0.92, RiskTier.LOW, "Unicode literal prefix is a no-op in Python 3."));
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectUnichr(String source, boolean[] codeMask,
+                                                 String[] lines, String relPath) {
+        return detectIdentifierRewrite(source, codeMask, lines, relPath,
+                "unichr", "chr", "py.unichr_to_chr",
+                "unichr() → chr()",
+                "unichr was removed; chr covers the full Unicode range in Python 3.");
+    }
+
+    private List<RefactorCandidate> detectReload(String source, boolean[] codeMask,
+                                                 String[] lines, String relPath) {
+        return detectIdentifierRewrite(source, codeMask, lines, relPath,
+                "reload", "importlib.reload", "py.reload_to_importlib",
+                "reload() → importlib.reload()",
+                "Builtin reload moved to importlib in Python 3.");
+    }
+
+    private List<RefactorCandidate> detectIntern(String source, boolean[] codeMask,
+                                                 String[] lines, String relPath) {
+        return detectIdentifierRewrite(source, codeMask, lines, relPath,
+                "intern", "sys.intern", "py.intern_to_sys",
+                "intern() → sys.intern()",
+                "Builtin intern moved to sys in Python 3.");
+    }
+
+    private List<RefactorCandidate> detectStandardError(String source, boolean[] codeMask,
+                                                        String[] lines, String relPath) {
+        return detectIdentifierRewrite(source, codeMask, lines, relPath,
+                "StandardError", "Exception", "py.standarderror_to_exception",
+                "StandardError → Exception",
+                "StandardError was removed; Exception is the Python 3 base.");
+    }
+
+    private List<RefactorCandidate> detectIteratorNext(String source, boolean[] codeMask,
+                                                       String[] lines, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        Pattern p = Pattern.compile("([A-Za-z_][\\w.]*)\\.next\\s*\\(\\s*\\)");
+        Matcher m = p.matcher(source);
+        while (m.find()) {
+            if (!isCodeAt(codeMask, m.start())) continue;
+            int lineNumber = lineOf(source, m.start());
+            String original = lines[lineNumber - 1];
+            String replaced = original.replace(m.group(), "next(" + m.group(1) + ")");
+            out.add(buildCandidate(relPath, lineNumber, lineNumber, original, replaced,
+                    "py.next_method_to_builtin", "x.next() → next(x)", "MODERNIZATION",
+                    0.86, RiskTier.LOW, "Iterator.next() became the next() builtin in Python 3."));
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectBacktickRepr(String source, boolean[] codeMask,
+                                                       String[] lines, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        Pattern p = Pattern.compile("`([^`\\n]+)`");
+        Matcher m = p.matcher(source);
+        while (m.find()) {
+            if (!isCodeAt(codeMask, m.start())) continue;
+            int lineNumber = lineOf(source, m.start());
+            String original = lines[lineNumber - 1];
+            String replaced = original.replace(m.group(), "repr(" + m.group(1) + ")");
+            out.add(buildCandidate(relPath, lineNumber, lineNumber, original, replaced,
+                    "py.backtick_to_repr", "`x` → repr(x)", "MODERNIZATION",
+                    0.9, RiskTier.LOW, "Backtick repr syntax was removed in Python 3."));
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectExtraLegacyImports(
+            String[] lines, boolean[] codeMask, String source, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        String[][] imports = {
+                {"cPickle", "pickle as cPickle", "py.import_cpickle", "cPickle → pickle"},
+                {"cStringIO", "io as cStringIO", "py.import_cstringio", "cStringIO → io"},
+                {"__builtin__", "builtins as __builtin__", "py.import_builtin", "__builtin__ → builtins"},
+                {"htmlentitydefs", "html.entities as htmlentitydefs", "py.import_htmlentitydefs",
+                        "htmlentitydefs → html.entities"},
+                {"Cookie", "http.cookies as Cookie", "py.import_cookie", "Cookie → http.cookies"},
+                {"SocketServer", "socketserver as SocketServer", "py.import_socketserver",
+                        "SocketServer → socketserver"}
+        };
+        int offset = 0;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            String trimmed = line.stripLeading();
+            for (String[] pair : imports) {
+                String needle = "import " + pair[0];
+                if (trimmed.startsWith(needle) && !trimmed.contains(" as ")
+                        && isCodeAt(codeMask, offset + line.indexOf(needle))) {
+                    String replaced = line.replaceFirst(
+                            "\\bimport\\s+" + Pattern.quote(pair[0]) + "\\b",
+                            "import " + pair[1]);
+                    out.add(buildCandidate(relPath, i + 1, i + 1, line, replaced,
+                            pair[2], pair[3], "MODERNIZATION",
+                            0.9, RiskTier.LOW,
+                            "Module renamed in Python 3; keep alias for call-site compatibility."));
+                }
+            }
+            offset += line.length() + 1;
         }
         return out;
     }

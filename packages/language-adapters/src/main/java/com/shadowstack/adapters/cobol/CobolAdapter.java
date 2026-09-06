@@ -206,6 +206,12 @@ public class CobolAdapter implements LanguageAdapter {
         out.addAll(detectAddToAssign(source, relPath, fixed));
         out.addAll(detectSubtractToAssign(source, relPath, fixed));
         out.addAll(detectAcceptToInput(source, relPath, fixed));
+        out.addAll(detectMultiplyToAssign(source, relPath, fixed));
+        out.addAll(detectDivideToAssign(source, relPath, fixed));
+        out.addAll(detectInitialize(source, relPath, fixed));
+        out.addAll(detectExitProgram(source, relPath, fixed));
+        out.addAll(detectStringInto(source, relPath, fixed));
+        out.addAll(detectSetToTrue(source, relPath, fixed));
         return out;
     }
 
@@ -414,6 +420,18 @@ public class CobolAdapter implements LanguageAdapter {
             Pattern.compile("(?i)^(\\s*)SUBTRACT\\s+([A-Z0-9-]+|\\d+)\\s+FROM\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
     private static final Pattern ACCEPT_STMT =
             Pattern.compile("(?i)^(\\s*)ACCEPT\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern MULTIPLY_STMT =
+            Pattern.compile("(?i)^(\\s*)MULTIPLY\\s+([A-Z0-9-]+|\\d+(?:\\.\\d+)?)\\s+BY\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern DIVIDE_STMT =
+            Pattern.compile("(?i)^(\\s*)DIVIDE\\s+([A-Z0-9-]+|\\d+(?:\\.\\d+)?)\\s+INTO\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern INITIALIZE_STMT =
+            Pattern.compile("(?i)^(\\s*)INITIALIZE\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern EXIT_PROGRAM_STMT =
+            Pattern.compile("(?i)^(\\s*)EXIT\\s+PROGRAM\\s*\\.?\\s*$");
+    private static final Pattern STRING_INTO_STMT =
+            Pattern.compile("(?i)^(\\s*)STRING\\s+(.+?)\\s+INTO\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern SET_TRUE_STMT =
+            Pattern.compile("(?i)^(\\s*)SET\\s+([A-Z0-9-]+)\\s+TO\\s+TRUE\\s*\\.?\\s*$");
 
     private List<RefactorCandidate> detectDisplayToPrint(String source, String relPath, boolean fixed) {
         return detectLinePattern(source, relPath, fixed, DISPLAY_STMT, "cobol.display_to_print",
@@ -487,6 +505,73 @@ public class CobolAdapter implements LanguageAdapter {
                         + " = new java.util.Scanner(System.in).nextLine();",
                 0.7, RiskTier.MODERATE,
                 "ACCEPT maps to a console Scanner read");
+    }
+
+    private List<RefactorCandidate> detectMultiplyToAssign(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, MULTIPLY_STMT, "cobol.multiply_to_assign",
+                "MULTIPLY → *=",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + toJavaIdent(m.group(3)) + " *= " + toJavaIdent(m.group(2)) + ";",
+                0.82, RiskTier.LOW,
+                "MULTIPLY BY maps to *= assignment");
+    }
+
+    private List<RefactorCandidate> detectDivideToAssign(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, DIVIDE_STMT, "cobol.divide_to_assign",
+                "DIVIDE → /=",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + toJavaIdent(m.group(3)) + " /= " + toJavaIdent(m.group(2)) + ";",
+                0.8, RiskTier.MODERATE,
+                "DIVIDE INTO maps to /= assignment");
+    }
+
+    private List<RefactorCandidate> detectInitialize(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, INITIALIZE_STMT, "cobol.initialize_to_clear",
+                "INITIALIZE → clear/default",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + toJavaIdent(m.group(2)) + " = /* INITIALIZE */ null;",
+                0.65, RiskTier.MODERATE,
+                "INITIALIZE clears group/elementary items to figurative defaults");
+    }
+
+    private List<RefactorCandidate> detectExitProgram(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, EXIT_PROGRAM_STMT, "cobol.exit_program_to_return",
+                "EXIT PROGRAM → return",
+                m -> (m.group(1) != null ? m.group(1) : "") + "return;",
+                0.85, RiskTier.LOW,
+                "EXIT PROGRAM returns control to the caller");
+    }
+
+    private List<RefactorCandidate> detectStringInto(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, STRING_INTO_STMT, "cobol.string_to_concat",
+                "STRING INTO → concatenation",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String parts = m.group(2).trim().replaceAll("(?i)\\s+DELIMITED\\s+BY\\s+\\S+", "");
+                    String[] tokens = parts.split("\\s+");
+                    StringBuilder expr = new StringBuilder();
+                    for (String tok : tokens) {
+                        if (tok.isEmpty()) continue;
+                        if (expr.length() > 0) expr.append(" + ");
+                        if ((tok.startsWith("\"") && tok.endsWith("\""))
+                                || (tok.startsWith("'") && tok.endsWith("'"))) {
+                            expr.append("\"").append(tok.substring(1, tok.length() - 1)).append("\"");
+                        } else {
+                            expr.append(toJavaIdent(tok));
+                        }
+                    }
+                    return indent + toJavaIdent(m.group(3)) + " = " + expr + ";";
+                }, 0.7, RiskTier.MODERATE,
+                "STRING INTO maps to modern string concatenation");
+    }
+
+    private List<RefactorCandidate> detectSetToTrue(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, SET_TRUE_STMT, "cobol.set_to_true",
+                "SET … TO TRUE → boolean assign",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + toJavaIdent(m.group(2)) + " = true;",
+                0.88, RiskTier.LOW,
+                "88-level SET TO TRUE becomes a boolean assignment");
     }
 
     @FunctionalInterface

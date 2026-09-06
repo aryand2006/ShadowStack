@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * End-to-end exercise of the CobolAdapter on a fixed-format payroll program.
- * Verifies division/paragraph extraction, fixed→free conversion, and the
+ * Verifies division/paragraph extraction, fixed-to-free conversion, and the
  * legacy-pattern refactor rules.
  */
 class CobolAdapterTest {
@@ -26,14 +26,20 @@ class CobolAdapterTest {
             "000200 PROGRAM-ID. SAMPLE.                                              00000200\n" +
             "000300 DATA DIVISION.                                                   00000300\n" +
             "000400 WORKING-STORAGE SECTION.                                         00000400\n" +
-            "000500 01 GREETING       PIC X(10) VALUE \"HELLO\".                     00000500\n" +
-            "000600 01 WS-COUNT       PIC 9(3) VALUE 1.                              00000600\n" +
+            "000500 01 GREETING PIC X(10) VALUE \"HELLO\".                             00000500\n" +
+            "000600 01 WS-COUNT PIC 9(3) VALUE 1.                                    00000600\n" +
+            "000650 01 WS-FLAG PIC X VALUE \"N\".                                      00000650\n" +
             "000700 PROCEDURE DIVISION.                                              00000700\n" +
             "000800 MAIN-PARA.                                                       00000800\n" +
             "000900     ACCEPT GREETING.                                             00000900\n" +
             "001000     MOVE \"READY\" TO GREETING.                                    00001000\n" +
             "001100     ADD 1 TO WS-COUNT.                                           00001100\n" +
             "001200     SUBTRACT 1 FROM WS-COUNT.                                    00001200\n" +
+            "001250     MULTIPLY 2 BY WS-COUNT.                                      00001250\n" +
+            "001260     DIVIDE 2 INTO WS-COUNT.                                      00001260\n" +
+            "001270     INITIALIZE GREETING.                                         00001270\n" +
+            "001280     STRING \"HI\" GREETING INTO GREETING.                          00001280\n" +
+            "001290     SET WS-FLAG TO TRUE.                                         00001290\n" +
             "001300     COMPUTE WS-COUNT = WS-COUNT * 2.                             00001300\n" +
             "001400     PERFORM SHOW-GREETING.                                       00001400\n" +
             "001500     DISPLAY GREETING.                                            00001500\n" +
@@ -41,6 +47,7 @@ class CobolAdapterTest {
             "001700 SHOW-GREETING.                                                   00001700\n" +
             "001800     DISPLAY GREETING.                                            00001800\n" +
             "001900 END-PARA.                                                        00001900\n" +
+            "001950     EXIT PROGRAM.                                                00001950\n" +
             "002000     STOP RUN.                                                    00002000\n";
 
     @Test
@@ -72,16 +79,22 @@ class CobolAdapterTest {
 
         Set<String> ruleIds = candidates.stream()
                 .map(RefactorCandidate::ruleId).collect(Collectors.toSet());
-        assertTrue(ruleIds.contains("cobol.fixed_to_free"),     "fixed→free rule must fire");
+        assertTrue(ruleIds.contains("cobol.fixed_to_free"), "fixed-to-free rule must fire");
         assertTrue(ruleIds.contains("cobol.stop_run_to_goback"), "STOP RUN rule must fire");
-        assertTrue(ruleIds.contains("cobol.goto_to_perform"),    "terminal GO TO rule must fire");
-        assertTrue(ruleIds.contains("cobol.display_to_print"),   "DISPLAY rule must fire");
-        assertTrue(ruleIds.contains("cobol.move_to_assign"),     "MOVE rule must fire");
-        assertTrue(ruleIds.contains("cobol.compute_to_assign"),  "COMPUTE rule must fire");
-        assertTrue(ruleIds.contains("cobol.perform_to_call"),    "PERFORM rule must fire");
-        assertTrue(ruleIds.contains("cobol.add_to_assign"),      "ADD rule must fire");
+        assertTrue(ruleIds.contains("cobol.goto_to_perform"), "GO TO rule must fire");
+        assertTrue(ruleIds.contains("cobol.display_to_print"), "DISPLAY rule must fire");
+        assertTrue(ruleIds.contains("cobol.move_to_assign"), "MOVE rule must fire");
+        assertTrue(ruleIds.contains("cobol.compute_to_assign"), "COMPUTE rule must fire");
+        assertTrue(ruleIds.contains("cobol.perform_to_call"), "PERFORM rule must fire");
+        assertTrue(ruleIds.contains("cobol.add_to_assign"), "ADD rule must fire");
         assertTrue(ruleIds.contains("cobol.subtract_to_assign"), "SUBTRACT rule must fire");
-        assertTrue(ruleIds.contains("cobol.accept_to_input"),    "ACCEPT rule must fire");
+        assertTrue(ruleIds.contains("cobol.accept_to_input"), "ACCEPT rule must fire");
+        assertTrue(ruleIds.contains("cobol.multiply_to_assign"), "MULTIPLY rule must fire");
+        assertTrue(ruleIds.contains("cobol.divide_to_assign"), "DIVIDE rule must fire");
+        assertTrue(ruleIds.contains("cobol.initialize_to_clear"), "INITIALIZE rule must fire");
+        assertTrue(ruleIds.contains("cobol.exit_program_to_return"), "EXIT PROGRAM rule must fire");
+        assertTrue(ruleIds.contains("cobol.string_to_concat"), "STRING rule must fire");
+        assertTrue(ruleIds.contains("cobol.set_to_true"), "SET TO TRUE rule must fire");
     }
 
     @Test
@@ -98,13 +111,11 @@ class CobolAdapterTest {
                 .findFirst().orElseThrow();
 
         PatchResult patch = adapter.applyRefactor(candidate, tmp);
-        assertTrue(patch.success(), "fixed→free patch must succeed");
+        assertTrue(patch.success(), "fixed-to-free patch must succeed");
 
         String converted = Files.readString(file);
-        // No more sequence numbers in cols 1–6:
         assertFalse(converted.startsWith("000100"),
                 "free-format must drop the leading sequence area");
-        // Program area content preserved:
         assertTrue(converted.contains("IDENTIFICATION DIVISION"));
         assertTrue(converted.contains("PROGRAM-ID. SAMPLE."));
         assertTrue(converted.contains("STOP RUN."));

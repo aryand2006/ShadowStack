@@ -15,6 +15,7 @@
 001500    05 HOURLY-RATE    PIC 9(3)V99.                                00001500
 001600 01 GROSS-PAY         PIC 9(7)V99.                                00001600
 001700 01 TAX-RATE          PIC V999 VALUE .150.                        00001700
+001750 01 WS-ACTIVE       PIC X VALUE "N".                              00001750
 001800 01 NET-PAY           PIC 9(7)V99.                                00001800
 001900 PROCEDURE DIVISION.                                              00001900
 002000 MAIN-PARA.                                                       00002000
@@ -38,4 +39,10 @@
 003800     DISPLAY "GROSS:    " GROSS-PAY.                              00003800
 003900     DISPLAY "NET:      " NET-PAY.                                00003900
 004000 END-PARA.                                                        00004000
+004050     MULTIPLY HOURLY-RATE BY HOURS-WORKED.                        00004050
+004060     DIVIDE 2 INTO GROSS-PAY.                                     00004060
+004070     INITIALIZE EMP-NAME.                                         00004070
+004080     STRING "EMP-" EMP-ID INTO EMP-NAME.                          00004080
+004090     SET WS-ACTIVE TO TRUE.                                       00004090
+004095     EXIT PROGRAM.                                                00004095
 004100     STOP RUN.                                                    00004100
