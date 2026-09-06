@@ -81,32 +81,44 @@ step "Review queue"
 QUEUE_COUNT=$(python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' <<<"$QUEUE")
 [[ "$QUEUE_COUNT" -gt 0 ]] || die "Empty review queue — nothing verified into PENDING_REVIEW"
 # Prefer a Java patch for the accept walkthrough when available
-PATCH_ID=$(python3 - <<'PY' <<<"$QUEUE"
-import json,sys
-q=json.load(sys.stdin)
-print(q[0]["patchId"])
+PATCH_META=$(python3 - "$PROJECTS" "$QUEUE" <<'PY'
+import json, sys
+projects = json.loads(sys.argv[1])
+queue = json.loads(sys.argv[2])
+lang_by_id = {
+    p["id"]: (p.get("sourceLanguage") or p.get("language") or "").lower()
+    for p in projects
+}
+ordered = sorted(
+    queue,
+    key=lambda item: 0 if lang_by_id.get(item.get("projectId"), "") == "java" else 1,
+)
+pick = ordered[0]
+print(pick["patchId"])
+print(pick.get("ruleName") or "")
 PY
 )
-RULE=$(python3 -c 'import json,sys; q=json.load(sys.stdin); print(next(i["ruleName"] for i in q if i["patchId"]=="'"$PATCH_ID"'"))' <<<"$QUEUE")
+PATCH_ID=$(sed -n '1p' <<<"$PATCH_META")
+RULE=$(sed -n '2p' <<<"$PATCH_META")
 ok "${QUEUE_COUNT} pending patches (showing ${RULE})"
 
 step "Patch detail + real diff"
 DETAIL=$(api GET "/reviews/${PATCH_ID}") || die "GET /reviews/${PATCH_ID} failed"
 python3 - "$DETAIL" <<'PY'
-import json,sys
-d=json.loads(sys.argv[1])
-diff=d.get("unifiedDiff") or ""
-status=(d.get("status") or "")
+import json, sys
+d = json.loads(sys.argv[1])
+diff = d.get("unifiedDiff") or ""
+status = d.get("status") or ""
 if not diff.strip():
     raise SystemExit("unifiedDiff empty — refusing fake demo data")
 if "PENDING" not in status.upper():
     raise SystemExit(f"expected PENDING_REVIEW, got {status}")
-# Reject COBOL files that were polluted with Java snippets
-if str(d.get("filePath","")).endswith((".cob",".cbl")) and "System.out" in diff:
+path = str(d.get("filePath") or "")
+if path.endswith((".cob", ".cbl", ".COB", ".CBL")) and "System.out" in diff:
     raise SystemExit("COBOL patch contains Java System.out — unsafe auto-apply leaked")
-if "/* removed" in diff or "/* migrate" in diff:
+if "/* removed" in diff or "/* migrate" in diff or "/* prefer" in diff:
     raise SystemExit("comment-stub migration patch is not demo-safe")
-print(f"  rule={d['ruleName']} status={d['status']} diff_bytes={len(diff)}")
+print(f"  rule={d.get('ruleName')} status={d['status']} diff_bytes={len(diff)}")
 print("  --- diff preview ---")
 print("\n".join(diff.splitlines()[:18]))
 PY
