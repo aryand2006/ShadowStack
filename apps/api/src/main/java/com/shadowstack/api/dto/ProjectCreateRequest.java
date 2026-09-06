@@ -6,6 +6,7 @@ import jakarta.validation.constraints.Size;
 
 /**
  * Request payload for creating a new ShadowStack project.
+ * Accepts a Git URL or a local filesystem path (for demos / air-gapped scans).
  */
 public record ProjectCreateRequest(
 
@@ -16,10 +17,10 @@ public record ProjectCreateRequest(
         @Size(max = 1000, message = "Description must not exceed 1000 characters")
         String description,
 
-        @NotBlank(message = "Repository URL is required")
+        @NotBlank(message = "Repository URL or local path is required")
         @Pattern(
-                regexp = "^(https?://|git@|ssh://).*$",
-                message = "Repository URL must be a valid Git URL"
+                regexp = "^(https?://|git@|ssh://|file://|\\.?/?|[A-Za-z]:\\\\).*$",
+                message = "Must be a Git URL or local filesystem path"
         )
         String repositoryUrl,
 

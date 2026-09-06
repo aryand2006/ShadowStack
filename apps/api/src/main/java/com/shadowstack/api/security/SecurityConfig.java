@@ -56,6 +56,7 @@ public class SecurityConfig {
                         // Public endpoints
                         .requestMatchers("/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                        .requestMatchers("/api/v1/auth/login").permitAll()
 
                         // Actuator endpoints require ADMIN
                         .requestMatchers("/actuator/**").hasRole("ADMIN")

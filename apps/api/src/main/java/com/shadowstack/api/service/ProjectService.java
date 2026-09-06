@@ -10,19 +10,19 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Stream;
 
 /**
- * Orchestrates the project lifecycle: creation, ingestion, baseline capture,
- * and project metadata management.
- * <p>
- * In production, this delegates to JPA repositories and the core-analysis
- * module for actual repository ingestion and baseline capture.
+ * Project lifecycle with local-path resolution for company demos.
  */
 @Service
 public class ProjectService {
@@ -31,23 +31,25 @@ public class ProjectService {
 
     private final ShadowStackConfig config;
     private final Map<UUID, ProjectResponse> projectStore = new ConcurrentHashMap<>();
+    private final Map<UUID, Path> projectRoots = new ConcurrentHashMap<>();
 
     public ProjectService(ShadowStackConfig config) {
         this.config = config;
     }
 
-    /**
-     * Create a new project and begin repository ingestion.
-     */
     public ProjectResponse createProject(ProjectCreateRequest request) {
+        Path root = resolveRoot(request.repositoryUrl());
+        if (!Files.isDirectory(root)) {
+            throw new IllegalArgumentException("Project root does not exist or is not a directory: " + root);
+        }
+
         UUID id = UUID.randomUUID();
         Instant now = Instant.now();
-
         ProjectResponse project = new ProjectResponse(
                 id,
                 request.name(),
                 request.description(),
-                request.repositoryUrl(),
+                root.toAbsolutePath().normalize().toString(),
                 request.branch(),
                 request.sourceLanguage(),
                 request.targetLanguageVersion(),
@@ -57,100 +59,91 @@ public class ProjectService {
                 null,
                 null
         );
-
         projectStore.put(id, project);
-        log.info("Created project: id={}, name={}, repo={}", id, request.name(), request.repositoryUrl());
-
-        // In production: trigger async ingestion via core-analysis module
+        projectRoots.put(id, root.toAbsolutePath().normalize());
+        log.info("Created project id={} name={} root={}", id, request.name(), root);
         return project;
     }
 
-    /**
-     * Retrieve all projects.
-     */
     public List<ProjectResponse> listProjects() {
         return List.copyOf(projectStore.values());
     }
 
-    /**
-     * Retrieve a project by ID.
-     */
     public Optional<ProjectResponse> getProject(UUID id) {
         return Optional.ofNullable(projectStore.get(id));
     }
 
-    /**
-     * Trigger baseline capture for a project.
-     * Delegates to the core-analysis BaselineCapture module.
-     */
+    public Path requireProjectRoot(UUID projectId) {
+        Path root = projectRoots.get(projectId);
+        if (root == null) {
+            throw new ProjectNotFoundException(projectId);
+        }
+        return root;
+    }
+
     public ProjectResponse triggerBaseline(UUID projectId) {
         ProjectResponse existing = projectStore.get(projectId);
         if (existing == null) {
             throw new ProjectNotFoundException(projectId);
         }
-
-        log.info("Triggering baseline capture for project: {}", projectId);
-
-        // In production: invoke BaselineCapture from core-analysis
-        BaselineSummary baseline = new BaselineSummary(0, 0, 0, 0, Instant.now());
-
+        Path root = requireProjectRoot(projectId);
+        int javaFiles = countJavaFiles(root);
+        BaselineSummary baseline = new BaselineSummary(javaFiles, 0, 0, 0, Instant.now());
         ProjectResponse updated = new ProjectResponse(
-                existing.id(),
-                existing.name(),
-                existing.description(),
-                existing.repositoryUrl(),
-                existing.branch(),
-                existing.sourceLanguage(),
-                existing.targetLanguageVersion(),
-                ProjectStatus.BASELINE_CAPTURED,
-                existing.createdAt(),
-                Instant.now(),
-                baseline,
-                existing.analysisSummary()
+                existing.id(), existing.name(), existing.description(), existing.repositoryUrl(),
+                existing.branch(), existing.sourceLanguage(), existing.targetLanguageVersion(),
+                ProjectStatus.BASELINE_CAPTURED, existing.createdAt(), Instant.now(),
+                baseline, existing.analysisSummary()
         );
-
         projectStore.put(projectId, updated);
         return updated;
     }
 
-    /**
-     * Get the baseline snapshot for a project.
-     */
     public Optional<BaselineSummary> getBaseline(UUID projectId) {
         return getProject(projectId).map(ProjectResponse::baseline);
     }
 
-    /**
-     * Update project status and analysis summary after analysis completes.
-     */
     public ProjectResponse updateAnalysisSummary(UUID projectId, AnalysisSummary summary) {
         ProjectResponse existing = projectStore.get(projectId);
         if (existing == null) {
             throw new ProjectNotFoundException(projectId);
         }
-
         ProjectResponse updated = new ProjectResponse(
-                existing.id(),
-                existing.name(),
-                existing.description(),
-                existing.repositoryUrl(),
-                existing.branch(),
-                existing.sourceLanguage(),
-                existing.targetLanguageVersion(),
-                ProjectStatus.READY,
-                existing.createdAt(),
-                Instant.now(),
-                existing.baseline(),
-                summary
+                existing.id(), existing.name(), existing.description(), existing.repositoryUrl(),
+                existing.branch(), existing.sourceLanguage(), existing.targetLanguageVersion(),
+                ProjectStatus.READY, existing.createdAt(), Instant.now(),
+                existing.baseline(), summary
         );
-
         projectStore.put(projectId, updated);
         return updated;
     }
 
-    /**
-     * Exception thrown when a project is not found.
-     */
+    private static Path resolveRoot(String repositoryUrl) {
+        String raw = repositoryUrl.trim();
+        if (raw.startsWith("file://")) {
+            raw = raw.substring("file://".length());
+        }
+        Path path = Path.of(raw);
+        if (!path.isAbsolute()) {
+            path = Path.of(System.getProperty("user.dir")).resolve(path);
+        }
+        return path.toAbsolutePath().normalize();
+    }
+
+    private static int countJavaFiles(Path root) {
+        try (Stream<Path> stream = Files.walk(root)) {
+            return (int) stream
+                    .filter(p -> p.toString().endsWith(".java"))
+                    .filter(p -> {
+                        String s = p.toString();
+                        return !s.contains("/target/") && !s.contains("/build/");
+                    })
+                    .count();
+        } catch (IOException e) {
+            return 0;
+        }
+    }
+
     public static class ProjectNotFoundException extends RuntimeException {
         private final UUID projectId;
 

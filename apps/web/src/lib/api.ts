@@ -1,21 +1,104 @@
-/* ─── ShadowStack API Client ─────────────────────────────────────────────────
- *  Typed fetch wrapper for the ShadowStack backend API.
- *  In production, BASE_URL would come from environment variables.
- * ──────────────────────────────────────────────────────────────────────────── */
+/* Live ShadowStack API client — no mock fallbacks. */
 
-import type {
-  Project,
-  PatchUnit,
-  PatchDetail,
-  ReviewQueueItem,
-  ReviewDecision,
-  AnalyticsDashboard,
-  CorpusAnalytics,
-} from "@/types";
+export type RiskTier = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | "COSMETIC";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  repositoryUrl: string;
+  branch: string;
+  sourceLanguage: string;
+  targetLanguageVersion: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  baseline?: Record<string, unknown> | null;
+  analysisSummary?: Record<string, unknown> | null;
+}
 
-class ApiError extends Error {
+export interface ReviewQueueItem {
+  patchId: string;
+  projectId: string;
+  projectName: string;
+  ruleName: string;
+  ruleCategory: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  riskScore: number;
+  riskTier: RiskTier;
+  shortDescription: string;
+  verificationPassed: boolean;
+  invariantsPreserved: number;
+  invariantsTotal: number;
+  generatedAt: string;
+  verifiedAt?: string | null;
+}
+
+export interface PatchDetail {
+  patchId: string;
+  projectId: string;
+  candidateId: string;
+  ruleName: string;
+  ruleCategory: string;
+  status: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  unifiedDiff: string;
+  rationale: string;
+  invariants: Array<{
+    type: string;
+    description: string;
+    expression: string;
+    preserved: boolean;
+  }>;
+  risk: {
+    score: number;
+    tier: RiskTier;
+    factors: string[];
+    confidenceScore: number;
+  };
+  verificationEvidence?: {
+    behaviorallyEquivalent: boolean;
+    testsPassed: number;
+    testsFailed: number;
+    testsSkipped: number;
+    invariantsVerified: string[];
+    invariantsViolated: string[];
+    proofArtifacts: Record<string, boolean>;
+    verifiedAt: string;
+  } | null;
+  review?: {
+    reviewer: string;
+    accepted: boolean;
+    reason: string | null;
+    decidedAt: string;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnalyticsDashboard {
+  totalProjects: number;
+  totalPatches: number;
+  pendingReview: number;
+  acceptedPatches: number;
+  rejectedPatches: number;
+  verificationPassRate: number;
+  averageConfidence: number;
+  riskDistribution: Record<string, number>;
+}
+
+const BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
+  "http://localhost:8080/api/v1";
+
+const DEMO_USER = process.env.NEXT_PUBLIC_DEMO_USER || "admin";
+const DEMO_PASS = process.env.NEXT_PUBLIC_DEMO_PASS || "admin";
+
+export class ApiError extends Error {
   constructor(
     public status: number,
     public statusText: string,
@@ -26,65 +109,55 @@ class ApiError extends Error {
   }
 }
 
-async function fetchApi<T>(
-  endpoint: string,
-  options: RequestInit = {}
-): Promise<T> {
-  const url = `${BASE_URL}${endpoint}`;
+function authHeader(): string {
+  const token =
+    typeof btoa === "function"
+      ? btoa(`${DEMO_USER}:${DEMO_PASS}`)
+      : Buffer.from(`${DEMO_USER}:${DEMO_PASS}`).toString("base64");
+  return `Basic ${token}`;
+}
 
-  const response = await fetch(url, {
+async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${BASE_URL}${endpoint}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
+      Authorization: authHeader(),
       ...options.headers,
     },
+    cache: "no-store",
   });
-
   if (!response.ok) {
-    const body = await response.text().catch(() => null);
-    throw new ApiError(response.status, response.statusText, body);
+    throw new ApiError(
+      response.status,
+      response.statusText,
+      await response.text().catch(() => null)
+    );
   }
-
+  if (response.status === 204) return undefined as T;
   return response.json();
 }
 
-/** Project endpoints */
-export const projects = {
-  list: () => fetchApi<Project[]>("/projects"),
-  get: (id: string) => fetchApi<Project>(`/projects/${id}`),
-};
-
-/** Patch endpoints */
-export const patches = {
-  list: (projectId?: string) => {
-    const query = projectId ? `?project_id=${projectId}` : "";
-    return fetchApi<PatchUnit[]>(`/patches${query}`);
+export const api = {
+  projects: {
+    list: () => fetchApi<Project[]>("/projects"),
+    get: (id: string) => fetchApi<Project>(`/projects/${id}`),
   },
-  get: (id: string) => fetchApi<PatchDetail>(`/patches/${id}`),
-};
-
-/** Review queue endpoints */
-export const queue = {
-  list: (filters?: { status?: string; riskTier?: string }) => {
-    const params = new URLSearchParams();
-    if (filters?.status) params.set("status", filters.status);
-    if (filters?.riskTier) params.set("risk_tier", filters.riskTier);
-    const query = params.toString() ? `?${params.toString()}` : "";
-    return fetchApi<ReviewQueueItem[]>(`/queue${query}`);
+  reviews: {
+    queue: () => fetchApi<ReviewQueueItem[]>("/reviews/queue"),
+    get: (patchId: string) => fetchApi<PatchDetail>(`/reviews/${patchId}`),
+    accept: (patchId: string) =>
+      fetchApi<PatchDetail>(`/reviews/${patchId}/accept`, { method: "POST" }),
+    reject: (patchId: string, reason: string) =>
+      fetchApi<PatchDetail>(`/reviews/${patchId}/reject`, {
+        method: "POST",
+        body: JSON.stringify({ accepted: false, reason }),
+      }),
+    history: () => fetchApi<PatchDetail[]>("/reviews/history"),
   },
-  submit: (decision: ReviewDecision) =>
-    fetchApi<{ success: boolean }>("/queue/review", {
-      method: "POST",
-      body: JSON.stringify(decision),
-    }),
+  analytics: {
+    dashboard: () => fetchApi<AnalyticsDashboard>("/analytics/dashboard"),
+  },
 };
 
-/** Analytics endpoints */
-export const analytics = {
-  dashboard: () => fetchApi<AnalyticsDashboard>("/analytics/dashboard"),
-  corpus: (projectId: string) =>
-    fetchApi<CorpusAnalytics>(`/analytics/corpus/${projectId}`),
-};
-
-export const api = { projects, patches, queue, analytics };
 export default api;

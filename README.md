@@ -245,6 +245,29 @@ shadowstack/
 
 ---
 
+## Company demo (honest path)
+
+Do **not** pitch the product until this path works on your machine:
+
+```bash
+# 1) API without Postgres (seeds examples/legacy-sample into the review queue)
+mvn -pl apps/api -am package -DskipTests
+java -jar apps/api/target/shadowstack-api-*.jar --spring.profiles.active=demo
+
+# 2) Fail-closed API walkthrough (exits non-zero if anything is fake/empty)
+./scripts/demo.sh
+
+# 3) Web UI against the live API
+cd apps/web && cp -n .env.local.example .env.local 2>/dev/null || true
+npm install && npm run dev
+# open http://localhost:3000/queue
+```
+
+Credentials: `admin` / `admin` (HTTP Basic or `POST /api/v1/auth/login`).
+
+What is real today: Java rule catalog → analyze → generate → compile verification → review queue → accept/reject.
+What is stubbed: Postgres corpus analytics, multi-language UI, and invented dashboard KPIs.
+
 ## Quick Start
 
 ### Prerequisites

@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import javax.tools.*;
 import java.io.*;
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -150,47 +151,71 @@ public class CompileVerifier implements VerificationLayer {
         }
 
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-        StandardJavaFileManager stdFileManager = compiler.getStandardFileManager(diagnostics, null, null);
+        Path outputDir = null;
+        try {
+            outputDir = Files.createTempDirectory("shadowstack-javac-");
+            StandardJavaFileManager stdFileManager = compiler.getStandardFileManager(diagnostics, null, null);
+            stdFileManager.setLocation(StandardLocation.CLASS_OUTPUT, List.of(outputDir.toFile()));
 
-        // Create in-memory source file
-        JavaFileObject sourceFile = new InMemoryJavaSource(fileName, sourceCode);
+            JavaFileObject sourceFile = new InMemoryJavaSource(fileName, sourceCode);
 
-        // Build compiler options
-        List<String> options = new ArrayList<>();
-        if (classpath != null && !classpath.isEmpty()) {
-            String cp = classpath.stream()
-                    .map(Path::toString)
-                    .collect(Collectors.joining(File.pathSeparator));
-            options.addAll(List.of("-classpath", cp));
-        }
-        options.addAll(List.of("-source", "21", "-target", "21"));
+            List<String> options = new ArrayList<>();
+            if (classpath != null && !classpath.isEmpty()) {
+                String cp = classpath.stream()
+                        .map(Path::toString)
+                        .collect(Collectors.joining(File.pathSeparator));
+                options.addAll(List.of("-classpath", cp));
+            }
+            options.addAll(List.of("--release", "21", "-proc:none", "-Xlint:none"));
 
-        // Compile
-        JavaCompiler.CompilationTask task = compiler.getTask(
-                null, stdFileManager, diagnostics, options, null, List.of(sourceFile));
+            JavaCompiler.CompilationTask task = compiler.getTask(
+                    null, stdFileManager, diagnostics, options, null, List.of(sourceFile));
 
-        boolean success = task.call();
+            boolean success = Boolean.TRUE.equals(task.call());
 
-        List<String> errors = new ArrayList<>();
-        List<String> warnings = new ArrayList<>();
-        for (Diagnostic<? extends JavaFileObject> diag : diagnostics.getDiagnostics()) {
-            String message = "%s (line %d): %s".formatted(
-                    diag.getKind(), diag.getLineNumber(), diag.getMessage(null));
-            if (diag.getKind() == Diagnostic.Kind.ERROR) {
-                errors.add(message);
-            } else if (diag.getKind() == Diagnostic.Kind.WARNING
-                    || diag.getKind() == Diagnostic.Kind.MANDATORY_WARNING) {
-                warnings.add(message);
+            List<String> errors = new ArrayList<>();
+            List<String> warnings = new ArrayList<>();
+            for (Diagnostic<? extends JavaFileObject> diag : diagnostics.getDiagnostics()) {
+                String message = "%s (line %d): %s".formatted(
+                        diag.getKind(), diag.getLineNumber(), diag.getMessage(null));
+                if (diag.getKind() == Diagnostic.Kind.ERROR) {
+                    errors.add(message);
+                } else if (diag.getKind() == Diagnostic.Kind.WARNING
+                        || diag.getKind() == Diagnostic.Kind.MANDATORY_WARNING) {
+                    warnings.add(message);
+                }
+            }
+
+            try {
+                stdFileManager.close();
+            } catch (IOException e) {
+                log.debug("Error closing file manager: {}", e.getMessage());
+            }
+
+            if (!success) {
+                for (String err : errors) {
+                    log.warn("  javac: {}", err);
+                }
+            }
+
+            return new CompilationResult(success, errors, warnings);
+        } catch (IOException e) {
+            return new CompilationResult(false, List.of("Compiler I/O failure: " + e.getMessage()), List.of());
+        } finally {
+            if (outputDir != null) {
+                try (var walk = Files.walk(outputDir)) {
+                    walk.sorted(Comparator.reverseOrder()).forEach(path -> {
+                        try {
+                            Files.deleteIfExists(path);
+                        } catch (IOException ignored) {
+                            // best-effort cleanup
+                        }
+                    });
+                } catch (IOException ignored) {
+                    // best-effort cleanup
+                }
             }
         }
-
-        try {
-            stdFileManager.close();
-        } catch (IOException e) {
-            log.debug("Error closing file manager: {}", e.getMessage());
-        }
-
-        return new CompilationResult(success, errors, warnings);
     }
 
     private record CompilationResult(boolean success, List<String> errors, List<String> warnings) {}
@@ -202,9 +227,25 @@ public class CompileVerifier implements VerificationLayer {
         private final String code;
 
         InMemoryJavaSource(String name, String code) {
-            super(URI.create("string:///" + name.replace('.', '/') + Kind.SOURCE.extension),
-                    Kind.SOURCE);
+            super(toSourceUri(name), Kind.SOURCE);
             this.code = code;
+        }
+
+        /**
+         * Build a URI the javac frontend can resolve to a package path.
+         * Do not naively replace every '.' — that turns {@code Foo.java} into {@code Foo/java}.
+         */
+        private static URI toSourceUri(String name) {
+            String normalized = name.replace('\\', '/');
+            if (normalized.startsWith("/")) {
+                normalized = normalized.substring(1);
+            }
+            if (normalized.endsWith(".java")) {
+                // Path-like source file (e.g. src/main/java/com/acme/Foo.java)
+                return URI.create("string:///" + normalized);
+            }
+            // Fully-qualified class name (e.g. com.acme.Foo)
+            return URI.create("string:///" + normalized.replace('.', '/') + Kind.SOURCE.extension);
         }
 
         @Override

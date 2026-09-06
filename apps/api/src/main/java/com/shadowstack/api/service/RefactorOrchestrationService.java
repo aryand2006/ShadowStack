@@ -2,220 +2,413 @@ package com.shadowstack.api.service;
 
 import com.shadowstack.api.config.ShadowStackConfig;
 import com.shadowstack.api.dto.PatchDetailResponse;
-import com.shadowstack.api.dto.PatchDetailResponse.*;
+import com.shadowstack.api.dto.PatchDetailResponse.Invariant;
+import com.shadowstack.api.dto.PatchDetailResponse.PatchStatus;
+import com.shadowstack.api.dto.PatchDetailResponse.ReviewInfo;
+import com.shadowstack.api.dto.PatchDetailResponse.RiskAssessment;
+import com.shadowstack.api.dto.PatchDetailResponse.VerificationEvidence;
+import com.shadowstack.api.dto.ProjectResponse;
 import com.shadowstack.api.dto.VerificationResultResponse;
-import com.shadowstack.api.dto.VerificationResultResponse.*;
+import com.shadowstack.api.dto.VerificationResultResponse.CertificateInfo;
+import com.shadowstack.api.dto.VerificationResultResponse.InvariantResults.InvariantCheck;
+import com.shadowstack.api.dto.VerificationResultResponse.InvariantResults;
+import com.shadowstack.api.dto.VerificationResultResponse.TestResults;
+import com.shadowstack.api.dto.VerificationResultResponse.VerificationStatus;
+import com.shadowstack.refactor.RefactorEngine;
+import com.shadowstack.refactor.RefactorRule;
+import com.shadowstack.refactor.RuleCatalog;
+import com.shadowstack.refactor.model.PatchUnit;
+import com.shadowstack.refactor.model.RiskTier;
+import com.shadowstack.refactor.model.SemanticContext;
+import com.shadowstack.verify.VerificationPipeline;
+import com.shadowstack.verify.model.Verdict;
+import com.shadowstack.verify.layers.CompileVerifier;
+import com.shadowstack.verify.model.VerificationContext;
+import com.shadowstack.verify.model.VerificationLayerResult;
+import org.eclipse.jdt.core.dom.AST;
+import org.eclipse.jdt.core.dom.ASTParser;
+import org.eclipse.jdt.core.dom.CompilationUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.time.Duration;
 import java.time.Instant;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Coordinates the full refactor pipeline:
- * analysis → candidate identification → patch generation → verification → review.
- * <p>
- * In production, delegates to:
- * - core-analysis for static analysis
- * - refactor-engine for patch generation
- * - verify-engine for behavioral verification
- * - migration-corpus for pattern matching
+ * Real conversion orchestration backed by {@link RefactorEngine} + {@link CompileVerifier}.
  */
 @Service
 public class RefactorOrchestrationService {
 
     private static final Logger log = LoggerFactory.getLogger(RefactorOrchestrationService.class);
 
-    private final ShadowStackConfig config;
+    private final ProjectService projectService;
 
     private final Map<UUID, List<CandidateInfo>> candidateStore = new ConcurrentHashMap<>();
+    private final Map<UUID, PatchUnit> candidateUnits = new ConcurrentHashMap<>();
     private final Map<UUID, PatchDetailResponse> patchStore = new ConcurrentHashMap<>();
+    private final Map<UUID, PatchUnit> patchUnits = new ConcurrentHashMap<>();
     private final Map<UUID, List<UUID>> projectPatchIndex = new ConcurrentHashMap<>();
     private final Map<UUID, VerificationResultResponse> verificationStore = new ConcurrentHashMap<>();
 
-    public RefactorOrchestrationService(ShadowStackConfig config) {
-        this.config = config;
+    public RefactorOrchestrationService(ShadowStackConfig config, ProjectService projectService) {
+        this.projectService = projectService;
     }
 
-    /**
-     * Run static analysis on a project to identify refactor candidates.
-     * Delegates to core-analysis CallGraphBuilder and refactor-engine pattern matching.
-     */
     public List<CandidateInfo> runAnalysis(UUID projectId) {
-        log.info("Running static analysis for project: {}", projectId);
+        Path root = projectService.requireProjectRoot(projectId);
+        log.info("Analyzing project {} at {}", projectId, root);
 
-        // In production: invoke core-analysis + refactor-engine
+        RefactorEngine engine = createEngine();
         List<CandidateInfo> candidates = new ArrayList<>();
+        Map<String, Integer> riskDistribution = new LinkedHashMap<>();
+
+        try {
+            for (Path javaFile : discoverJavaFiles(root)) {
+                String source = Files.readString(javaFile, StandardCharsets.UTF_8);
+                String relative = root.relativize(javaFile).toString().replace('\\', '/');
+                CompilationUnit cu = parseCompilationUnit(source, javaFile);
+                SemanticContext context = SemanticContext.builder()
+                        .compilationUnit(cu)
+                        .sourceFilePath(relative)
+                        .sourceCode(source)
+                        .build();
+
+                for (PatchUnit unit : engine.scan(cu, context)) {
+                    UUID candidateId = UUID.randomUUID();
+                    candidateUnits.put(candidateId, unit);
+                    riskDistribution.merge(unit.getRiskTier().name(), 1, Integer::sum);
+                    candidates.add(new CandidateInfo(
+                            candidateId,
+                            projectId,
+                            unit.getRuleId(),
+                            "modernization",
+                            relative,
+                            unit.getStartLine(),
+                            unit.getEndLine(),
+                            unit.getRationale() != null ? unit.getRationale() : unit.getRuleId(),
+                            riskScore(unit.getRiskTier()),
+                            unit.getConfidenceScore()
+                    ));
+                }
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to analyze " + root + ": " + e.getMessage(), e);
+        }
+
         candidateStore.put(projectId, candidates);
+        projectService.updateAnalysisSummary(projectId, new ProjectResponse.AnalysisSummary(
+                candidates.size(), 0, 0, 0, riskDistribution
+        ));
+        log.info("Analysis found {} candidates for {}", candidates.size(), projectId);
         return candidates;
     }
 
-    /**
-     * Get refactor candidates for a project.
-     */
     public List<CandidateInfo> getCandidates(UUID projectId) {
         return candidateStore.getOrDefault(projectId, List.of());
     }
 
-    /**
-     * Generate a refactoring patch for a specific candidate.
-     */
     public PatchDetailResponse generatePatch(UUID projectId, UUID candidateId) {
-        log.info("Generating patch for project={}, candidate={}", projectId, candidateId);
+        PatchUnit unit = candidateUnits.get(candidateId);
+        if (unit == null) {
+            throw new IllegalArgumentException("Unknown candidate " + candidateId + " — run /analyze first");
+        }
 
-        UUID patchId = UUID.randomUUID();
         Instant now = Instant.now();
+        UUID patchId = UUID.randomUUID();
+        List<Invariant> invariants = Optional.ofNullable(unit.getInvariants()).orElse(List.of()).stream()
+                .map(inv -> new Invariant(
+                        inv.getInvariantId(),
+                        inv.getDescription(),
+                        inv.getEvidence() != null ? inv.getEvidence() : "",
+                        inv.isVerified()))
+                .toList();
 
-        // In production: invoke refactor-engine to generate AST-level transformation
         PatchDetailResponse patch = new PatchDetailResponse(
                 patchId,
                 projectId,
                 candidateId,
-                "pending-rule",
+                unit.getRuleId(),
                 "modernization",
                 PatchStatus.GENERATED,
-                "src/main/java/Example.java",
-                1, 10,
-                "--- a/Example.java\n+++ b/Example.java\n@@ pending @@",
-                "Patch generation pending — delegating to refactor-engine",
-                List.of(),
-                new RiskAssessment(0.0, RiskAssessment.RiskTier.LOW, List.of(), 0.0),
+                unit.getSourceFile(),
+                unit.getStartLine(),
+                unit.getEndLine(),
+                unit.getUnifiedDiff(),
+                unit.getRationale(),
+                invariants,
+                new RiskAssessment(
+                        riskScore(unit.getRiskTier()),
+                        mapRisk(unit.getRiskTier()),
+                        List.of(),
+                        unit.getConfidenceScore()
+                ),
                 null,
                 null,
                 now,
                 now
         );
-
         patchStore.put(patchId, patch);
+        patchUnits.put(patchId, unit);
         projectPatchIndex.computeIfAbsent(projectId, k -> new ArrayList<>()).add(patchId);
         return patch;
     }
 
-    /**
-     * List all patches for a project.
-     */
     public List<PatchDetailResponse> getPatches(UUID projectId) {
-        List<UUID> patchIds = projectPatchIndex.getOrDefault(projectId, List.of());
-        return patchIds.stream()
+        return projectPatchIndex.getOrDefault(projectId, List.of()).stream()
                 .map(patchStore::get)
                 .filter(Objects::nonNull)
                 .toList();
     }
 
-    /**
-     * Get detailed information for a specific patch.
-     */
     public Optional<PatchDetailResponse> getPatch(UUID patchId) {
         return Optional.ofNullable(patchStore.get(patchId));
     }
 
-    /**
-     * Run the verification pipeline on a patch.
-     * Invokes verify-engine for test execution and invariant checking.
-     */
     public VerificationResultResponse runVerification(UUID patchId) {
-        log.info("Running verification pipeline for patch: {}", patchId);
-
         PatchDetailResponse patch = patchStore.get(patchId);
         if (patch == null) {
             throw new PatchNotFoundException(patchId);
         }
+        PatchUnit unit = patchUnits.get(patchId);
+        Path root = projectService.requireProjectRoot(patch.projectId());
+        Instant started = Instant.now();
 
-        UUID verificationId = UUID.randomUUID();
-        Instant now = Instant.now();
+        try {
+            Path sourceFile = root.resolve(patch.filePath()).normalize();
+            String original = Files.readString(sourceFile, StandardCharsets.UTF_8);
+            String transformed = applySnippet(original, unit.getBeforeSnippet(), unit.getAfterSnippet());
 
-        // In production: invoke verify-engine for full behavioral equivalence check
-        VerificationResultResponse result = new VerificationResultResponse(
-                patchId,
-                verificationId,
-                VerificationStatus.PASSED,
-                true,
-                new TestResults(0, 0, 0, 0, 0, List.of()),
-                new InvariantResults(0, 0, 0, List.of()),
-                new CertificateInfo(UUID.randomUUID(), false, "Verification pending", Map.of(), now),
-                0L,
-                now,
-                now
-        );
+            VerificationPipeline pipeline = new VerificationPipeline(0.7, false);
+            pipeline.addLayer(new CompileVerifier());
+            VerificationContext context = VerificationContext.builder()
+                    .projectRoot(root)
+                    .sourceRoot(root)
+                    .originalSource(original)
+                    .transformedSource(transformed)
+                    .build();
 
-        verificationStore.put(patchId, result);
+            VerificationPipeline.PipelineResult pipelineResult = pipeline.execute(unit, context);
+            boolean passed = pipelineResult.verdict() != Verdict.FAIL; // WARN stays reviewable
+            Instant completed = Instant.now();
 
-        // Update patch status
-        PatchDetailResponse updatedPatch = new PatchDetailResponse(
-                patch.patchId(), patch.projectId(), patch.candidateId(),
-                patch.ruleName(), patch.ruleCategory(),
-                PatchStatus.PENDING_REVIEW,
-                patch.filePath(), patch.startLine(), patch.endLine(),
-                patch.unifiedDiff(), patch.rationale(), patch.invariants(),
-                patch.risk(),
-                new PatchDetailResponse.VerificationEvidence(
-                        true, 0, 0, 0, List.of(), List.of(), Map.of(), now
-                ),
-                patch.review(), patch.createdAt(), Instant.now()
-        );
-        patchStore.put(patchId, updatedPatch);
+            List<InvariantCheck> checks = pipelineResult.layerResults().stream()
+                    .map(RefactorOrchestrationService::toCheck)
+                    .toList();
+            int preserved = (int) checks.stream().filter(InvariantCheck::preserved).count();
+            int violated = checks.size() - preserved;
 
-        return result;
+            VerificationResultResponse result = new VerificationResultResponse(
+                    patchId,
+                    UUID.randomUUID(),
+                    passed ? VerificationStatus.PASSED : VerificationStatus.FAILED,
+                    passed,
+                    new TestResults(0, 0, 0, 0, 0, List.of()),
+                    new InvariantResults(checks.size(), preserved, violated, checks),
+                    new CertificateInfo(
+                            UUID.randomUUID(),
+                            passed,
+                            passed
+                                    ? "Compile verification passed for " + patch.ruleName()
+                                    : "Compile verification failed for " + patch.ruleName(),
+                            Map.of("pipeline", pipelineResult.summary()),
+                            completed
+                    ),
+                    Duration.between(started, completed).toMillis(),
+                    started,
+                    completed
+            );
+            verificationStore.put(patchId, result);
+
+            List<String> verified = checks.stream().filter(InvariantCheck::preserved)
+                    .map(InvariantCheck::description).toList();
+            List<String> failed = checks.stream().filter(c -> !c.preserved())
+                    .map(InvariantCheck::description).toList();
+
+            PatchDetailResponse updated = new PatchDetailResponse(
+                    patch.patchId(), patch.projectId(), patch.candidateId(),
+                    patch.ruleName(), patch.ruleCategory(),
+                    passed ? PatchStatus.PENDING_REVIEW : PatchStatus.VERIFICATION_FAILED,
+                    patch.filePath(), patch.startLine(), patch.endLine(),
+                    patch.unifiedDiff(), patch.rationale(), patch.invariants(),
+                    patch.risk(),
+                    new VerificationEvidence(
+                            passed, 0, 0, 0, verified, failed,
+                            Map.of("compileVerifier", passed), completed
+                    ),
+                    patch.review(), patch.createdAt(), Instant.now()
+            );
+            patchStore.put(patchId, updated);
+            return result;
+        } catch (IOException e) {
+            throw new IllegalStateException("Verification could not read sources: " + e.getMessage(), e);
+        }
     }
 
-    /**
-     * Get verification results for a patch.
-     */
     public Optional<VerificationResultResponse> getVerificationResult(UUID patchId) {
         return Optional.ofNullable(verificationStore.get(patchId));
     }
 
-    /**
-     * Update a patch's status and review info after a review decision.
-     */
-    public PatchDetailResponse applyReviewDecision(UUID patchId, boolean accepted, String reviewer, String reason) {
+    public PatchDetailResponse applyReviewDecision(
+            UUID patchId, boolean accepted, String reviewer, String reason) {
         PatchDetailResponse patch = patchStore.get(patchId);
         if (patch == null) {
             throw new PatchNotFoundException(patchId);
         }
-
-        PatchStatus newStatus = accepted ? PatchStatus.ACCEPTED : PatchStatus.REJECTED;
-        PatchDetailResponse.ReviewInfo reviewInfo = new PatchDetailResponse.ReviewInfo(
-                reviewer, accepted, reason, Instant.now()
-        );
-
         PatchDetailResponse updated = new PatchDetailResponse(
                 patch.patchId(), patch.projectId(), patch.candidateId(),
                 patch.ruleName(), patch.ruleCategory(),
-                newStatus,
+                accepted ? PatchStatus.ACCEPTED : PatchStatus.REJECTED,
                 patch.filePath(), patch.startLine(), patch.endLine(),
                 patch.unifiedDiff(), patch.rationale(), patch.invariants(),
                 patch.risk(), patch.verificationEvidence(),
-                reviewInfo, patch.createdAt(), Instant.now()
+                new ReviewInfo(reviewer, accepted, reason, Instant.now()),
+                patch.createdAt(), Instant.now()
         );
-
         patchStore.put(patchId, updated);
         return updated;
     }
 
-    /**
-     * Get all patches in PENDING_REVIEW status.
-     */
     public List<PatchDetailResponse> getPendingReviewPatches() {
         return patchStore.values().stream()
                 .filter(p -> p.status() == PatchStatus.PENDING_REVIEW)
                 .toList();
     }
 
-    /**
-     * Get all patches that have been reviewed (accepted or rejected).
-     */
     public List<PatchDetailResponse> getReviewedPatches() {
         return patchStore.values().stream()
                 .filter(p -> p.status() == PatchStatus.ACCEPTED || p.status() == PatchStatus.REJECTED)
                 .toList();
     }
 
-    /**
-     * Summary record for a refactor candidate.
-     */
+    public List<PatchDetailResponse> runFullPipeline(UUID projectId) {
+        List<CandidateInfo> candidates = runAnalysis(projectId);
+        List<PatchDetailResponse> out = new ArrayList<>();
+        for (CandidateInfo candidate : candidates) {
+            try {
+                PatchDetailResponse generated = generatePatch(projectId, candidate.candidateId());
+                try {
+                    runVerification(generated.patchId());
+                } catch (Exception verifyError) {
+                    log.warn("Verification failed for patch {} ({}): {}",
+                            generated.patchId(), candidate.ruleName(), verifyError.getMessage());
+                }
+                PatchDetailResponse current = patchStore.get(generated.patchId());
+                if (current != null) {
+                    out.add(current);
+                }
+            } catch (Exception generateError) {
+                log.warn("Skipping candidate {} ({}): {}",
+                        candidate.candidateId(), candidate.ruleName(), generateError.getMessage());
+            }
+        }
+        return out;
+    }
+
+    private static InvariantCheck toCheck(VerificationLayerResult layer) {
+        return new InvariantCheck(
+                layer.getLayerId(),
+                layer.getSummary() != null ? layer.getSummary() : layer.getLayerId(),
+                layer.passed(),
+                String.join("; ", layer.getDiagnostics() != null ? layer.getDiagnostics() : List.of())
+        );
+    }
+
+    private RefactorEngine createEngine() {
+        RefactorEngine engine = new RefactorEngine(0.55, RiskTier.CRITICAL);
+        for (RefactorRule rule : RuleCatalog.javaRules()) {
+            engine.registerRule(rule);
+        }
+        return engine;
+    }
+
+    private static List<Path> discoverJavaFiles(Path root) throws IOException {
+        List<Path> files = new ArrayList<>();
+        Files.walkFileTree(root, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                if (file.toString().endsWith(".java")) {
+                    files.add(file);
+                }
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                String name = dir.getFileName() != null ? dir.getFileName().toString() : "";
+                if (Set.of("target", "build", ".git", "node_modules").contains(name)) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        return files;
+    }
+
+    private static CompilationUnit parseCompilationUnit(String source, Path filePath) {
+        ASTParser parser = ASTParser.newParser(AST.getJLSLatest());
+        parser.setKind(ASTParser.K_COMPILATION_UNIT);
+        parser.setSource(source.toCharArray());
+        parser.setResolveBindings(false);
+        Map<String, String> options = new HashMap<>();
+        options.put("org.eclipse.jdt.core.compiler.source", "21");
+        options.put("org.eclipse.jdt.core.compiler.compliance", "21");
+        options.put("org.eclipse.jdt.core.compiler.codegen.targetPlatform", "21");
+        parser.setCompilerOptions(options);
+        parser.setUnitName(filePath.getFileName().toString());
+        return (CompilationUnit) parser.createAST(null);
+    }
+
+    private static String applySnippet(String original, String before, String after) {
+        if (before == null || before.isEmpty()) {
+            return original;
+        }
+        String normalized = original.replace("\r\n", "\n");
+        String beforeNorm = before.replace("\r\n", "\n");
+        String afterNorm = after != null ? after.replace("\r\n", "\n") : "";
+        int idx = normalized.indexOf(beforeNorm);
+        if (idx < 0) {
+            throw new IllegalStateException("Could not locate before-snippet in source");
+        }
+        return normalized.substring(0, idx) + afterNorm + normalized.substring(idx + beforeNorm.length());
+    }
+
+    private static double riskScore(RiskTier tier) {
+        return switch (tier) {
+            case COSMETIC, LOW -> 0.15;
+            case MEDIUM -> 0.45;
+            case HIGH -> 0.70;
+            case CRITICAL -> 0.90;
+        };
+    }
+
+    private static RiskAssessment.RiskTier mapRisk(RiskTier tier) {
+        return switch (tier) {
+            case COSMETIC, LOW -> RiskAssessment.RiskTier.LOW;
+            case MEDIUM -> RiskAssessment.RiskTier.MEDIUM;
+            case HIGH -> RiskAssessment.RiskTier.HIGH;
+            case CRITICAL -> RiskAssessment.RiskTier.CRITICAL;
+        };
+    }
+
     public record CandidateInfo(
             UUID candidateId,
             UUID projectId,
