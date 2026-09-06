@@ -28,6 +28,7 @@ shadowstack:
   demo:
     enabled: true
     sample-path: ${SHADOWSTACK_DEMO_SAMPLE:examples/legacy-sample}
+    seed-all-languages: ${SHADOWSTACK_DEMO_SEED_ALL:true}
   security:
     jwt-secret: ${JWT_SECRET:demo-only-shadowstack-jwt-secret-key-min-32-chars-do-not-use-in-prod}
     jwt-expiration-ms: 86400000

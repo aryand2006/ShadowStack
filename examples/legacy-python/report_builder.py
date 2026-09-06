@@ -1,3 +1,4 @@
+import types
 # Legacy Python 2 module — ShadowStack modernization demo.
 # Triggers the full lib2to3 / modernize catalog shipped in PythonAdapter.
 
@@ -60,3 +61,23 @@ from itertools import imap, izip, ifilter
 def log_err(msg):
     print >>sys.stderr, msg
     return reduce(lambda a, b: a + b, imap(str, [msg]), "")
+
+# Additional 2to3 / modernize classics for demo coverage
+import Tkinter
+import tkFileDialog
+import imp
+import copy_reg
+import xmlrpclib
+
+class MetaThing:
+    __metaclass__ = type
+
+def legacy_bits(a, b, path):
+    if cmp(a, b) > 0:
+        exec "x = 1"
+    mode = 0755
+    kinds = (types.IntType, types.StringType, types.DictType)
+    cleaned = filter(None, [a, b, None])
+    zipped = map(None, [a], [b])
+    msg = "path=%s value=%s" % (path, a)
+    return list(d.keys())

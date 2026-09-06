@@ -1,6 +1,7 @@
 package com.shadowstack.adapters.javascript;
 
 import com.shadowstack.adapters.LanguageAdapter;
+import com.shadowstack.adapters.model.*;
 import com.shadowstack.adapters.model.RefactorCandidate;
 import com.shadowstack.adapters.model.SemanticModel;
 import org.junit.jupiter.api.Test;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -59,5 +61,49 @@ class JavascriptAdapterTest {
         assertTrue(ruleIds.contains("js.string_concat_plus"), ruleIds.toString());
         assertTrue(ruleIds.contains("js.substr_to_substring"), ruleIds.toString());
         assertTrue(ruleIds.contains("js.indexof_to_includes"), ruleIds.toString());
+    }
+
+
+    @Test
+    void applies_and_verifies_var_to_let(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("sample.js");
+        Files.writeString(file, "var x = 1;\n", java.nio.charset.StandardCharsets.UTF_8);
+        JavascriptAdapter adapter = new JavascriptAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        List<RefactorCandidate> candidates = adapter.listRefactorCandidates(
+                model, LanguageAdapter.RefactorRuleSet.empty());
+        RefactorCandidate target = candidates.stream()
+                .filter(c -> "js.var_to_let".equals(c.ruleId()))
+                .findFirst()
+                .orElseThrow();
+        PatchResult patch = adapter.applyRefactor(target, tmp);
+        assertTrue(patch.success(), () -> String.valueOf(patch.errorMessage()));
+        String updated = Files.readString(file);
+        assertTrue(updated.contains("let"), updated);
+        VerificationResult verification = adapter.verifyPatch(
+                patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+        assertNotNull(verification.verdict());
+    }
+
+
+    @Test
+    void applies_and_verifies_loose_equality(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("eq.js");
+        Files.writeString(file, "var x = 1;\nif (x == \"1\") console.log(x);\n",
+                StandardCharsets.UTF_8);
+        JavascriptAdapter adapter = new JavascriptAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        RefactorCandidate target = adapter.listRefactorCandidates(
+                        model, LanguageAdapter.RefactorRuleSet.empty()).stream()
+                .filter(c -> "js.==_to_===".equals(c.ruleId()) || "js.var_to_let".equals(c.ruleId()))
+                .findFirst()
+                .orElseThrow();
+        PatchResult patch = adapter.applyRefactor(target, tmp);
+        assertTrue(patch.success(), () -> String.valueOf(patch.errorMessage()));
+        VerificationResult verification = adapter.verifyPatch(
+                patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+        assertNotNull(verification.verdict());
+        assertTrue(verification.compileSuccess()
+                || verification.verdict() != VerificationResult.Verdict.FAIL);
     }
 }

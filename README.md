@@ -42,10 +42,10 @@ ShadowStack is built around a **pluggable language adapter framework**:
 | Adapter | Status | Description |
 |---------|--------|-------------|
 | **Java** | ✅ Full | OpenRewrite/Sonar classics: anon→lambda, diamond, `List.sort`, `StringBuffer`→`StringBuilder`, `Vector`→`ArrayList`, `Hashtable`→`HashMap`, `Stack`→`ArrayDeque`, boxing `valueOf`, `size()==0`→`isEmpty()`, `indexOf`→`contains`, `Class.newInstance`, literal-first `equals`, `toUpper/LowerCase(Locale.ROOT)`, `Collections.EMPTY_*`→`empty*()`, `getBytes(UTF_8)`, `URLEncoder` UTF-8, `trim`→`strip`
-| **Python** | ✅ Full | lib2to3/modernize set: print/print>>, xrange, iter*, imap/izip/ifilter, reduce→functools, unicode/basestring, except/as, `<>`, has_key, raw_input, long, raise, file, apply, urllib2/ConfigParser/Queue/thread/commands/urlparse/httplib/BaseHTTPServer/md5/sha/sets/UserDict/robotparser, execfile, u-prefix, unichr, reload, intern, StandardError, `.next()`, backticks, cPickle/cStringIO/__builtin__/Cookie/...
-| **COBOL** | ✅ Partial | Enterprise COBOL→modern: fixed→free, STOP RUN→GOBACK, GO TO→PERFORM, DISPLAY/MOVE/COMPUTE/PERFORM/ADD/SUBTRACT/ACCEPT/MULTIPLY/DIVIDE/INITIALIZE/EXIT PROGRAM/STRING/SET, INSPECT/UNSTRING/OPEN/CLOSE/READ/WRITE/CALL/CONTINUE/REWRITE/DELETE/SORT/MERGE/EVALUATE/SEARCH/START, ALTER flags
-| **JavaScript/TS** | ✅ Partial | ES5/CommonJS→modern: var→let, ==→===, require→import, module.exports→export, __dirname/__filename→import.meta, substr→substring, escape/unescape, indexOf→includes
-| **C#** | ✅ Partial | Framework→modern: ArrayList/Hashtable, WebClient→HttpClient, BinaryFormatter/Remoting/Thread.Abort removals, string.Format→interpolation, nameof, nullable enable
+| **Python** | ✅ Adapter (live convert) | lib2to3/modernize set: print/print>>, xrange, iter*, imap/izip/ifilter, reduce→functools, unicode/basestring, except/as, `<>`, has_key, raw_input, long, raise, file, apply, urllib2/ConfigParser/Queue/thread/commands/urlparse/httplib/BaseHTTPServer/md5/sha/sets/UserDict/robotparser, execfile, u-prefix, unichr, reload, intern, StandardError, `.next()`, backticks, cPickle/cStringIO/__builtin__/Cookie/...
+| **COBOL** | ✅ Adapter (live convert) | Enterprise COBOL→modern: fixed→free, STOP RUN→GOBACK, GO TO→PERFORM, DISPLAY/MOVE/COMPUTE/PERFORM/ADD/SUBTRACT/ACCEPT/MULTIPLY/DIVIDE/INITIALIZE/EXIT PROGRAM/STRING/SET, INSPECT/UNSTRING/OPEN/CLOSE/READ/WRITE/CALL/CONTINUE/REWRITE/DELETE/SORT/MERGE/EVALUATE/SEARCH/START, ALTER flags
+| **JavaScript/TS** | ✅ Full | ES5/CommonJS→modern: var→let, ==→===, require→import, module.exports→export, __dirname/__filename→import.meta, substr→substring, escape/unescape, indexOf→includes
+| **C#** | ✅ Adapter (live convert) | Framework→modern: ArrayList/Hashtable, WebClient→HttpClient, BinaryFormatter/Remoting/Thread.Abort removals, string.Format→interpolation, nameof, nullable enable
 
 Each adapter implements: `parse()` → `buildSemanticModel()` → `listRefactorCandidates()` → `applyRefactor()` → `verifyPatch()`
 
@@ -269,7 +269,7 @@ npm install && npm run dev
 
 Credentials: `admin` / `admin` (HTTP Basic or `POST /api/v1/auth/login`).
 
-What is real today: Java rule catalog → analyze → generate → compile verification → review queue → accept/reject.
+What is real today: multi-language live convert (Java/Python/COBOL/JS/C#) → analyze → generate → verify → review queue → accept/reject. Java uses compile verification; other languages use adapter apply + structural/runtime checks when tools are present.
 What is stubbed: Postgres corpus analytics, multi-language UI, and invented dashboard KPIs.
 
 ## Quick Start
@@ -355,8 +355,8 @@ The platform was built in this order, with each layer depending on the previous:
 10. ✅ Security docs + hardening
 11. ✅ Python adapter — Python 2 → 3 modernization (83 rules)
 12. ✅ COBOL adapter — fixed-format parser + 46 modernization rules
-13. ✅ JavaScript/TypeScript adapter — CommonJS/ES5 → modern ESM (16 rules)
-14. ✅ C# adapter — .NET Framework → modern patterns (16 rules)
+13. ✅ JavaScript/TypeScript adapter — CommonJS/ES5 → modern ESM (20 rules)
+14. ✅ C# adapter — .NET Framework → modern patterns (19 rules)
 15. ✅ Java industry rule catalog expanded to 45 OpenRewrite/Sonar/JDK rules
 
 ---

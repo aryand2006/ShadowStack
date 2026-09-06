@@ -18,9 +18,9 @@ import java.nio.file.Path;
 import java.util.List;
 
 /**
- * Seeds the in-memory store with examples/legacy-sample and runs the real
- * analyze → generate → verify pipeline so a company demo has live patches
- * in the review queue on boot.
+ * Seeds the in-memory store with every bundled legacy sample (Java, Python, COBOL,
+ * JavaScript, C#) and runs the real analyze → generate → verify pipeline so a
+ * company demo has live multi-language patches in the review queue on boot.
  */
 @Component
 @ConditionalOnProperty(name = "shadowstack.demo.enabled", havingValue = "true")
@@ -28,47 +28,95 @@ public class DemoBootstrap implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DemoBootstrap.class);
 
+    private record SampleSpec(
+            String path,
+            String name,
+            String description,
+            String language,
+            String targetVersion
+    ) {}
+
+    private static final List<SampleSpec> SAMPLES = List.of(
+            new SampleSpec(
+                    "examples/legacy-sample",
+                    "legacy-sample",
+                    "Bundled Java 8 → modern Java conversion sample for live demos",
+                    "java",
+                    "21"),
+            new SampleSpec(
+                    "examples/legacy-python",
+                    "legacy-python",
+                    "Python 2 → 3 modernization sample (lib2to3 / modernize classics)",
+                    "python",
+                    "3.12"),
+            new SampleSpec(
+                    "examples/legacy-cobol",
+                    "legacy-cobol",
+                    "Enterprise COBOL-85 → modern control-flow / I/O sample",
+                    "cobol",
+                    "2002"),
+            new SampleSpec(
+                    "examples/legacy-javascript",
+                    "legacy-javascript",
+                    "CommonJS / ES5 → modern ESM JavaScript sample",
+                    "javascript",
+                    "ES2022"),
+            new SampleSpec(
+                    "examples/legacy-csharp",
+                    "legacy-csharp",
+                    ".NET Framework → modern C# sample",
+                    "csharp",
+                    "12")
+    );
+
     private final ProjectService projectService;
     private final RefactorOrchestrationService orchestrationService;
-    private final String samplePath;
+    private final boolean seedAllLanguages;
 
     public DemoBootstrap(
             ProjectService projectService,
             RefactorOrchestrationService orchestrationService,
-            @Value("${shadowstack.demo.sample-path:examples/legacy-sample}") String samplePath) {
+            @Value("${shadowstack.demo.seed-all-languages:true}") boolean seedAllLanguages) {
         this.projectService = projectService;
         this.orchestrationService = orchestrationService;
-        this.samplePath = samplePath;
+        this.seedAllLanguages = seedAllLanguages;
     }
 
     @Override
     public void run(ApplicationArguments args) {
-        Path root = resolveSampleRoot(samplePath);
+        List<SampleSpec> specs = seedAllLanguages ? SAMPLES : List.of(SAMPLES.get(0));
+        for (SampleSpec spec : specs) {
+            seed(spec);
+        }
+    }
+
+    private void seed(SampleSpec spec) {
+        Path root = resolveSampleRoot(spec.path());
         if (!Files.isDirectory(root)) {
-            log.warn("Demo sample not found at {} — skipping seed", root);
+            log.warn("Demo sample not found at {} — skipping {}", root, spec.name());
             return;
         }
 
-        log.info("Seeding demo project from {}", root);
+        log.info("Seeding demo project '{}' ({}) from {}", spec.name(), spec.language(), root);
         ProjectResponse project = projectService.createProject(new ProjectCreateRequest(
-                "legacy-sample",
-                "Bundled Java 8 → modern Java conversion sample for live demos",
+                spec.name(),
+                spec.description(),
                 root.toString(),
                 "main",
-                "java",
-                "21"
+                spec.language(),
+                spec.targetVersion()
         ));
         projectService.triggerBaseline(project.id());
 
         List<?> patches = orchestrationService.runFullPipeline(project.id());
         List<CandidateInfo> found = orchestrationService.getCandidates(project.id());
-        long pendingCount = orchestrationService.getPendingReviewPatches().stream()
-                .filter(p -> p.projectId().equals(project.id()))
+        long pendingCount = orchestrationService.getPatches(project.id()).stream()
+                .filter(p -> p.status() != null && p.status().name().contains("PENDING"))
                 .count();
 
         log.info(
-                "Demo ready: projectId={} candidates={} patches={} pendingReview={}",
-                project.id(), found.size(), patches.size(), pendingCount
+                "Demo ready: name={} language={} projectId={} candidates={} patches={} pendingReview={}",
+                spec.name(), spec.language(), project.id(), found.size(), patches.size(), pendingCount
         );
     }
 

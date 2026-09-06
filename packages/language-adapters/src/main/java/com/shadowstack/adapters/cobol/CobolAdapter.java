@@ -1141,10 +1141,10 @@ public class CobolAdapter implements LanguageAdapter {
         return VerificationResult.builder()
                 .patchId(patch.patchId())
                 .compileSuccess(compileOk)
-                .testSuccess(true)
+                .testSuccess(false)
                 .astStructuralMatchScore(astScore)
-                .bytecodeDescriptorMatch(true)
-                .apiSurfaceCompatible(true)
+                .bytecodeDescriptorMatch(false)
+                .apiSurfaceCompatible(compileOk)
                 .goldenMasterMatch(false)
                 .layerResults(layers)
                 .beforeAstHash(patch.beforeAstHash())
@@ -1389,8 +1389,15 @@ public class CobolAdapter implements LanguageAdapter {
     private String applyLineReplacement(String source, RefactorCandidate candidate) {
         String[] lines = source.split("\n", -1);
         int idx = candidate.startLine() - 1;
-        if (idx < 0 || idx >= lines.length) return source;
-        if (!lines[idx].equals(candidate.beforeSnippet())) return source;
+        if (idx < 0 || idx >= lines.length) {
+            throw new IllegalStateException(
+                    "Line " + candidate.startLine() + " out of range for " + candidate.sourceFile());
+        }
+        if (!lines[idx].equals(candidate.beforeSnippet())) {
+            throw new IllegalStateException(
+                    "Before-snippet mismatch at line " + candidate.startLine()
+                            + " for rule " + candidate.ruleId());
+        }
         lines[idx] = candidate.proposedAfterSnippet();
         return String.join("\n", lines);
     }

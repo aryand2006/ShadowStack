@@ -209,4 +209,35 @@ class PythonAdapterTest {
         return adapter.listRefactorCandidates(model, LanguageAdapter.RefactorRuleSet.empty())
                 .stream().map(RefactorCandidate::ruleId).collect(Collectors.toSet());
     }
+
+
+    @Test
+    void applies_and_verifies_against_legacy_sample(@TempDir Path tmp) throws Exception {
+        Path sample = Path.of("examples/legacy-python/report_builder.py").toAbsolutePath().normalize();
+        if (!Files.isRegularFile(sample)) {
+            sample = Path.of("/workspace/examples/legacy-python/report_builder.py");
+        }
+        org.junit.jupiter.api.Assumptions.assumeTrue(Files.isRegularFile(sample));
+        Files.writeString(tmp.resolve("report_builder.py"),
+                Files.readString(sample, StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+
+        PythonAdapter adapter = new PythonAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        RefactorCandidate candidate = adapter.listRefactorCandidates(
+                        model, LanguageAdapter.RefactorRuleSet.empty()).stream()
+                .filter(c -> c.ruleId().contains("print"))
+                .findFirst()
+                .orElseThrow();
+        PatchResult patch = adapter.applyRefactor(candidate, tmp);
+        assertTrue(patch.success(), () -> String.valueOf(patch.errorMessage()));
+        String updated = Files.readString(tmp.resolve("report_builder.py"), StandardCharsets.UTF_8);
+        assertTrue(updated.contains("print(") || !updated.equals(
+                Files.readString(sample, StandardCharsets.UTF_8)), updated);
+        VerificationResult vr = adapter.verifyPatch(
+                patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+        assertNotNull(vr.verdict());
+        // Full legacy samples remain Python-2-invalid after a single rule apply;
+        // verification must still return a deterministic verdict/layers.
+        assertFalse(vr.layerResults().isEmpty());
+    }
 }

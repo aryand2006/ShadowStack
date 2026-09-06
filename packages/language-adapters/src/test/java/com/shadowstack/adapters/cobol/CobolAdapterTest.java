@@ -185,4 +185,26 @@ class CobolAdapterTest {
         return adapter.listRefactorCandidates(model, LanguageAdapter.RefactorRuleSet.empty())
                 .stream().map(RefactorCandidate::ruleId).collect(Collectors.toSet());
     }
+
+
+    @Test
+    void applies_stop_run_and_verifies(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("SAMPLE.cob");
+        Files.writeString(file, FIXED_FORMAT_PROGRAM, StandardCharsets.UTF_8);
+        CobolAdapter adapter = new CobolAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        RefactorCandidate candidate = adapter.listRefactorCandidates(
+                        model, LanguageAdapter.RefactorRuleSet.empty()).stream()
+                .filter(c -> "cobol.stop_run_to_goback".equals(c.ruleId()))
+                .findFirst()
+                .orElseThrow();
+        PatchResult patch = adapter.applyRefactor(candidate, tmp);
+        assertTrue(patch.success(), () -> String.valueOf(patch.errorMessage()));
+        String updated = Files.readString(file, StandardCharsets.UTF_8);
+        assertTrue(updated.toUpperCase().contains("GOBACK"), updated);
+        VerificationResult vr = adapter.verifyPatch(
+                patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+        assertTrue(vr.compileSuccess());
+        assertNotNull(vr.verdict());
+    }
 }

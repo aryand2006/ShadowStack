@@ -14,6 +14,12 @@ import com.shadowstack.api.dto.VerificationResultResponse.InvariantResults.Invar
 import com.shadowstack.api.dto.VerificationResultResponse.InvariantResults;
 import com.shadowstack.api.dto.VerificationResultResponse.TestResults;
 import com.shadowstack.api.dto.VerificationResultResponse.VerificationStatus;
+import com.shadowstack.adapters.LanguageAdapter;
+import com.shadowstack.adapters.model.PatchResult;
+import com.shadowstack.adapters.model.RefactorCandidate;
+import com.shadowstack.adapters.model.SemanticModel;
+import com.shadowstack.adapters.model.VerificationResult;
+import com.shadowstack.refactor.model.SafetyInvariant;
 import com.shadowstack.refactor.RefactorEngine;
 import com.shadowstack.refactor.RefactorRule;
 import com.shadowstack.refactor.RuleCatalog;
@@ -61,6 +67,7 @@ public class RefactorOrchestrationService {
     private static final Logger log = LoggerFactory.getLogger(RefactorOrchestrationService.class);
 
     private final ProjectService projectService;
+    private final LanguageAdapterRegistry adapterRegistry;
 
     private final Map<UUID, List<CandidateInfo>> candidateStore = new ConcurrentHashMap<>();
     private final Map<UUID, PatchUnit> candidateUnits = new ConcurrentHashMap<>();
@@ -68,57 +75,39 @@ public class RefactorOrchestrationService {
     private final Map<UUID, PatchUnit> patchUnits = new ConcurrentHashMap<>();
     private final Map<UUID, List<UUID>> projectPatchIndex = new ConcurrentHashMap<>();
     private final Map<UUID, VerificationResultResponse> verificationStore = new ConcurrentHashMap<>();
+    private final Map<UUID, String> projectLanguage = new ConcurrentHashMap<>();
+    private final Map<UUID, RefactorCandidate> adapterCandidates = new ConcurrentHashMap<>();
 
-    public RefactorOrchestrationService(ShadowStackConfig config, ProjectService projectService) {
+    public RefactorOrchestrationService(
+            ShadowStackConfig config,
+            ProjectService projectService,
+            LanguageAdapterRegistry adapterRegistry) {
         this.projectService = projectService;
+        this.adapterRegistry = adapterRegistry;
     }
 
     public List<CandidateInfo> runAnalysis(UUID projectId) {
         Path root = projectService.requireProjectRoot(projectId);
-        log.info("Analyzing project {} at {}", projectId, root);
+        ProjectResponse project = projectService.getProject(projectId)
+                .orElseThrow(() -> new IllegalArgumentException("Unknown project " + projectId));
+        String language = project.sourceLanguage() == null ? "java" : project.sourceLanguage();
+        projectLanguage.put(projectId, language);
+        log.info("Analyzing project {} at {} (language={})", projectId, root, language);
 
-        RefactorEngine engine = createEngine();
-        List<CandidateInfo> candidates = new ArrayList<>();
+        List<CandidateInfo> candidates;
         Map<String, Integer> riskDistribution = new LinkedHashMap<>();
 
-        try {
-            for (Path javaFile : discoverJavaFiles(root)) {
-                String source = Files.readString(javaFile, StandardCharsets.UTF_8);
-                String relative = root.relativize(javaFile).toString().replace('\\', '/');
-                CompilationUnit cu = parseCompilationUnit(source, javaFile);
-                SemanticContext context = SemanticContext.builder()
-                        .compilationUnit(cu)
-                        .sourceFilePath(relative)
-                        .sourceCode(source)
-                        .build();
-
-                for (PatchUnit unit : engine.scan(cu, context)) {
-                    UUID candidateId = UUID.randomUUID();
-                    candidateUnits.put(candidateId, unit);
-                    riskDistribution.merge(unit.getRiskTier().name(), 1, Integer::sum);
-                    candidates.add(new CandidateInfo(
-                            candidateId,
-                            projectId,
-                            unit.getRuleId(),
-                            "modernization",
-                            relative,
-                            unit.getStartLine(),
-                            unit.getEndLine(),
-                            unit.getRationale() != null ? unit.getRationale() : unit.getRuleId(),
-                            riskScore(unit.getRiskTier()),
-                            unit.getConfidenceScore()
-                    ));
-                }
-            }
-        } catch (IOException e) {
-            throw new IllegalStateException("Failed to analyze " + root + ": " + e.getMessage(), e);
+        if (adapterRegistry.isJavaEngineLanguage(language)) {
+            candidates = analyzeWithJavaEngine(projectId, root, riskDistribution);
+        } else {
+            candidates = analyzeWithLanguageAdapter(projectId, root, language, riskDistribution);
         }
 
         candidateStore.put(projectId, candidates);
         projectService.updateAnalysisSummary(projectId, new ProjectResponse.AnalysisSummary(
                 candidates.size(), 0, 0, 0, riskDistribution
         ));
-        log.info("Analysis found {} candidates for {}", candidates.size(), projectId);
+        log.info("Analysis found {} candidates for {} ({})", candidates.size(), projectId, language);
         return candidates;
     }
 
@@ -191,28 +180,96 @@ public class RefactorOrchestrationService {
         PatchUnit unit = patchUnits.get(patchId);
         Path root = projectService.requireProjectRoot(patch.projectId());
         Instant started = Instant.now();
+        String language = projectLanguage.getOrDefault(patch.projectId(), "java");
 
         try {
             Path sourceFile = root.resolve(patch.filePath()).normalize();
             String original = Files.readString(sourceFile, StandardCharsets.UTF_8);
             String transformed = applySnippet(original, unit.getBeforeSnippet(), unit.getAfterSnippet());
 
-            VerificationPipeline pipeline = new VerificationPipeline(0.7, false);
-            pipeline.addLayer(new CompileVerifier());
-            VerificationContext context = VerificationContext.builder()
-                    .projectRoot(root)
-                    .sourceRoot(root)
-                    .originalSource(original)
-                    .transformedSource(transformed)
-                    .build();
+            boolean passed;
+            List<InvariantCheck> checks;
+            String summary;
 
-            VerificationPipeline.PipelineResult pipelineResult = pipeline.execute(unit, context);
-            boolean passed = pipelineResult.verdict() != Verdict.FAIL; // WARN stays reviewable
+            if (adapterRegistry.isJavaEngineLanguage(language)) {
+                VerificationPipeline pipeline = new VerificationPipeline(0.7, false);
+                pipeline.addLayer(new CompileVerifier());
+                VerificationContext context = VerificationContext.builder()
+                        .projectRoot(root)
+                        .sourceRoot(root)
+                        .originalSource(original)
+                        .transformedSource(transformed)
+                        .build();
+                VerificationPipeline.PipelineResult pipelineResult = pipeline.execute(unit, context);
+                passed = pipelineResult.verdict() != Verdict.FAIL;
+                checks = pipelineResult.layerResults().stream()
+                        .map(RefactorOrchestrationService::toCheck)
+                        .toList();
+                summary = pipelineResult.summary();
+            } else {
+                // Prefer adapter.applyRefactor on a temp copy; fall back to snippet rewrite.
+                Path tempRoot = Files.createTempDirectory("shadowstack-verify-");
+                try {
+                    LanguageAdapter adapter = adapterRegistry.require(language);
+                    Path tempFile = tempRoot.resolve(patch.filePath());
+                    Files.createDirectories(tempFile.getParent());
+                    // Seed temp tree with the original file content.
+                    Path originalFile = root.resolve(patch.filePath()).normalize();
+                    Files.writeString(tempFile,
+                            Files.readString(originalFile, StandardCharsets.UTF_8),
+                            StandardCharsets.UTF_8);
+
+                    PatchResult applied;
+                    RefactorCandidate adapterCandidate = adapterCandidates.get(patch.candidateId());
+                    if (adapterCandidate != null) {
+                        applied = adapter.applyRefactor(adapterCandidate, tempRoot);
+                        if (!applied.success()) {
+                            // Fall back to snippet application when line apply fails.
+                            Files.writeString(tempFile, transformed, StandardCharsets.UTF_8);
+                            applied = PatchResult.builder()
+                                    .patchId(patchId)
+                                    .unifiedDiff(unit.getUnifiedDiff() != null ? unit.getUnifiedDiff() : "")
+                                    .beforeAstHash("before")
+                                    .afterAstHash("after")
+                                    .addAffectedFile(patch.filePath())
+                                    .success(true)
+                                    .putMetadata("applyFallback", "snippet")
+                                    .build();
+                        }
+                    } else {
+                        Files.writeString(tempFile, transformed, StandardCharsets.UTF_8);
+                        applied = PatchResult.builder()
+                                .patchId(patchId)
+                                .unifiedDiff(unit.getUnifiedDiff() != null ? unit.getUnifiedDiff() : "")
+                                .beforeAstHash("before")
+                                .afterAstHash("after")
+                                .addAffectedFile(patch.filePath())
+                                .success(true)
+                                .putMetadata("applyFallback", "snippet-no-candidate")
+                                .build();
+                    }
+
+                    VerificationResult vr = adapter.verifyPatch(
+                            applied, tempRoot, LanguageAdapter.VerificationConfig.defaults());
+                    passed = vr.passed() || vr.verdict() == VerificationResult.Verdict.WARN;
+                    checks = vr.layerResults().stream()
+                            .map(layer -> new InvariantCheck(
+                                    layer.layerName(),
+                                    layer.details() != null ? layer.details() : layer.layerName(),
+                                    layer.passed(),
+                                    "score=" + layer.score()))
+                            .toList();
+                    Object applyMode = applied.metadata() != null
+                            ? applied.metadata().getOrDefault("applyFallback", "refactor")
+                            : "refactor";
+                    summary = "adapter:" + language + " verdict=" + vr.verdict()
+                            + " apply=" + applyMode;
+                } finally {
+                    deleteRecursively(tempRoot);
+                }
+            }
+
             Instant completed = Instant.now();
-
-            List<InvariantCheck> checks = pipelineResult.layerResults().stream()
-                    .map(RefactorOrchestrationService::toCheck)
-                    .toList();
             int preserved = (int) checks.stream().filter(InvariantCheck::preserved).count();
             int violated = checks.size() - preserved;
 
@@ -227,9 +284,9 @@ public class RefactorOrchestrationService {
                             UUID.randomUUID(),
                             passed,
                             passed
-                                    ? "Compile verification passed for " + patch.ruleName()
-                                    : "Compile verification failed for " + patch.ruleName(),
-                            Map.of("pipeline", pipelineResult.summary()),
+                                    ? "Verification passed for " + patch.ruleName()
+                                    : "Verification failed for " + patch.ruleName(),
+                            Map.of("pipeline", summary),
                             completed
                     ),
                     Duration.between(started, completed).toMillis(),
@@ -252,7 +309,7 @@ public class RefactorOrchestrationService {
                     patch.risk(),
                     new VerificationEvidence(
                             passed, 0, 0, 0, verified, failed,
-                            Map.of("compileVerifier", passed), completed
+                            Map.of("verifier", language), completed
                     ),
                     patch.review(), patch.createdAt(), Instant.now()
             );
@@ -332,6 +389,106 @@ public class RefactorOrchestrationService {
         );
     }
 
+
+    private List<CandidateInfo> analyzeWithJavaEngine(
+            UUID projectId, Path root, Map<String, Integer> riskDistribution) {
+        RefactorEngine engine = createEngine();
+        List<CandidateInfo> candidates = new ArrayList<>();
+        try {
+            for (Path javaFile : discoverJavaFiles(root)) {
+                String source = Files.readString(javaFile, StandardCharsets.UTF_8);
+                String relative = root.relativize(javaFile).toString().replace('\\', '/');
+                CompilationUnit cu = parseCompilationUnit(source, javaFile);
+                SemanticContext context = SemanticContext.builder()
+                        .compilationUnit(cu)
+                        .sourceFilePath(relative)
+                        .sourceCode(source)
+                        .build();
+
+                for (PatchUnit unit : engine.scan(cu, context)) {
+                    candidates.add(registerCandidate(projectId, unit, riskDistribution));
+                }
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to analyze " + root + ": " + e.getMessage(), e);
+        }
+        return candidates;
+    }
+
+    private List<CandidateInfo> analyzeWithLanguageAdapter(
+            UUID projectId, Path root, String language, Map<String, Integer> riskDistribution) {
+        LanguageAdapter adapter = adapterRegistry.require(language);
+        SemanticModel model = adapter.buildSemanticModel(root);
+        List<RefactorCandidate> found = adapter.listRefactorCandidates(
+                model, LanguageAdapter.RefactorRuleSet.empty());
+        List<CandidateInfo> candidates = new ArrayList<>();
+        for (RefactorCandidate candidate : found) {
+            PatchUnit unit = toPatchUnit(candidate);
+            CandidateInfo info = registerCandidate(projectId, unit, riskDistribution);
+            adapterCandidates.put(info.candidateId(), candidate);
+            candidates.add(info);
+        }
+        return candidates;
+    }
+
+    private CandidateInfo registerCandidate(
+            UUID projectId, PatchUnit unit, Map<String, Integer> riskDistribution) {
+        UUID candidateId = UUID.randomUUID();
+        candidateUnits.put(candidateId, unit);
+        riskDistribution.merge(unit.getRiskTier().name(), 1, Integer::sum);
+        return new CandidateInfo(
+                candidateId,
+                projectId,
+                unit.getRuleId(),
+                "modernization",
+                unit.getSourceFile(),
+                unit.getStartLine(),
+                unit.getEndLine(),
+                unit.getRationale() != null ? unit.getRationale() : unit.getRuleId(),
+                riskScore(unit.getRiskTier()),
+                unit.getConfidenceScore()
+        );
+    }
+
+    private static PatchUnit toPatchUnit(RefactorCandidate candidate) {
+        String before = candidate.beforeSnippet() != null ? candidate.beforeSnippet() : "";
+        String after = candidate.proposedAfterSnippet() != null ? candidate.proposedAfterSnippet() : "";
+        List<String> beforeLines = List.of(before.split("\n", -1));
+        List<String> afterLines = List.of(after.split("\n", -1));
+        String diff = PatchUnit.computeUnifiedDiff(
+                beforeLines, afterLines, candidate.sourceFile(), candidate.startLine());
+        PatchUnit.Builder builder = PatchUnit.builder(candidate.ruleId(), candidate.sourceFile())
+                .startLine(candidate.startLine())
+                .endLine(candidate.endLine())
+                .beforeSnippet(before)
+                .afterSnippet(after)
+                .unifiedDiff(diff)
+                .confidenceScore(candidate.confidenceScore())
+                .riskTier(mapAdapterRisk(candidate.riskTier()))
+                .rationale(candidate.ruleName() + ": modernization candidate");
+        if (candidate.safetyInvariants() != null) {
+            for (var inv : candidate.safetyInvariants()) {
+                builder.addInvariant(SafetyInvariant.verified(
+                        inv.invariantId(),
+                        inv.description(),
+                        inv.evidence()));
+            }
+        }
+        return builder.build();
+    }
+
+    private static RiskTier mapAdapterRisk(com.shadowstack.adapters.model.RiskTier tier) {
+        if (tier == null) {
+            return RiskTier.MEDIUM;
+        }
+        return switch (tier) {
+            case LOW -> RiskTier.LOW;
+            case MODERATE -> RiskTier.MEDIUM;
+            case HIGH -> RiskTier.HIGH;
+            case CRITICAL -> RiskTier.CRITICAL;
+        };
+    }
+
     private RefactorEngine createEngine() {
         RefactorEngine engine = new RefactorEngine(0.55, RiskTier.CRITICAL);
         for (RefactorRule rule : RuleCatalog.javaRules()) {
@@ -407,6 +564,26 @@ public class RefactorOrchestrationService {
             case HIGH -> RiskAssessment.RiskTier.HIGH;
             case CRITICAL -> RiskAssessment.RiskTier.CRITICAL;
         };
+    }
+
+
+    private static void deleteRecursively(Path root) throws IOException {
+        if (root == null || !Files.exists(root)) {
+            return;
+        }
+        Files.walkFileTree(root, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Files.deleteIfExists(file);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                Files.deleteIfExists(dir);
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 
     public record CandidateInfo(

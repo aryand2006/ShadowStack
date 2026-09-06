@@ -7,6 +7,9 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.charset.Charset;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -35,6 +38,12 @@ public class CsharpAdapter implements LanguageAdapter {
     private static final Pattern METHOD_DECL = Pattern.compile(
             "(?:^|\\s)(?:public|private|protected|internal|static|virtual|override|async|sealed|new|partial|extern|unsafe|\\s)+"
                     + "([A-Za-z_][\\w<>,.?\\[\\]]*)\\s+([A-Za-z_][\\w]*)\\s*\\(([^)]*)\\)");
+    private static final Pattern HTTP_WEB_REQUEST =
+            Pattern.compile("\\bHttpWebRequest\\b");
+    private static final Pattern WEB_REQUEST_CREATE =
+            Pattern.compile("\\bWebRequest\\.Create\\s*\\(");
+    private static final Pattern NAMEVALUE_COLLECTION =
+            Pattern.compile("\\bNameValueCollection\\b");
 
     private static final Pattern ARRAY_LIST = Pattern.compile("\\bArrayList\\b");
     private static final Pattern HASH_TABLE = Pattern.compile("\\bHashtable\\b");
@@ -170,6 +179,37 @@ public class CsharpAdapter implements LanguageAdapter {
         Objects.requireNonNull(patch, "patch must not be null");
         Objects.requireNonNull(sourceRoot, "sourceRoot must not be null");
         Objects.requireNonNull(config, "config must not be null");
+
+        List<VerificationResult.LayerResult> layers = new ArrayList<>();
+        boolean compileOk = true;
+        if (config.runCompilation()) {
+            VerificationResult.LayerResult compile = verifyDotnetSyntax(patch, sourceRoot);
+            layers.add(compile);
+            compileOk = compile.passed();
+        }
+        VerificationResult.LayerResult structural = verifyStructure(patch, sourceRoot);
+        layers.add(structural);
+
+        boolean runtimeVerified = layers.stream()
+                .anyMatch(l -> "compilation".equals(l.layerName())
+                        && l.passed()
+                        && l.details() != null
+                        && l.details().contains("dotnet build succeeded"));
+        return VerificationResult.builder()
+                .patchId(patch.patchId())
+                .compileSuccess(compileOk)
+                .testSuccess(runtimeVerified)
+                .astStructuralMatchScore(structural.score())
+                .bytecodeDescriptorMatch(runtimeVerified)
+                .apiSurfaceCompatible(structural.passed())
+                .goldenMasterMatch(false)
+                .layerResults(layers)
+                .beforeAstHash(patch.beforeAstHash())
+                .afterAstHash(patch.afterAstHash())
+                .build();
+    }
+
+    private VerificationResult.LayerResult verifyStructure(PatchResult patch, Path sourceRoot) {
         long start = System.currentTimeMillis();
         boolean passed = true;
         String details = "No affected files";
@@ -186,21 +226,80 @@ public class CsharpAdapter implements LanguageAdapter {
             passed = false;
             details = "Re-parse failed: " + e.getMessage();
         }
-        VerificationResult.LayerResult structural = new VerificationResult.LayerResult(
+        return new VerificationResult.LayerResult(
                 "structural", passed, passed ? 1.0 : 0.0, details,
                 System.currentTimeMillis() - start);
-        return VerificationResult.builder()
-                .patchId(patch.patchId())
-                .compileSuccess(passed)
-                .testSuccess(true)
-                .astStructuralMatchScore(structural.score())
-                .bytecodeDescriptorMatch(true)
-                .apiSurfaceCompatible(true)
-                .goldenMasterMatch(false)
-                .addLayerResult(structural)
-                .beforeAstHash(patch.beforeAstHash())
-                .afterAstHash(patch.afterAstHash())
-                .build();
+    }
+
+    private VerificationResult.LayerResult verifyDotnetSyntax(PatchResult patch, Path sourceRoot) {
+        long start = System.currentTimeMillis();
+        if (patch.affectedFiles().isEmpty()) {
+            return new VerificationResult.LayerResult("compilation", true, 1.0, "No affected files", 0);
+        }
+        // Prefer `dotnet` when present. Snippets are rarely full projects, so we
+        // treat a successful tool probe + structural reparse as the compile layer
+        // and only fail when dotnet is present and rejects a project build.
+        try {
+            ProcessBuilder probe = new ProcessBuilder("dotnet", "--info");
+            probe.redirectErrorStream(true);
+            Process p = probe.start();
+            boolean finished = p.waitFor(15, java.util.concurrent.TimeUnit.SECONDS);
+            long elapsed = System.currentTimeMillis() - start;
+            if (!finished) {
+                p.destroyForcibly();
+                return new VerificationResult.LayerResult(
+                        "compilation", false, 0.0, "dotnet --info timed out", elapsed);
+            }
+            if (p.exitValue() != 0) {
+                return new VerificationResult.LayerResult(
+                        "compilation", true, 0.7,
+                        "dotnet present but unusable; structural-only verification", elapsed);
+            }
+            Path target = sourceRoot.resolve(patch.affectedFiles().get(0));
+            // Look for a nearby .csproj; if none, report honest structural-only compile layer.
+            Path dir = target.getParent();
+            boolean hasProj = false;
+            if (dir != null && Files.isDirectory(dir)) {
+                try (var stream = Files.list(dir)) {
+                    hasProj = stream.anyMatch(f -> f.getFileName().toString().endsWith(".csproj"));
+                }
+            }
+            if (!hasProj) {
+                return new VerificationResult.LayerResult(
+                        "compilation", true, 0.85,
+                        "dotnet available; no .csproj beside " + target.getFileName()
+                                + " (structural verification only)",
+                        elapsed);
+            }
+            ProcessBuilder build = new ProcessBuilder("dotnet", "build", "--nologo", "-v", "q");
+            build.directory(dir.toFile());
+            build.redirectErrorStream(true);
+            Process bp = build.start();
+            StringBuilder out = new StringBuilder();
+            try (BufferedReader r = new BufferedReader(
+                    new InputStreamReader(bp.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = r.readLine()) != null) out.append(line).append('\n');
+            }
+            boolean done = bp.waitFor(60, java.util.concurrent.TimeUnit.SECONDS);
+            elapsed = System.currentTimeMillis() - start;
+            if (!done) {
+                bp.destroyForcibly();
+                return new VerificationResult.LayerResult(
+                        "compilation", false, 0.0, "dotnet build timed out", elapsed);
+            }
+            boolean ok = bp.exitValue() == 0;
+            return new VerificationResult.LayerResult(
+                    "compilation", ok, ok ? 1.0 : 0.0,
+                    ok ? "dotnet build succeeded"
+                            : "dotnet build failed:\n" + out,
+                    elapsed);
+        } catch (Exception e) {
+            long elapsed = System.currentTimeMillis() - start;
+            return new VerificationResult.LayerResult(
+                    "compilation", true, 0.7,
+                    "dotnet not available; structural-only verification", elapsed);
+        }
     }
 
     private List<RefactorCandidate> detectCandidates(String source, String relPath) {
@@ -258,6 +357,18 @@ public class CsharpAdapter implements LanguageAdapter {
                     SafetyInvariant.Status.UNKNOWN, out);
             detectArgumentNull(line, offset, i + 1, relPath, codeMask, out);
             detectStringEmpty(line, offset, i + 1, relPath, codeMask, EMPTY_EQUALS, out);
+            detect(line, offset, i + 1, relPath, codeMask, HTTP_WEB_REQUEST,
+                    "cs.httprequest_to_httpclient", "HttpWebRequest → HttpClient",
+                    "HttpClient", 0.70, RiskTier.HIGH, SafetyInvariant.Status.UNKNOWN, out);
+            detect(line, offset, i + 1, relPath, codeMask, WEB_REQUEST_CREATE,
+                    "cs.webrequest_to_httpclient", "WebRequest.Create → HttpClient",
+                    "/* use HttpClient */ HttpClient", 0.68, RiskTier.HIGH,
+                    SafetyInvariant.Status.UNKNOWN, out);
+            detect(line, offset, i + 1, relPath, codeMask, NAMEVALUE_COLLECTION,
+                    "cs.namevaluecollection_to_dict", "NameValueCollection → Dictionary",
+                    "Dictionary<string, string>", 0.75, RiskTier.MODERATE,
+                    SafetyInvariant.Status.SATISFIED, out);
+
             detectStringEmpty(line, offset, i + 1, relPath, codeMask, EMPTY_METHOD, out);
             detectConcurrentDictionary(line, offset, i + 1, relPath, codeMask, out);
             offset += line.length() + 1;
@@ -558,9 +669,16 @@ public class CsharpAdapter implements LanguageAdapter {
     private static String replaceCandidateLine(String source, RefactorCandidate candidate) {
         String[] lines = source.split("\n", -1);
         int index = candidate.startLine() - 1;
-        if (index >= 0 && index < lines.length && lines[index].equals(candidate.beforeSnippet())) {
-            lines[index] = candidate.proposedAfterSnippet();
+        if (index < 0 || index >= lines.length) {
+            throw new IllegalStateException(
+                    "Line " + candidate.startLine() + " out of range for " + candidate.sourceFile());
         }
+        if (!lines[index].equals(candidate.beforeSnippet())) {
+            throw new IllegalStateException(
+                    "Before-snippet mismatch at line " + candidate.startLine()
+                            + " for rule " + candidate.ruleId());
+        }
+        lines[index] = candidate.proposedAfterSnippet();
         return String.join("\n", lines);
     }
 

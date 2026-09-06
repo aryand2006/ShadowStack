@@ -1,6 +1,7 @@
 package com.shadowstack.adapters.csharp;
 
 import com.shadowstack.adapters.LanguageAdapter;
+import com.shadowstack.adapters.model.*;
 import com.shadowstack.adapters.model.RefactorCandidate;
 import com.shadowstack.adapters.model.SemanticModel;
 import org.junit.jupiter.api.Test;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -66,5 +68,52 @@ class CsharpAdapterTest {
         assertTrue(ruleIds.contains("cs.nameof_for_literals"), ruleIds.toString());
         assertTrue(ruleIds.contains("cs.string_isempty"), ruleIds.toString());
         assertTrue(ruleIds.contains("cs.concurrentdict_tryadd"), ruleIds.toString());
+    }
+
+
+    @Test
+    void applies_and_verifies_arraylist_to_list(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("Sample.cs");
+        Files.writeString(file,
+                "using System.Collections;\nclass Sample { ArrayList items = new ArrayList(); }\n",
+                java.nio.charset.StandardCharsets.UTF_8);
+        CsharpAdapter adapter = new CsharpAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        List<RefactorCandidate> candidates = adapter.listRefactorCandidates(
+                model, LanguageAdapter.RefactorRuleSet.empty());
+        RefactorCandidate target = candidates.stream()
+                .filter(c -> c.ruleId().contains("arraylist"))
+                .findFirst()
+                .orElseThrow();
+        PatchResult patch = adapter.applyRefactor(target, tmp);
+        assertTrue(patch.success(), () -> String.valueOf(patch.errorMessage()));
+        String updated = Files.readString(file);
+        assertTrue(updated.contains("List"), updated);
+        VerificationResult verification = adapter.verifyPatch(
+                patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+        assertNotNull(verification.verdict());
+    }
+
+
+    @Test
+    void applies_and_verifies_hashtable_rule(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("Sample.cs");
+        Files.writeString(file,
+                "using System.Collections;\nclass Sample { Hashtable lookup = new Hashtable(); }\n",
+                StandardCharsets.UTF_8);
+        CsharpAdapter adapter = new CsharpAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        RefactorCandidate target = adapter.listRefactorCandidates(
+                        model, LanguageAdapter.RefactorRuleSet.empty()).stream()
+                .filter(c -> c.ruleId().contains("hashtable"))
+                .findFirst()
+                .orElseThrow();
+        PatchResult patch = adapter.applyRefactor(target, tmp);
+        assertTrue(patch.success(), () -> String.valueOf(patch.errorMessage()));
+        String updated = Files.readString(file, StandardCharsets.UTF_8);
+        assertTrue(updated.contains("Dictionary"), updated);
+        VerificationResult verification = adapter.verifyPatch(
+                patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+        assertNotNull(verification.verdict());
     }
 }

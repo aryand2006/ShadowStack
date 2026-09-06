@@ -222,13 +222,18 @@ public class PythonAdapter implements LanguageAdapter {
         VerificationResult.LayerResult structural = verifyStructure(patch, sourceRoot);
         layers.add(structural);
 
+        boolean runtimeVerified = layers.stream()
+                .anyMatch(l -> "compilation".equals(l.layerName())
+                        && l.passed()
+                        && l.details() != null
+                        && l.details().contains("py_compile succeeded"));
         return VerificationResult.builder()
                 .patchId(patch.patchId())
                 .compileSuccess(compileOk)
-                .testSuccess(true)
+                .testSuccess(runtimeVerified)
                 .astStructuralMatchScore(structural.score())
-                .bytecodeDescriptorMatch(true)
-                .apiSurfaceCompatible(true)
+                .bytecodeDescriptorMatch(runtimeVerified)
+                .apiSurfaceCompatible(structural.passed())
                 .goldenMasterMatch(false)
                 .layerResults(layers)
                 .beforeAstHash(patch.beforeAstHash())
@@ -271,10 +276,10 @@ public class PythonAdapter implements LanguageAdapter {
                     "compilation", passed, passed ? 1.0 : 0.0, details, elapsed);
         } catch (IOException e) {
             long elapsed = System.currentTimeMillis() - start;
-            // python3 not available — degrade to lexical OK so the pipeline still flows.
+            // Runtime missing — structural-only; do not claim a full compile pass.
             return new VerificationResult.LayerResult(
-                    "compilation", true, 1.0,
-                    "python3 not available; skipped compile check", elapsed);
+                    "compilation", true, 0.7,
+                    "python3 not available; structural-only verification", elapsed);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             long elapsed = System.currentTimeMillis() - start;
@@ -1471,10 +1476,14 @@ public class PythonAdapter implements LanguageAdapter {
     private String applyTextReplacement(String source, RefactorCandidate candidate) {
         String[] lines = source.split("\n", -1);
         int idx = candidate.startLine() - 1;
-        if (idx < 0 || idx >= lines.length) return source;
+        if (idx < 0 || idx >= lines.length) {
+            throw new IllegalStateException(
+                    "Line " + candidate.startLine() + " out of range for " + candidate.sourceFile());
+        }
         if (!lines[idx].equals(candidate.beforeSnippet())) {
-            // Best-effort: replace within the line.
-            return source;
+            throw new IllegalStateException(
+                    "Before-snippet mismatch at line " + candidate.startLine()
+                            + " for rule " + candidate.ruleId());
         }
         lines[idx] = candidate.proposedAfterSnippet();
         return String.join("\n", lines);

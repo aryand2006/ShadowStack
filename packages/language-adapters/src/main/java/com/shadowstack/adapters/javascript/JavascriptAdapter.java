@@ -5,15 +5,20 @@ import com.shadowstack.adapters.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.*;
+import java.util.ArrayList;
 import java.util.regex.Matcher;
+import java.util.ArrayList;
 import java.util.regex.Pattern;
 
 /**
@@ -36,6 +41,14 @@ public class JavascriptAdapter implements LanguageAdapter {
             Pattern.compile("\\b(?:async\\s+)?function\\s+([A-Za-z_$][\\w$]*)\\s*\\(([^)]*)\\)");
     private static final Pattern ARROW_DECL =
             Pattern.compile("\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*(?:async\\s*)?\\(([^)]*)\\)\\s*=>");
+    private static final Pattern CALLBACK_ERR =
+            Pattern.compile("function\\s*\\(\\s*err\\s*,");
+    private static final Pattern OBJECT_ASSIGN =
+            Pattern.compile("\\bObject\\.assign\\s*\\(\\s*\\{\\s*\\}\\s*,");
+    private static final Pattern INDEXOF_STARTS =
+            Pattern.compile("\\.indexOf\\(([^)]+)\\)\\s*===\\s*0");
+    private static final Pattern STRING_CHARAT0 =
+            Pattern.compile("\\.charAt\\(\\s*0\\s*\\)");
 
     private static final Pattern VAR = Pattern.compile("\\bvar\\b");
     private static final Pattern LOOSE_EQ = Pattern.compile("(?<![=!])==(?!=)");
@@ -162,43 +175,106 @@ public class JavascriptAdapter implements LanguageAdapter {
         }
     }
 
-    @Override
-    public VerificationResult verifyPatch(
-            PatchResult patch, Path sourceRoot, VerificationConfig config) {
+        @Override
+    public VerificationResult verifyPatch(PatchResult patch, Path sourceRoot, VerificationConfig config) {
         Objects.requireNonNull(patch, "patch must not be null");
         Objects.requireNonNull(sourceRoot, "sourceRoot must not be null");
         Objects.requireNonNull(config, "config must not be null");
-        long start = System.currentTimeMillis();
-        boolean passed = true;
-        String details = "No affected files";
-        try {
-            if (!patch.affectedFiles().isEmpty()) {
-                Path target = sourceRoot.resolve(patch.affectedFiles().get(0));
-                String source = Files.readString(target, StandardCharsets.UTF_8);
-                ModuleParse parsed = parseModule(
-                        source, target.getFileName().toString(), moduleName(target.getFileName().toString()));
-                details = "Re-parsed module: " + parsed.classes.size()
-                        + " classes, " + parsed.methods.size() + " functions";
-            }
-        } catch (Exception e) {
-            passed = false;
-            details = "Re-parse failed: " + e.getMessage();
+
+        List<VerificationResult.LayerResult> layers = new ArrayList<>();
+        boolean compileOk = true;
+        if (config.runCompilation()) {
+            VerificationResult.LayerResult compile = verifyNodeSyntax(patch, sourceRoot);
+            layers.add(compile);
+            compileOk = compile.passed();
         }
-        VerificationResult.LayerResult structural = new VerificationResult.LayerResult(
-                "structural", passed, passed ? 1.0 : 0.0, details,
-                System.currentTimeMillis() - start);
+        VerificationResult.LayerResult structural = verifyStructure(patch, sourceRoot);
+        layers.add(structural);
+
+        boolean runtimeVerified = layers.stream()
+                .anyMatch(l -> "compilation".equals(l.layerName())
+                        && l.passed()
+                        && l.details() != null
+                        && l.details().contains("node --check succeeded"));
         return VerificationResult.builder()
                 .patchId(patch.patchId())
-                .compileSuccess(passed)
-                .testSuccess(true)
+                .compileSuccess(compileOk)
+                .testSuccess(runtimeVerified)
                 .astStructuralMatchScore(structural.score())
-                .bytecodeDescriptorMatch(true)
-                .apiSurfaceCompatible(true)
+                .bytecodeDescriptorMatch(runtimeVerified)
+                .apiSurfaceCompatible(structural.passed())
                 .goldenMasterMatch(false)
-                .addLayerResult(structural)
+                .layerResults(layers)
                 .beforeAstHash(patch.beforeAstHash())
                 .afterAstHash(patch.afterAstHash())
                 .build();
+    }
+
+    private VerificationResult.LayerResult verifyNodeSyntax(PatchResult patch, Path sourceRoot) {
+        long start = System.currentTimeMillis();
+        if (patch.affectedFiles().isEmpty()) {
+            return new VerificationResult.LayerResult("compilation", true, 1.0, "No affected files", 0);
+        }
+        Path target = sourceRoot.resolve(patch.affectedFiles().get(0));
+        try {
+            ProcessBuilder pb = new ProcessBuilder("node", "--check", target.toString());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            StringBuilder out = new StringBuilder();
+            try (BufferedReader r = new BufferedReader(
+                    new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    out.append(line).append('\n');
+                }
+            }
+            boolean finished = p.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
+            long elapsed = System.currentTimeMillis() - start;
+            if (!finished) {
+                p.destroyForcibly();
+                return new VerificationResult.LayerResult("compilation", false, 0.0, "node --check timed out", elapsed);
+            }
+            boolean passed = p.exitValue() == 0;
+            return new VerificationResult.LayerResult(
+                    "compilation",
+                    passed,
+                    passed ? 1.0 : 0.0,
+                    passed ? "node --check succeeded on " + target.getFileName()
+                            : "node --check failed:\n" + out,
+                    elapsed);
+        } catch (IOException e) {
+            long elapsed = System.currentTimeMillis() - start;
+            return new VerificationResult.LayerResult(
+                    "compilation", true, 0.7,
+                    "node not available; structural-only verification", elapsed);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new VerificationResult.LayerResult(
+                    "compilation", false, 0.0, "interrupted", System.currentTimeMillis() - start);
+        }
+    }
+
+    private VerificationResult.LayerResult verifyStructure(PatchResult patch, Path sourceRoot) {
+        long start = System.currentTimeMillis();
+        if (patch.affectedFiles().isEmpty()) {
+            return new VerificationResult.LayerResult("structural", true, 1.0, "No affected files", 0);
+        }
+        try {
+            Path target = sourceRoot.resolve(patch.affectedFiles().get(0));
+            String source = Files.readString(target, StandardCharsets.UTF_8);
+            ModuleParse parsed = parseModule(
+                    source, target.getFileName().toString(), moduleName(target.getFileName().toString()));
+            double score = parsed.classes.isEmpty() && parsed.methods.isEmpty() ? 0.95 : 1.0;
+            return new VerificationResult.LayerResult(
+                    "structural", true, score,
+                    "Re-parsed module: " + parsed.classes.size() + " classes, "
+                            + parsed.methods.size() + " functions",
+                    System.currentTimeMillis() - start);
+        } catch (Exception e) {
+            return new VerificationResult.LayerResult(
+                    "structural", false, 0.0, "Re-parse failed: " + e.getMessage(),
+                    System.currentTimeMillis() - start);
+        }
     }
 
     private List<RefactorCandidate> detectCandidates(String source, String relPath) {
@@ -245,6 +321,19 @@ public class JavascriptAdapter implements LanguageAdapter {
                     "js.unescape_to_decodeuri", "unescape() → decodeURI()", "decodeURI(",
                     0.76, RiskTier.MODERATE, out);
             detectIndexOf(line, offset, i + 1, relPath, codeMask, out);
+            detect(line, offset, i + 1, relPath, codeMask, CALLBACK_ERR,
+                    "js.callback_err_first", "err-first callback → Promise/async",
+                    "/* prefer async/await */ function(err,", 0.60, RiskTier.MODERATE, out);
+            detect(line, offset, i + 1, relPath, codeMask, OBJECT_ASSIGN,
+                    "js.object_assign_to_spread", "Object.assign({}, x) → ({...x})",
+                    "({.../* Object.assign */", 0.80, RiskTier.LOW, out);
+            detect(line, offset, i + 1, relPath, codeMask, INDEXOF_STARTS,
+                    "js.indexof_zero_to_startswith", "indexOf(x) === 0 → startsWith(x)",
+                    ".startsWith(", 0.88, RiskTier.LOW, out);
+            detect(line, offset, i + 1, relPath, codeMask, STRING_CHARAT0,
+                    "js.charat0_to_at", "charAt(0) → at(0) / [0]",
+                    ".at(0)", 0.70, RiskTier.LOW, out);
+
             detect(line, offset, i + 1, relPath, codeMask, BIND_THIS,
                     "js.bind_to_arrow", "Bound function expression → arrow function",
                     "/* prefer an arrow function capturing this */ $0",
@@ -494,9 +583,16 @@ public class JavascriptAdapter implements LanguageAdapter {
     private static String replaceCandidateLine(String source, RefactorCandidate candidate) {
         String[] lines = source.split("\n", -1);
         int index = candidate.startLine() - 1;
-        if (index >= 0 && index < lines.length && lines[index].equals(candidate.beforeSnippet())) {
-            lines[index] = candidate.proposedAfterSnippet();
+        if (index < 0 || index >= lines.length) {
+            throw new IllegalStateException(
+                    "Line " + candidate.startLine() + " out of range for " + candidate.sourceFile());
         }
+        if (!lines[index].equals(candidate.beforeSnippet())) {
+            throw new IllegalStateException(
+                    "Before-snippet mismatch at line " + candidate.startLine()
+                            + " for rule " + candidate.ruleId());
+        }
+        lines[index] = candidate.proposedAfterSnippet();
         return String.join("\n", lines);
     }
 

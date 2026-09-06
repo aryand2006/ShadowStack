@@ -53,4 +53,23 @@
 004097     CLOSE EMP-FILE.                                              00409700
 004098     CALL "TAXCALC".                                              00409800
 004099     CONTINUE                                                     00409900
-004100     STOP RUN.                                                    00004100
+004100     
+       EVALUATE WS-STATUS
+           WHEN "OK"
+               CONTINUE
+           WHEN OTHER
+               DISPLAY "ERR"
+       END-EVALUATE
+       PERFORM CALC-TAX UNTIL WS-DONE = "Y"
+       PERFORM CALC-TAX VARYING WS-IDX FROM 1 BY 1 UNTIL WS-IDX > 10
+       PERFORM CALC-TAX 5 TIMES
+       SORT SORT-FILE ON ASCENDING KEY WS-NAME
+           USING IN-FILE GIVING OUT-FILE
+       SEARCH EMP-TABLE
+           AT WS-FOUND = "Y"
+       END-SEARCH
+       ALTER PARA-A TO PROCEED TO PARA-B
+       ALLOCATE WS-BUF
+       FREE WS-BUF
+
+       STOP RUN.                                                    00004100

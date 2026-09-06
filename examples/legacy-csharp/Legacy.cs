@@ -26,3 +26,22 @@ public class LegacyService
         if (!cache.ContainsKey(value)) cache[value] = text;
     }
 }
+
+using System.Runtime.Remoting;
+using System.Runtime.Serialization.Formatters.Binary;
+using System.Security.Permissions;
+
+public class LegacySecurity {
+  [PrincipalPermission(SecurityAction.Demand, Role = "Admin")]
+  public void Dangerous() {
+    var bf = new BinaryFormatter();
+    Thread.CurrentThread.Abort();
+  }
+}
+
+public class LegacyNet {
+  public void Fetch(string url) {
+    HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
+    NameValueCollection headers = new NameValueCollection();
+  }
+}

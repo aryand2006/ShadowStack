@@ -35,7 +35,7 @@ public class MetaController {
                 ),
                 Map.of(
                         "id", "python",
-                        "status", "full",
+                        "status", "adapter",
                         "industryAligned", List.of("lib2to3", "modernize", "futurize"),
                         "rules", List.of(
                                 "py.apply_to_starcall",
@@ -125,7 +125,7 @@ public class MetaController {
                 ),
                 Map.of(
                         "id", "cobol",
-                        "status", "partial",
+                        "status", "adapter",
                         "industryAligned", List.of("enterprise COBOL→Java catalogs"),
                         "rules", List.of(
                                 "cobol.accept_to_input",
@@ -178,19 +178,23 @@ public class MetaController {
                 ),
                 Map.of(
                         "id", "javascript",
-                        "status", "partial",
+                        "status", "adapter",
                         "industryAligned", List.of("ESLint", "TypeScript ES5→modern", "CommonJS→ESM"),
                         "rules", List.of(
                                 "js.!=_to_!==",
                                 "js.==_to_===",
                                 "js.arguments_to_rest",
                                 "js.bind_to_arrow",
+                                "js.callback_err_first",
+                                "js.charat0_to_at",
                                 "js.dirname_to_importmeta",
                                 "js.escape_to_encodeuri",
                                 "js.exports_dot_to_export",
                                 "js.filename_to_importmeta",
                                 "js.indexof_to_includes",
+                                "js.indexof_zero_to_startswith",
                                 "js.module_exports_to_export",
+                                "js.object_assign_to_spread",
                                 "js.promise_constructor_to_async",
                                 "js.require_to_import",
                                 "js.string_concat_plus",
@@ -201,7 +205,7 @@ public class MetaController {
                 ),
                 Map.of(
                         "id", "csharp",
-                        "status", "partial",
+                        "status", "adapter",
                         "industryAligned", List.of(".NET Framework→modern", "CA/FxCop classics"),
                         "rules", List.of(
                                 "cs.arraylist_to_list",
@@ -210,7 +214,9 @@ public class MetaController {
                                 "cs.concurrentdict_tryadd",
                                 "cs.configurationmanager_to_iconfiguration",
                                 "cs.hashtable_to_dictionary",
+                                "cs.httprequest_to_httpclient",
                                 "cs.nameof_for_literals",
+                                "cs.namevaluecollection_to_dict",
                                 "cs.nullable_enable",
                                 "cs.principalpermission_removed",
                                 "cs.readonlycollection_to_ilist",
@@ -219,7 +225,8 @@ public class MetaController {
                                 "cs.string_isempty",
                                 "cs.stringbuilder_appendformat",
                                 "cs.threadabort_removed",
-                                "cs.webclient_to_httpclient"
+                                "cs.webclient_to_httpclient",
+                                "cs.webrequest_to_httpclient"
                         )
                 )
         ));
