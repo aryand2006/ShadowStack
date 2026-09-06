@@ -16,9 +16,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.*;
-import java.util.ArrayList;
 import java.util.regex.Matcher;
-import java.util.ArrayList;
 import java.util.regex.Pattern;
 
 /**

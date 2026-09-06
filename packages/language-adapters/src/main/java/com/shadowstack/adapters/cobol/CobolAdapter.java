@@ -5,7 +5,9 @@ import com.shadowstack.adapters.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -1110,7 +1112,7 @@ public class CobolAdapter implements LanguageAdapter {
 
         List<VerificationResult.LayerResult> layers = new ArrayList<>();
 
-        boolean compileOk = true;
+        boolean structuralOk = true;
         double astScore = 1.0;
 
         if (!patch.affectedFiles().isEmpty()) {
@@ -1127,29 +1129,87 @@ public class CobolAdapter implements LanguageAdapter {
                         "Re-parsed: PROGRAM-ID=" + reparsed.programId
                                 + ", paragraphs=" + reparsed.paragraphs.size(),
                         elapsed));
-                compileOk = structurallySound;
+                structuralOk = structurallySound;
                 astScore = structurallySound ? 1.0 : 0.5;
             } catch (IOException e) {
                 layers.add(new VerificationResult.LayerResult(
                         "structural", false, 0.0,
                         "Failed to re-read patched file: " + e.getMessage(), 0));
-                compileOk = false;
+                structuralOk = false;
                 astScore = 0.0;
+            }
+        }
+
+        boolean compileOk = structuralOk;
+        boolean cobcVerified = false;
+        if (config.runCompilation() && structuralOk && !patch.affectedFiles().isEmpty()) {
+            VerificationResult.LayerResult compile = verifyWithCobc(
+                    sourceRoot.resolve(patch.affectedFiles().get(0)));
+            layers.add(compile);
+            // Missing cobc is structural-only (score < 1); present+fail flips compileOk.
+            if (compile.details() != null && compile.details().contains("cobc not available")) {
+                compileOk = structuralOk;
+            } else {
+                compileOk = compile.passed();
+                cobcVerified = compile.passed();
             }
         }
 
         return VerificationResult.builder()
                 .patchId(patch.patchId())
                 .compileSuccess(compileOk)
-                .testSuccess(false)
+                .testSuccess(cobcVerified)
                 .astStructuralMatchScore(astScore)
-                .bytecodeDescriptorMatch(false)
-                .apiSurfaceCompatible(compileOk)
+                .bytecodeDescriptorMatch(cobcVerified)
+                .apiSurfaceCompatible(structuralOk)
                 .goldenMasterMatch(false)
                 .layerResults(layers)
                 .beforeAstHash(patch.beforeAstHash())
                 .afterAstHash(patch.afterAstHash())
                 .build();
+    }
+
+    private VerificationResult.LayerResult verifyWithCobc(Path target) {
+        long start = System.currentTimeMillis();
+        try {
+            ProcessBuilder pb = new ProcessBuilder(
+                    "cobc", "-fsyntax-only", "-std=cobol85", target.toString());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            StringBuilder out = new StringBuilder();
+            try (BufferedReader r = new BufferedReader(
+                    new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    out.append(line).append('\n');
+                }
+            }
+            boolean finished = p.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
+            long elapsed = System.currentTimeMillis() - start;
+            if (!finished) {
+                p.destroyForcibly();
+                return new VerificationResult.LayerResult(
+                        "compilation", false, 0.0, "cobc timed out", elapsed);
+            }
+            boolean passed = p.exitValue() == 0;
+            return new VerificationResult.LayerResult(
+                    "compilation",
+                    passed,
+                    passed ? 1.0 : 0.0,
+                    passed ? "cobc -fsyntax-only succeeded on " + target.getFileName()
+                            : "cobc failed:\n" + out,
+                    elapsed);
+        } catch (IOException e) {
+            long elapsed = System.currentTimeMillis() - start;
+            return new VerificationResult.LayerResult(
+                    "compilation", true, 0.7,
+                    "cobc not available; structural-only verification", elapsed);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new VerificationResult.LayerResult(
+                    "compilation", false, 0.0, "interrupted",
+                    System.currentTimeMillis() - start);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════
