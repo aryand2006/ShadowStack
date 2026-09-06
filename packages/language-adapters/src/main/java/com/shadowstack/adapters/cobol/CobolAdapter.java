@@ -199,6 +199,13 @@ public class CobolAdapter implements LanguageAdapter {
         out.addAll(detectStopRunToGoback(source, relPath, fixed));
         out.addAll(detectAlter(source, relPath, fixed));
         out.addAll(detectGotoToPerform(source, relPath, fixed));
+        out.addAll(detectDisplayToPrint(source, relPath, fixed));
+        out.addAll(detectMoveToAssign(source, relPath, fixed));
+        out.addAll(detectComputeToAssign(source, relPath, fixed));
+        out.addAll(detectPerformToCall(source, relPath, fixed));
+        out.addAll(detectAddToAssign(source, relPath, fixed));
+        out.addAll(detectSubtractToAssign(source, relPath, fixed));
+        out.addAll(detectAcceptToInput(source, relPath, fixed));
         return out;
     }
 
@@ -391,6 +398,152 @@ public class CobolAdapter implements LanguageAdapter {
                     || SECTION_HEADER.matcher(trimmed).matches();
         }
         return true;
+    }
+
+    private static final Pattern DISPLAY_STMT =
+            Pattern.compile("(?i)^(\\s*)DISPLAY\\s+(\"([^\"]*)\"|'([^']*)'|([A-Z0-9-]+))\\s*\\.?\\s*$");
+    private static final Pattern MOVE_STMT =
+            Pattern.compile("(?i)^(\\s*)MOVE\\s+(\"([^\"]*)\"|'([^']*)'|([A-Z0-9-]+))\\s+TO\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern COMPUTE_STMT =
+            Pattern.compile("(?i)^(\\s*)COMPUTE\\s+([A-Z0-9-]+)\\s*=\\s*(.+?)\\s*\\.?\\s*$");
+    private static final Pattern PERFORM_STMT =
+            Pattern.compile("(?i)^(\\s*)PERFORM\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern ADD_STMT =
+            Pattern.compile("(?i)^(\\s*)ADD\\s+([A-Z0-9-]+|\\d+)\\s+TO\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern SUBTRACT_STMT =
+            Pattern.compile("(?i)^(\\s*)SUBTRACT\\s+([A-Z0-9-]+|\\d+)\\s+FROM\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern ACCEPT_STMT =
+            Pattern.compile("(?i)^(\\s*)ACCEPT\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+
+    private List<RefactorCandidate> detectDisplayToPrint(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, DISPLAY_STMT, "cobol.display_to_print",
+                "DISPLAY → System.out.println",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String lit = m.group(3) != null ? m.group(3)
+                            : (m.group(4) != null ? m.group(4) : m.group(5));
+                    boolean quoted = m.group(3) != null || m.group(4) != null;
+                    String arg = quoted ? "\"" + lit + "\"" : toJavaIdent(lit);
+                    return indent + "System.out.println(" + arg + ");";
+                }, 0.75, RiskTier.MODERATE,
+                "Common COBOL→Java DISPLAY migration pattern");
+    }
+
+    private List<RefactorCandidate> detectMoveToAssign(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, MOVE_STMT, "cobol.move_to_assign",
+                "MOVE → assignment",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    String src = m.group(3) != null ? "\"" + m.group(3) + "\""
+                            : (m.group(4) != null ? "\"" + m.group(4) + "\""
+                            : toJavaIdent(m.group(5)));
+                    return indent + toJavaIdent(m.group(6)) + " = " + src + ";";
+                }, 0.8, RiskTier.MODERATE,
+                "MOVE TO maps to a modern assignment statement");
+    }
+
+    private List<RefactorCandidate> detectComputeToAssign(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, COMPUTE_STMT, "cobol.compute_to_assign",
+                "COMPUTE → assignment",
+                m -> {
+                    String indent = m.group(1) != null ? m.group(1) : "";
+                    return indent + toJavaIdent(m.group(2)) + " = "
+                            + m.group(3).trim().replace('-', '_') + ";";
+                }, 0.78, RiskTier.MODERATE,
+                "COMPUTE maps to arithmetic assignment");
+    }
+
+    private List<RefactorCandidate> detectPerformToCall(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, PERFORM_STMT, "cobol.perform_to_call",
+                "PERFORM → method call",
+                m -> (m.group(1) != null ? m.group(1) : "") + toCamel(m.group(2)) + "();",
+                0.72, RiskTier.MODERATE,
+                "Simple PERFORM paragraph becomes a method invocation");
+    }
+
+    private List<RefactorCandidate> detectAddToAssign(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, ADD_STMT, "cobol.add_to_assign",
+                "ADD → +=",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + toJavaIdent(m.group(3)) + " += " + toJavaIdent(m.group(2)) + ";",
+                0.82, RiskTier.LOW,
+                "ADD TO maps to += assignment");
+    }
+
+    private List<RefactorCandidate> detectSubtractToAssign(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, SUBTRACT_STMT, "cobol.subtract_to_assign",
+                "SUBTRACT → -=",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + toJavaIdent(m.group(3)) + " -= " + toJavaIdent(m.group(2)) + ";",
+                0.82, RiskTier.LOW,
+                "SUBTRACT FROM maps to -= assignment");
+    }
+
+    private List<RefactorCandidate> detectAcceptToInput(String source, String relPath, boolean fixed) {
+        return detectLinePattern(source, relPath, fixed, ACCEPT_STMT, "cobol.accept_to_input",
+                "ACCEPT → console input",
+                m -> (m.group(1) != null ? m.group(1) : "")
+                        + toJavaIdent(m.group(2))
+                        + " = new java.util.Scanner(System.in).nextLine();",
+                0.7, RiskTier.MODERATE,
+                "ACCEPT maps to a console Scanner read");
+    }
+
+    @FunctionalInterface
+    private interface LineReplacer {
+        String apply(Matcher m);
+    }
+
+    private List<RefactorCandidate> detectLinePattern(
+            String source, String relPath, boolean fixed, Pattern pattern,
+            String ruleId, String ruleName, LineReplacer replacer,
+            double confidence, RiskTier risk, String rationale) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        String[] lines = source.split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String code = fixed ? programAreaOf(lines[i]) : lines[i];
+            Matcher m = pattern.matcher(code);
+            if (!m.matches()) continue;
+            String after = replacer.apply(m);
+            out.add(RefactorCandidate.builder()
+                    .sourceFile(relPath)
+                    .startLine(i + 1)
+                    .endLine(i + 1)
+                    .ruleId(ruleId)
+                    .ruleName(ruleName)
+                    .ruleCategory("MODERNIZATION")
+                    .beforeSnippet(lines[i])
+                    .proposedAfterSnippet(after)
+                    .confidenceScore(confidence)
+                    .riskTier(risk)
+                    .addSafetyInvariant(new SafetyInvariant(
+                            "cobol-migration-hint",
+                            rationale,
+                            SafetyInvariant.Category.BEHAVIORAL_EQUIVALENCE,
+                            SafetyInvariant.Status.SATISFIED,
+                            ruleId))
+                    .putAstContext("language", "cobol")
+                    .putAstContext("ruleId", ruleId)
+                    .build());
+        }
+        return out;
+    }
+
+    private static String toJavaIdent(String cobolName) {
+        if (cobolName == null) return "value";
+        if (cobolName.chars().allMatch(Character::isDigit)) return cobolName;
+        return cobolName.replace('-', '_');
+    }
+
+    private static String toCamel(String cobolName) {
+        String[] parts = cobolName.toLowerCase().split("-");
+        StringBuilder sb = new StringBuilder(parts[0]);
+        for (int i = 1; i < parts.length; i++) {
+            if (parts[i].isEmpty()) continue;
+            sb.append(Character.toUpperCase(parts[i].charAt(0)));
+            if (parts[i].length() > 1) sb.append(parts[i].substring(1));
+        }
+        return sb.toString();
     }
 
     // ═══════════════════════════════════════════════════════════════════════

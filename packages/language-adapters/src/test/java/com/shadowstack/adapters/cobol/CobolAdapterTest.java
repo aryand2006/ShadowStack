@@ -27,12 +27,21 @@ class CobolAdapterTest {
             "000300 DATA DIVISION.                                                   00000300\n" +
             "000400 WORKING-STORAGE SECTION.                                         00000400\n" +
             "000500 01 GREETING       PIC X(10) VALUE \"HELLO\".                     00000500\n" +
-            "000600 PROCEDURE DIVISION.                                              00000600\n" +
-            "000700 MAIN-PARA.                                                       00000700\n" +
-            "000800     DISPLAY GREETING.                                            00000800\n" +
-            "000900     GO TO END-PARA.                                              00000900\n" +
-            "001000 END-PARA.                                                        00001000\n" +
-            "001100     STOP RUN.                                                    00001100\n";
+            "000600 01 WS-COUNT       PIC 9(3) VALUE 1.                              00000600\n" +
+            "000700 PROCEDURE DIVISION.                                              00000700\n" +
+            "000800 MAIN-PARA.                                                       00000800\n" +
+            "000900     ACCEPT GREETING.                                             00000900\n" +
+            "001000     MOVE \"READY\" TO GREETING.                                    00001000\n" +
+            "001100     ADD 1 TO WS-COUNT.                                           00001100\n" +
+            "001200     SUBTRACT 1 FROM WS-COUNT.                                    00001200\n" +
+            "001300     COMPUTE WS-COUNT = WS-COUNT * 2.                             00001300\n" +
+            "001400     PERFORM SHOW-GREETING.                                       00001400\n" +
+            "001500     DISPLAY GREETING.                                            00001500\n" +
+            "001600     GO TO END-PARA.                                              00001600\n" +
+            "001700 SHOW-GREETING.                                                   00001700\n" +
+            "001800     DISPLAY GREETING.                                            00001800\n" +
+            "001900 END-PARA.                                                        00001900\n" +
+            "002000     STOP RUN.                                                    00002000\n";
 
     @Test
     void parses_fixed_format_program(@TempDir Path tmp) throws Exception {
@@ -66,6 +75,13 @@ class CobolAdapterTest {
         assertTrue(ruleIds.contains("cobol.fixed_to_free"),     "fixed→free rule must fire");
         assertTrue(ruleIds.contains("cobol.stop_run_to_goback"), "STOP RUN rule must fire");
         assertTrue(ruleIds.contains("cobol.goto_to_perform"),    "terminal GO TO rule must fire");
+        assertTrue(ruleIds.contains("cobol.display_to_print"),   "DISPLAY rule must fire");
+        assertTrue(ruleIds.contains("cobol.move_to_assign"),     "MOVE rule must fire");
+        assertTrue(ruleIds.contains("cobol.compute_to_assign"),  "COMPUTE rule must fire");
+        assertTrue(ruleIds.contains("cobol.perform_to_call"),    "PERFORM rule must fire");
+        assertTrue(ruleIds.contains("cobol.add_to_assign"),      "ADD rule must fire");
+        assertTrue(ruleIds.contains("cobol.subtract_to_assign"), "SUBTRACT rule must fire");
+        assertTrue(ruleIds.contains("cobol.accept_to_input"),    "ACCEPT rule must fire");
     }
 
     @Test

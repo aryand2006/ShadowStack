@@ -4,9 +4,9 @@ import com.shadowstack.analysis.RiskClassifier.RiskAssessment;
 import com.shadowstack.corpus.AuditService;
 import com.shadowstack.refactor.RefactorEngine;
 import com.shadowstack.refactor.RefactorRule;
+import com.shadowstack.refactor.RuleCatalog;
 import com.shadowstack.refactor.model.PatchUnit;
 import com.shadowstack.refactor.model.SemanticContext;
-import com.shadowstack.refactor.rules.AnonymousClassToLambdaRule;
 import org.eclipse.jdt.core.dom.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -196,7 +196,9 @@ public class PatchGenerationTask {
      */
     private RefactorEngine createEngine() {
         RefactorEngine engine = new RefactorEngine(0.6, com.shadowstack.refactor.model.RiskTier.CRITICAL);
-        engine.registerRule(new AnonymousClassToLambdaRule());
+        for (RefactorRule rule : RuleCatalog.javaRules()) {
+            engine.registerRule(rule);
+        }
         LOG.debug("Refactor engine created with {} rule(s)", engine.getRegisteredRules().size());
         return engine;
     }

@@ -18,23 +18,24 @@
 001800 01 NET-PAY           PIC 9(7)V99.                                00001800
 001900 PROCEDURE DIVISION.                                              00001900
 002000 MAIN-PARA.                                                       00002000
-002100     PERFORM READ-EMPLOYEE.                                       00002100
-002200     PERFORM CALC-GROSS.                                          00002200
-002300     PERFORM CALC-NET.                                            00002300
-002400     PERFORM DISPLAY-RESULT.                                      00002400
-002500     GO TO END-PARA.                                              00002500
-002600 READ-EMPLOYEE.                                                   00002600
-002700     MOVE 12345 TO EMP-ID.                                        00002700
-002800     MOVE "JANE SMITH" TO EMP-NAME.                               00002800
-002900     MOVE 040.00 TO HOURS-WORKED.                                 00002900
-003000     MOVE 025.00 TO HOURLY-RATE.                                  00003000
-003100 CALC-GROSS.                                                      00003100
-003200     COMPUTE GROSS-PAY = HOURS-WORKED * HOURLY-RATE.              00003200
-003300 CALC-NET.                                                        00003300
-003400     COMPUTE NET-PAY = GROSS-PAY - (GROSS-PAY * TAX-RATE).        00003400
-003500 DISPLAY-RESULT.                                                  00003500
-003600     DISPLAY "EMPLOYEE: " EMP-NAME.                               00003600
-003700     DISPLAY "GROSS:    " GROSS-PAY.                              00003700
-003800     DISPLAY "NET:      " NET-PAY.                                00003800
-003900 END-PARA.                                                        00003900
-004000     STOP RUN.                                                    00004000
+002100     ACCEPT EMP-NAME.                                             00002100
+002200     MOVE 12345 TO EMP-ID.                                        00002200
+002300     MOVE "JANE SMITH" TO EMP-NAME.                               00002300
+002400     MOVE 040.00 TO HOURS-WORKED.                                 00002400
+002500     MOVE 025.00 TO HOURLY-RATE.                                  00002500
+002600     ADD 1 TO EMP-ID.                                             00002600
+002700     SUBTRACT 1 FROM EMP-ID.                                      00002700
+002800     PERFORM CALC-GROSS.                                          00002800
+002900     PERFORM CALC-NET.                                            00002900
+003000     PERFORM DISPLAY-RESULT.                                      00003000
+003100     GO TO END-PARA.                                              00003100
+003200 CALC-GROSS.                                                      00003200
+003300     COMPUTE GROSS-PAY = HOURS-WORKED * HOURLY-RATE.              00003300
+003400 CALC-NET.                                                        00003400
+003500     COMPUTE NET-PAY = GROSS-PAY - (GROSS-PAY * TAX-RATE).        00003500
+003600 DISPLAY-RESULT.                                                  00003600
+003700     DISPLAY "EMPLOYEE: " EMP-NAME.                               00003700
+003800     DISPLAY "GROSS:    " GROSS-PAY.                              00003800
+003900     DISPLAY "NET:      " NET-PAY.                                00003900
+004000 END-PARA.                                                        00004000
+004100     STOP RUN.                                                    00004100

@@ -322,6 +322,16 @@ public class PythonAdapter implements LanguageAdapter {
         candidates.addAll(detectExceptComma(lines, codeMask, source, relPath));
         candidates.addAll(detectUnicodeToStr(source, codeMask, lines, relPath));
         candidates.addAll(detectNotEqualOperator(source, codeMask, lines, relPath));
+        // lib2to3 / modernize high-traffic additions
+        candidates.addAll(detectHasKey(source, codeMask, lines, relPath));
+        candidates.addAll(detectRawInput(source, codeMask, lines, relPath));
+        candidates.addAll(detectLongType(source, codeMask, lines, relPath));
+        candidates.addAll(detectRaiseComma(lines, codeMask, source, relPath));
+        candidates.addAll(detectFileBuiltin(source, codeMask, lines, relPath));
+        candidates.addAll(detectApply(source, codeMask, lines, relPath));
+        candidates.addAll(detectLegacyImports(lines, codeMask, source, relPath));
+        candidates.addAll(detectExecfile(source, codeMask, lines, relPath));
+        candidates.addAll(detectUnicodeLiteralPrefix(source, codeMask, lines, relPath));
         return candidates;
     }
 
@@ -447,6 +457,156 @@ public class PythonAdapter implements LanguageAdapter {
                         "Python 3 removed the legacy `<>` inequality operator."));
             }
             idx += 2;
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectHasKey(String source, boolean[] codeMask,
+                                                 String[] lines, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        Pattern p = Pattern.compile("([A-Za-z_][\\w.]*)\\.has_key\\s*\\(\\s*([^)]+?)\\s*\\)");
+        Matcher m = p.matcher(source);
+        while (m.find()) {
+            if (!isCodeAt(codeMask, m.start())) continue;
+            int lineNumber = lineOf(source, m.start());
+            String original = lines[lineNumber - 1];
+            String replaced = original.replace(m.group(), "(" + m.group(2) + " in " + m.group(1) + ")");
+            out.add(buildCandidate(relPath, lineNumber, lineNumber, original, replaced,
+                    "py.has_key_to_in", "dict.has_key(k) → (k in dict)", "MODERNIZATION",
+                    0.95, RiskTier.LOW, "has_key was removed in Python 3."));
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectRawInput(String source, boolean[] codeMask,
+                                                   String[] lines, String relPath) {
+        return detectIdentifierRewrite(source, codeMask, lines, relPath,
+                "raw_input", "input", "py.raw_input_to_input",
+                "raw_input() → input()",
+                "raw_input was renamed to input in Python 3.");
+    }
+
+    private List<RefactorCandidate> detectLongType(String source, boolean[] codeMask,
+                                                   String[] lines, String relPath) {
+        return detectIdentifierRewrite(source, codeMask, lines, relPath,
+                "long", "int", "py.long_to_int",
+                "long() → int()",
+                "Python 3 unified int/long; long() no longer exists.");
+    }
+
+    private static final Pattern RAISE_COMMA = Pattern.compile(
+            "(^|\\n)([ \\t]*)raise[ \\t]+([A-Za-z_][\\w.]*)[ \\t]*,[ \\t]*(.+)");
+
+    private List<RefactorCandidate> detectRaiseComma(
+            String[] lines, boolean[] codeMask, String source, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        Matcher m = RAISE_COMMA.matcher(source);
+        while (m.find()) {
+            int start = m.start(2);
+            if (!isCodeAt(codeMask, start)) continue;
+            int lineNumber = lineOf(source, start);
+            String original = lines[lineNumber - 1];
+            String replaced = original.replaceFirst(
+                    "raise[ \\t]+([A-Za-z_][\\w.]*)[ \\t]*,[ \\t]*(.+)$",
+                    "raise $1($2)");
+            out.add(buildCandidate(relPath, lineNumber, lineNumber, original, replaced,
+                    "py.raise_comma_to_call", "raise E, V → raise E(V)", "MODERNIZATION",
+                    0.9, RiskTier.LOW, "Python 3 requires exception instantiation syntax."));
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectFileBuiltin(String source, boolean[] codeMask,
+                                                      String[] lines, String relPath) {
+        return detectIdentifierRewrite(source, codeMask, lines, relPath,
+                "file", "open", "py.file_to_open",
+                "file() → open()",
+                "The file() builtin was removed; use open().");
+    }
+
+    private List<RefactorCandidate> detectApply(String source, boolean[] codeMask,
+                                                String[] lines, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        Pattern p = Pattern.compile("\\bapply\\s*\\(\\s*([^,]+?)\\s*,\\s*([^)]+?)\\s*\\)");
+        Matcher m = p.matcher(source);
+        while (m.find()) {
+            if (!isCodeAt(codeMask, m.start())) continue;
+            int lineNumber = lineOf(source, m.start());
+            String original = lines[lineNumber - 1];
+            String replaced = original.replace(m.group(), m.group(1).trim() + "(*" + m.group(2).trim() + ")");
+            out.add(buildCandidate(relPath, lineNumber, lineNumber, original, replaced,
+                    "py.apply_to_starcall", "apply(f, args) → f(*args)", "MODERNIZATION",
+                    0.88, RiskTier.LOW, "apply() was removed in Python 3."));
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectLegacyImports(
+            String[] lines, boolean[] codeMask, String source, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        String[][] imports = {
+                {"urllib2", "urllib.request as urllib2", "py.import_urllib2", "urllib2 → urllib.request"},
+                {"ConfigParser", "configparser as ConfigParser", "py.import_configparser", "ConfigParser → configparser"},
+                {"Queue", "queue as Queue", "py.import_queue", "Queue → queue"},
+                {"thread", "_thread as thread", "py.import_thread", "thread → _thread"}
+        };
+        int offset = 0;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            String trimmed = line.stripLeading();
+            for (String[] pair : imports) {
+                String needle = "import " + pair[0];
+                int at = trimmed.indexOf(needle);
+                if (at >= 0 && isCodeAt(codeMask, offset + line.indexOf(needle))) {
+                    // skip `import X as Y` already rewritten and from-imports handled lightly
+                    if (trimmed.startsWith("import " + pair[0])
+                            && !trimmed.contains(" as ")) {
+                        String replaced = line.replaceFirst(
+                                "\\bimport\\s+" + Pattern.quote(pair[0]) + "\\b",
+                                "import " + pair[1]);
+                        out.add(buildCandidate(relPath, i + 1, i + 1, line, replaced,
+                                pair[2], pair[3], "MODERNIZATION",
+                                0.9, RiskTier.LOW,
+                                "Module renamed in Python 3; keep alias for call-site compatibility."));
+                    }
+                }
+            }
+            offset += line.length() + 1;
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectExecfile(String source, boolean[] codeMask,
+                                                   String[] lines, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        Pattern p = Pattern.compile("\\bexecfile\\s*\\(\\s*([^)]+?)\\s*\\)");
+        Matcher m = p.matcher(source);
+        while (m.find()) {
+            if (!isCodeAt(codeMask, m.start())) continue;
+            int lineNumber = lineOf(source, m.start());
+            String original = lines[lineNumber - 1];
+            String replaced = original.replace(m.group(), "exec(open(" + m.group(1).trim() + ").read())");
+            out.add(buildCandidate(relPath, lineNumber, lineNumber, original, replaced,
+                    "py.execfile_to_exec", "execfile(path) → exec(open(path).read())",
+                    "MODERNIZATION", 0.8, RiskTier.MODERATE,
+                    "execfile was removed; open+exec is the common migration."));
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectUnicodeLiteralPrefix(String source, boolean[] codeMask,
+                                                               String[] lines, String relPath) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        Pattern p = Pattern.compile("\\bu([\"'])");
+        Matcher m = p.matcher(source);
+        while (m.find()) {
+            if (!isCodeAt(codeMask, m.start())) continue;
+            int lineNumber = lineOf(source, m.start());
+            String original = lines[lineNumber - 1];
+            String replaced = original.replaceFirst("\\bu([\"'])", "$1");
+            out.add(buildCandidate(relPath, lineNumber, lineNumber, original, replaced,
+                    "py.unicode_literal_prefix", "u'' prefix removal", "MODERNIZATION",
+                    0.92, RiskTier.LOW, "Unicode literal prefix is a no-op in Python 3."));
         }
         return out;
     }
@@ -692,7 +852,11 @@ public class PythonAdapter implements LanguageAdapter {
                     String quote = source.substring(quoteStart, quoteStart + 3);
                     int end = source.indexOf(quote, quoteStart + 3);
                     if (end < 0) end = n - 3;
-                    for (int k = i; k < end + 3 && k < n; k++) mask[k] = false;
+                    // Prefix letters (r/b/f/u) remain code so detectors like
+                    // unicode-literal-prefix can still see them; only the
+                    // quoted span is masked out.
+                    for (int k = i; k < quoteStart && k < n; k++) mask[k] = true;
+                    for (int k = quoteStart; k < end + 3 && k < n; k++) mask[k] = false;
                     i = end + 3;
                     continue;
                 }
@@ -707,7 +871,8 @@ public class PythonAdapter implements LanguageAdapter {
                         if (ch == '\n') break;
                         k++;
                     }
-                    for (int j = i; j < k && j < n; j++) mask[j] = false;
+                    for (int j = i; j < quoteStart && j < n; j++) mask[j] = true;
+                    for (int j = quoteStart; j < k && j < n; j++) mask[j] = false;
                     i = k;
                     continue;
                 }

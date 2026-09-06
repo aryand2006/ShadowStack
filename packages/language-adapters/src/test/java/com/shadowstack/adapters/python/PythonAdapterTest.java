@@ -9,20 +9,18 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * End-to-end exercise of the PythonAdapter: parse a Python 2 module, list every
- * shipped rule's candidates, apply each in turn, and verify the patched module.
- */
 class PythonAdapterTest {
 
     private static final String PY2_SOURCE = """
             import urllib2
+            import ConfigParser
+            import Queue
+            import thread
 
             class Counter:
                 def render(self, rows):
@@ -37,10 +35,17 @@ class PythonAdapterTest {
 
                 def _summary(self):
                     try:
+                        name = raw_input("n")
+                        if d.has_key(name):
+                            return d[name]
+                        n = long(1)
+                        apply(str, (n,))
+                        data = file("x").read()
+                        execfile("y.py")
+                        msg = u"ok"
                         return urllib2.urlopen("https://example.invalid").read()
                     except Exception, e:
-                        print "boom:", e
-                        return None
+                        raise ValueError, e
             """;
 
     @Test
@@ -53,21 +58,33 @@ class PythonAdapterTest {
         assertEquals("3.12", adapter.languageVersion());
 
         SemanticModel model = adapter.buildSemanticModel(tmp);
-        assertEquals(1, model.classCount(), "Counter class should be discovered");
-        assertTrue(model.methodCount() >= 2, "render + _summary should be discovered");
+        assertEquals(1, model.classCount());
+        assertTrue(model.methodCount() >= 2);
 
         List<RefactorCandidate> candidates = adapter.listRefactorCandidates(
                 model, LanguageAdapter.RefactorRuleSet.empty());
-
         Set<String> ruleIds = candidates.stream()
                 .map(RefactorCandidate::ruleId)
                 .collect(Collectors.toSet());
-        assertTrue(ruleIds.contains("py.print_stmt_to_call"),  "print statement rule must fire");
-        assertTrue(ruleIds.contains("py.xrange_to_range"),     "xrange rule must fire");
-        assertTrue(ruleIds.contains("py.iter_methods_to_views"), "iter* rule must fire");
-        assertTrue(ruleIds.contains("py.except_comma_to_as"),  "except-comma rule must fire");
-        assertTrue(ruleIds.contains("py.unicode_to_str"),      "unicode() rule must fire");
-        assertTrue(ruleIds.contains("py.ne_operator"),         "<> operator rule must fire");
+
+        assertTrue(ruleIds.contains("py.print_stmt_to_call"));
+        assertTrue(ruleIds.contains("py.xrange_to_range"));
+        assertTrue(ruleIds.contains("py.iter_methods_to_views"));
+        assertTrue(ruleIds.contains("py.except_comma_to_as"));
+        assertTrue(ruleIds.contains("py.unicode_to_str"));
+        assertTrue(ruleIds.contains("py.ne_operator"));
+        assertTrue(ruleIds.contains("py.has_key_to_in"));
+        assertTrue(ruleIds.contains("py.raw_input_to_input"));
+        assertTrue(ruleIds.contains("py.long_to_int"));
+        assertTrue(ruleIds.contains("py.raise_comma_to_call"));
+        assertTrue(ruleIds.contains("py.file_to_open"));
+        assertTrue(ruleIds.contains("py.apply_to_starcall"));
+        assertTrue(ruleIds.contains("py.import_urllib2"));
+        assertTrue(ruleIds.contains("py.import_configparser"));
+        assertTrue(ruleIds.contains("py.import_queue"));
+        assertTrue(ruleIds.contains("py.import_thread"));
+        assertTrue(ruleIds.contains("py.execfile_to_exec"));
+        assertTrue(ruleIds.contains("py.unicode_literal_prefix"));
     }
 
     @Test
@@ -77,30 +94,25 @@ class PythonAdapterTest {
 
         PythonAdapter adapter = new PythonAdapter();
         SemanticModel model = adapter.buildSemanticModel(tmp);
-        List<RefactorCandidate> candidates = adapter.listRefactorCandidates(
-                model, LanguageAdapter.RefactorRuleSet.empty());
-
-        RefactorCandidate printCandidate = candidates.stream()
+        RefactorCandidate printCandidate = adapter.listRefactorCandidates(
+                        model, LanguageAdapter.RefactorRuleSet.empty()).stream()
                 .filter(c -> "py.print_stmt_to_call".equals(c.ruleId()))
                 .findFirst().orElseThrow();
 
         PatchResult patch = adapter.applyRefactor(printCandidate, tmp);
-        assertTrue(patch.success(), "patch should apply");
-        assertTrue(patch.unifiedDiff().contains("-print \"hi\""), "diff should show removal");
-        assertTrue(patch.unifiedDiff().contains("+print(\"hi\")"), "diff should show addition");
-        assertTrue(patch.hasStructuralChange(), "AST hash must change");
-
-        String patched = Files.readString(module);
-        assertEquals("print(\"hi\")\n", patched);
+        assertTrue(patch.success());
+        assertTrue(patch.unifiedDiff().contains("-print \"hi\""));
+        assertTrue(patch.unifiedDiff().contains("+print(\"hi\")"));
+        assertTrue(patch.hasStructuralChange());
+        assertEquals("print(\"hi\")\n", Files.readString(module));
 
         VerificationResult vr = adapter.verifyPatch(patch, tmp,
                 LanguageAdapter.VerificationConfig.quick());
-        assertNotNull(vr.verdict(), "verdict must be set");
+        assertNotNull(vr.verdict());
     }
 
     @Test
     void ignores_patterns_inside_strings_and_comments(@TempDir Path tmp) throws Exception {
-        // print/xrange/<> inside a string literal and a comment must NOT trigger candidates.
         String source = """
                 # legacy reference: print x and xrange and <>
                 msg = "print x and xrange and <>"
@@ -113,9 +125,7 @@ class PythonAdapterTest {
         SemanticModel model = adapter.buildSemanticModel(tmp);
         List<RefactorCandidate> candidates = adapter.listRefactorCandidates(
                 model, LanguageAdapter.RefactorRuleSet.empty());
-
-        assertTrue(candidates.isEmpty(),
-                "no candidates should be produced from strings/comments, got: "
-                        + candidates.stream().map(RefactorCandidate::ruleId).toList());
+        assertTrue(candidates.isEmpty(), () -> candidates.stream()
+                .map(RefactorCandidate::ruleId).toList().toString());
     }
 }

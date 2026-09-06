@@ -41,9 +41,9 @@ ShadowStack is built around a **pluggable language adapter framework**:
 
 | Adapter | Status | Description |
 |---------|--------|-------------|
-| **Java** | ✅ Full Implementation | Eclipse JDT with full type resolution |
-| **COBOL** | ✅ Full Implementation | COBOL-85 fixed-format parser, paragraph/section/data-item extraction, fixed→free modernization, legacy-pattern rewriting |
-| **Python** | ✅ Full Implementation | Python 2 → 3 modernizer with string/comment-aware lexer and 6 transformation rules |
+| **Java** | ✅ Full | OpenRewrite/Sonar classics: anon→lambda, diamond, `List.sort`, `StringBuffer`→`StringBuilder`, `Vector`→`ArrayList`, `Hashtable`→`HashMap`, `Stack`→`ArrayDeque`, boxing `valueOf`, `size()==0`→`isEmpty()` |
+| **Python** | ✅ Full | lib2to3/modernize set: print, xrange, iter*, unicode/basestring, except/as, `<>`, has_key, raw_input, long, raise, file, apply, urllib2/ConfigParser/Queue/thread, execfile, u-prefix |
+| **COBOL** | ✅ Partial | Enterprise COBOL→modern: fixed→free, STOP RUN→GOBACK, GO TO→PERFORM, DISPLAY/MOVE/COMPUTE/PERFORM/ADD/SUBTRACT/ACCEPT, ALTER flags |
 
 Each adapter implements: `parse()` → `buildSemanticModel()` → `listRefactorCandidates()` → `applyRefactor()` → `verifyPatch()`
 
@@ -326,8 +326,8 @@ The platform was built in this order, with each layer depending on the previous:
 8. ✅ Embedder training + inference (CodeBERT + FastAPI)
 9. ✅ Web UI (Next.js dashboard)
 10. ✅ Security docs + hardening
-11. ✅ Python adapter — Python 2 → 3 modernization (6 rules)
-12. ✅ COBOL adapter — fixed-format parser + 4 modernization rules
+11. ✅ Python adapter — Python 2 → 3 modernization (18 rules)
+12. ✅ COBOL adapter — fixed-format parser + 11 modernization rules
 
 ---
 
