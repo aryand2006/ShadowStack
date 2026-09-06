@@ -1,0 +1,20 @@
+{
+  "name": "ShadowStack",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "api",
+      "command": "java -jar $(ls apps/api/target/shadowstack-api-*.jar | head -1) --spring.profiles.active=demo",
+      "description": "Spring Boot REST API on :8080 (demo profile, no Postgres; seeds examples/legacy-sample into the review queue). Credentials admin/admin."
+    },
+    {
+      "name": "web",
+      "command": "cd apps/web && npm run dev",
+      "description": "Next.js dashboard on :3000. Open http://localhost:3000/queue to review patches against the live API."
+    }
+  ],
+  "ports": [
+    { "name": "api", "port": 8080 },
+    { "name": "web", "port": 3000 }
+  ]
+}
