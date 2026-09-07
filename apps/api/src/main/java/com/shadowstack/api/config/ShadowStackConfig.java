@@ -52,12 +52,16 @@ public record ShadowStackConfig(
     ) {}
 
     /**
-     * Security-related properties (JWT, CORS).
+     * Security-related properties (JWT, CORS, optional app-level encryption key).
+     *
+     * @param encryptionKeyBase64 optional Base64-encoded 32-byte AES key
+     *                            ({@code ENCRYPTION_KEY_BASE64}); null/blank disables encryption
      */
     public record SecurityProperties(
             String jwtSecret,
             long jwtExpirationMs,
-            String corsAllowedOrigins
+            String corsAllowedOrigins,
+            String encryptionKeyBase64
     ) {}
 
     /**

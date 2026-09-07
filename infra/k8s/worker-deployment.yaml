@@ -63,6 +63,27 @@ spec:
                 secretKeyRef:
                   name: shadowstack-secrets
                   key: DB_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: shadowstack-secrets
+                  key: JWT_SECRET
+            - name: SECURITY_USER
+              valueFrom:
+                secretKeyRef:
+                  name: shadowstack-secrets
+                  key: SECURITY_USER
+            - name: SECURITY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: shadowstack-secrets
+                  key: SECURITY_PASSWORD
+            - name: ENCRYPTION_KEY_BASE64
+              valueFrom:
+                secretKeyRef:
+                  name: shadowstack-secrets
+                  key: ENCRYPTION_KEY_BASE64
+                  optional: true
             - name: SPRING_PROFILES_ACTIVE
               value: kubernetes,worker
             - name: WORKER_POOL_CORE

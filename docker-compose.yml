@@ -57,10 +57,14 @@ services:
       SPRING_PROFILES_ACTIVE: docker
       # Optional OIDC: SPRING_PROFILES_ACTIVE: docker,oidc
       # SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: ${SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI:-}
-      # DEV ONLY defaults — override JWT_SECRET / SECURITY_* for anything beyond local compose
-      JWT_SECRET: ${JWT_SECRET:-local-dev-only-shadowstack-jwt-secret-key-min-32-chars}
+      # DEV ONLY defaults for local compose. Production / shared envs MUST override
+      # JWT_SECRET, SECURITY_*, and optionally ENCRYPTION_KEY_BASE64 (see docs/secrets-and-encryption.md).
+      # Default JWT avoids prod|docker reject-list substrings (changeme, demo-only, local-dev-only, …).
+      JWT_SECRET: ${JWT_SECRET:-docker-compose-jwt-key-override-before-any-shared-or-prod-use}
       SECURITY_USER: ${SECURITY_USER:-shadowstack_admin}
       SECURITY_PASSWORD: ${SECURITY_PASSWORD:-shadowstack_dev_change_me}
+      # Optional: Base64 of 32 random bytes for AES-GCM patch-artifact encryption at rest
+      # ENCRYPTION_KEY_BASE64: ${ENCRYPTION_KEY_BASE64:-}
       SECURITY_REVIEWER_USER: ${SECURITY_REVIEWER_USER:-}
       SECURITY_REVIEWER_PASSWORD: ${SECURITY_REVIEWER_PASSWORD:-}
       JAVA_OPTS: >-
@@ -104,7 +108,8 @@ services:
       DB_USERNAME: ${DB_USER:-shadowstack}
       DB_PASSWORD: ${DB_PASSWORD:-shadowstack_dev}
       SPRING_PROFILES_ACTIVE: docker,worker
-      JWT_SECRET: ${JWT_SECRET:-local-dev-only-shadowstack-jwt-secret-key-min-32-chars}
+      # DEV ONLY — production MUST override JWT_SECRET / SECURITY_* (never ship these defaults)
+      JWT_SECRET: ${JWT_SECRET:-docker-compose-jwt-key-override-before-any-shared-or-prod-use}
       SECURITY_USER: ${SECURITY_USER:-shadowstack_admin}
       SECURITY_PASSWORD: ${SECURITY_PASSWORD:-shadowstack_dev_change_me}
       WORKER_POOL_CORE: ${WORKER_POOL_CORE:-4}

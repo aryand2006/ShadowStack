@@ -25,6 +25,7 @@ shadowstack:
     jwt-secret: ${JWT_SECRET}
     jwt-expiration-ms: ${JWT_EXPIRATION_MS:86400000}
     cors-allowed-origins: ${CORS_ORIGINS:http://localhost:3000}
+    encryption-key-base64: ${ENCRYPTION_KEY_BASE64:}
 
 logging:
   level:

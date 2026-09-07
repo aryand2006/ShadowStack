@@ -227,6 +227,8 @@ Control mappings are **not** a SOC 2 certification. Implemented product controls
 | **Audit trail** | Durable `audit_log` on `!demo` with query + CSV export; demo → SLF4J |
 | **Review gate** | Explicit accept/reject after fail-closed verification |
 | **Auth** | JWT + HTTP Basic; optional `oidc` profile for IdP JWT resource-server SSO |
+| **Secrets / Vault** | K8s Secret placeholders + External Secrets → Vault template (`infra/k8s/external-secret-vault.yaml`); see `docs/secrets-and-encryption.md` |
+| **Encryption at rest** | AES-GCM for patch artifacts when `ENCRYPTION_KEY_BASE64` set; Postgres TDE/CMEK via cloud storage class (see `docs/secrets-and-encryption.md`) |
 | **Job isolation** | Worker claims VERIFY with `FOR UPDATE SKIP LOCKED` |
 | **SOC 2** | Design mapping only (`docs/soc2-controls.md`) — **not certified** |
 | **Threat model** | STRIDE analysis documented as a planning artifact |
@@ -255,6 +257,7 @@ shadowstack/
 │   ├── architecture.md   # Full architecture with Mermaid diagrams
 │   ├── threat-model.md   # STRIDE threat analysis
 │   ├── soc2-controls.md  # SOC2 control mapping
+│   ├── secrets-and-encryption.md  # Vault, rotation, AES-GCM, TDE/CMEK
 │   ├── api-reference.md  # Complete API documentation
 │   └── deployment-guide.md
 ├── examples/
@@ -297,7 +300,7 @@ Credentials: `admin` / `admin` (HTTP Basic or `POST /api/v1/auth/login`).
 What is real today: Java full convert + AST-backed adapters for Python/COBOL/JS/C# → analyze → generate → **7-layer Java verify** (optional layers skip cleanly) → review queue → accept/reject (SoD on `createdBy`).
 Gates: Java 7-layer pipeline (compile/AST/bytecode/API/tests/golden/risk — missing optional inputs skip as PASS), Python `py_compile`, JS `node --check`, C# `dotnet build`, COBOL-preserving `cobc` (translate detect-only). Soft/WARN still fail-closed for adapters; Java promotes only on overall PASS.
 What is real for ops: demo in-memory; `prod`/`docker` JPA + Flyway (`ss_organizations` / `ss_users` / `ss_*` + `org_id`), env-required credentials, durable audit query/export, tenant context (`X-Org-Id`), API enqueue-only VERIFY (`shadowstack.jobs.poller-enabled=false`), worker-owned SKIP LOCKED dequeue + 7-layer verify, live analytics, optional `oidc` profile. Single-process: `SHADOWSTACK_JOBS_POLLER_ENABLED=true`.
-What is stubbed / aspirational: rich org admin UI/provisioning beyond default org, Postgres migration-corpus depth, Vault/TDE, and any SOC2 certification.
+What is stubbed / aspirational: rich org admin UI/provisioning beyond default org, Postgres migration-corpus depth, and any SOC2 certification.
 
 > **Docker note:** `infra/docker/Dockerfile.api` is JVM-only. For converter tooling in-container, build `infra/docker/Dockerfile.api-enterprise` (python3/pip + nodejs + `native-engines` copy; optional `cobc` when apt provides it; .NET/Roslyn still host-side). See `docker-compose.yml` comments.
 

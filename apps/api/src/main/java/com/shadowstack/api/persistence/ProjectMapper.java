@@ -2,6 +2,7 @@ package com.shadowstack.api.persistence;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.shadowstack.api.crypto.EncryptionService;
 import com.shadowstack.api.dto.PatchDetailResponse;
 import com.shadowstack.api.dto.PatchDetailResponse.PatchStatus;
 import com.shadowstack.api.dto.PatchDetailResponse.ReviewInfo;
@@ -19,15 +20,18 @@ import java.util.List;
 /**
  * Maps between API DTOs and JPA persistence entities.
  * {@code verification_json} / {@code review_json} are serialized with Jackson.
+ * Sensitive patch fields are encrypted at rest when {@link EncryptionService} is enabled.
  */
 @Component
 @Profile("!demo")
 public class ProjectMapper {
 
     private final ObjectMapper objectMapper;
+    private final EncryptionService encryptionService;
 
-    public ProjectMapper(ObjectMapper objectMapper) {
+    public ProjectMapper(ObjectMapper objectMapper, EncryptionService encryptionService) {
         this.objectMapper = objectMapper;
+        this.encryptionService = encryptionService;
     }
 
     public PersistedProject toEntity(ProjectResponse project, Path root) {
@@ -93,7 +97,7 @@ public class ProjectMapper {
         entity.setFilePath(patch.filePath());
         entity.setStartLine(patch.startLine());
         entity.setEndLine(patch.endLine());
-        entity.setUnifiedDiff(patch.unifiedDiff());
+        entity.setUnifiedDiff(encryptionService.encrypt(patch.unifiedDiff()));
         entity.setRationale(patch.rationale());
         if (patch.risk() != null) {
             entity.setRiskScore(patch.risk().score());
@@ -104,8 +108,8 @@ public class ProjectMapper {
             entity.setRiskTier(null);
             entity.setConfidence(null);
         }
-        entity.setVerificationJson(writeJson(patch.verificationEvidence()));
-        entity.setReviewJson(writeJson(patch.review()));
+        entity.setVerificationJson(encryptionService.encrypt(writeJson(patch.verificationEvidence())));
+        entity.setReviewJson(encryptionService.encrypt(writeJson(patch.review())));
         entity.setCreatedBy(patch.createdBy());
         entity.setCreatedAt(patch.createdAt());
         entity.setUpdatedAt(patch.updatedAt());
@@ -135,12 +139,12 @@ public class ProjectMapper {
                 entity.getFilePath(),
                 entity.getStartLine() != null ? entity.getStartLine() : 0,
                 entity.getEndLine() != null ? entity.getEndLine() : 0,
-                entity.getUnifiedDiff(),
+                encryptionService.decrypt(entity.getUnifiedDiff()),
                 entity.getRationale(),
                 List.of(),
                 risk,
-                readJson(entity.getVerificationJson(), VerificationEvidence.class),
-                readJson(entity.getReviewJson(), ReviewInfo.class),
+                readJson(encryptionService.decrypt(entity.getVerificationJson()), VerificationEvidence.class),
+                readJson(encryptionService.decrypt(entity.getReviewJson()), ReviewInfo.class),
                 entity.getCreatedBy(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
