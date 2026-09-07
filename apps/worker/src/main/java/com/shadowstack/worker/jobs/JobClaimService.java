@@ -67,10 +67,26 @@ public class JobClaimService {
     public void markFailed(UUID jobId, String errorMessage) { updateJob(jobId, STATUS_FAILED, truncate(errorMessage, 4000)); }
 
     public void updatePatchVerification(UUID patchId, String status, String verificationJson) {
-        transactionTemplate.executeWithoutResult(tx ->
+        updatePatchVerification(patchId, status, verificationJson, null, null);
+    }
+
+    public void updatePatchVerification(
+            UUID patchId,
+            String status,
+            String verificationJson,
+            Double blendedRiskScore,
+            String blendedRiskTier) {
+        transactionTemplate.executeWithoutResult(tx -> {
+            if (blendedRiskScore != null && blendedRiskTier != null) {
+                jdbcTemplate.update(
+                        "UPDATE ss_patches SET status = ?, verification_json = ?, risk_score = ?, risk_tier = ?, updated_at = NOW() WHERE id = ?",
+                        status, verificationJson, blendedRiskScore, blendedRiskTier, patchId);
+            } else {
                 jdbcTemplate.update(
                         "UPDATE ss_patches SET status = ?, verification_json = ?, updated_at = NOW() WHERE id = ?",
-                        status, verificationJson, patchId));
+                        status, verificationJson, patchId);
+            }
+        });
     }
 
     private void updateJob(UUID jobId, String status, String errorMessage) {

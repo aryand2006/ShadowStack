@@ -180,7 +180,7 @@ export default function QueuePage() {
                       ["ruleName", "Rule"],
                       ["filePath", "File"],
                       ["riskTier", "Risk"],
-                      ["riskScore", "Score"],
+                      ["riskScore", "Blended %"],
                       ["projectName", "Project"],
                     ] as [SortKey, string][]
                   ).map(([key, label]) => (
@@ -220,7 +220,10 @@ export default function QueuePage() {
                       </Badge>
                     </td>
                     <td className="px-4 py-3.5">
-                      <span className="text-xs font-mono text-shadow-text-secondary">
+                      <span
+                        className="text-xs font-mono text-shadow-text-secondary"
+                        title="max(rule prior, verify pipeline risk) — not a fake demo KPI"
+                      >
                         {(item.riskScore * 100).toFixed(0)}%
                       </span>
                     </td>

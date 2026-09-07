@@ -141,10 +141,22 @@ public class JobClaimPoller {
                 completed);
 
         String patchStatus = passed ? "PENDING_REVIEW" : "VERIFICATION_FAILED";
-        jobClaimService.updatePatchVerification(patchId, patchStatus, jobClaimService.toJson(evidence));
+        double prior = 0.45;
+        Object priorObj = payload.get("riskScore");
+        if (priorObj instanceof Number n) {
+            prior = n.doubleValue();
+        }
+        double verifyRisk = pipelineResult.riskScore();
+        double blended = Math.max(prior, verifyRisk);
+        if (!passed) {
+            blended = Math.max(blended, 0.85);
+        }
+        String tier = blended <= 0.3 ? "LOW" : blended <= 0.6 ? "MEDIUM" : blended <= 0.85 ? "HIGH" : "CRITICAL";
+        jobClaimService.updatePatchVerification(
+                patchId, patchStatus, jobClaimService.toJson(evidence), blended, tier);
         jobClaimService.markSucceeded(job.id());
-        log.info("VERIFY job {} completed for patch {} → {} (verdict={})",
-                job.id(), patchId, patchStatus, pipelineResult.verdict());
+        log.info("VERIFY job {} completed for patch {} → {} (verdict={}, blendedRisk={})",
+                job.id(), patchId, patchStatus, pipelineResult.verdict(), blended);
     }
 
     private void failPatchAndJob(JobClaimService.ClaimedJob job, String message) {
