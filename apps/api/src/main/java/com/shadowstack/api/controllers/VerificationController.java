@@ -46,7 +46,8 @@ public class VerificationController {
         if (enqueue != null) {
             PatchDetailResponse patch = refactorService.getPatch(patchId)
                     .orElseThrow(() -> new RefactorOrchestrationService.PatchNotFoundException(patchId));
-            UUID jobId = enqueue.enqueueVerify(patch.projectId(), patchId);
+            Map<String, Object> payload = refactorService.buildVerifyJobPayload(patchId);
+            UUID jobId = enqueue.enqueueVerify(patch.projectId(), patchId, payload);
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("queued", true);
             body.put("jobId", jobId);

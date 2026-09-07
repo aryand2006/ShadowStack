@@ -46,6 +46,7 @@ spring:
 # ─── Worker Configuration ──────────────────────────────────────────
 shadowstack:
   worker:
+    id: ${SHADOWSTACK_WORKER_ID:shadowstack-worker}
     poll-interval-ms: ${WORKER_POLL_INTERVAL_MS:5000}
     shutdown-timeout-seconds: ${WORKER_SHUTDOWN_TIMEOUT:60}
     pool:

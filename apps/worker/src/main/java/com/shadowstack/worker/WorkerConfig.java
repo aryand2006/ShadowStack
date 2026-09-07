@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
@@ -17,7 +19,7 @@ import java.util.concurrent.ThreadPoolExecutor;
  * Configuration for the ShadowStack Worker service.
  *
  * <p>Manages thread pools for asynchronous task execution and a scheduler
- * reserved for future job-queue polling / heartbeat work.</p>
+ * used by {@link com.shadowstack.worker.jobs.JobClaimPoller} for {@code ss_jobs} VERIFY dequeue.</p>
  */
 @Configuration
 public class WorkerConfig implements AsyncConfigurer {
@@ -41,6 +43,11 @@ public class WorkerConfig implements AsyncConfigurer {
 
     @Value("${shadowstack.worker.shutdown-timeout-seconds:60}")
     private int shutdownTimeoutSeconds;
+
+    @Bean
+    public TransactionTemplate transactionTemplate(PlatformTransactionManager transactionManager) {
+        return new TransactionTemplate(transactionManager);
+    }
 
     /**
      * Primary thread pool for executing analysis, patch generation, and verification tasks.
@@ -66,7 +73,7 @@ public class WorkerConfig implements AsyncConfigurer {
     }
 
     /**
-     * Scheduler reserved for future job-queue polling and heartbeat operations.
+     * Scheduler for job-queue polling ({@code JobClaimPoller}) and heartbeat operations.
      */
     @Bean(name = "workerScheduler")
     public ThreadPoolTaskScheduler workerScheduler() {

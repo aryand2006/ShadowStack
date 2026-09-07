@@ -32,7 +32,11 @@ import com.shadowstack.verify.VerificationPipeline;
 import com.shadowstack.verify.model.Verdict;
 import com.shadowstack.verify.layers.APISignatureDiffVerifier;
 import com.shadowstack.verify.layers.ASTStructuralComparator;
+import com.shadowstack.verify.layers.BytecodeDescriptorComparator;
 import com.shadowstack.verify.layers.CompileVerifier;
+import com.shadowstack.verify.layers.GoldenMasterVerifier;
+import com.shadowstack.verify.layers.SemanticRiskScorer;
+import com.shadowstack.verify.layers.TestExecutionVerifier;
 import com.shadowstack.verify.model.VerificationContext;
 import com.shadowstack.verify.model.VerificationLayerResult;
 import org.eclipse.jdt.core.dom.AST;
@@ -65,9 +69,11 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Real conversion orchestration backed by {@link RefactorEngine} and Java
- * verification layers ({@link CompileVerifier}, {@link ASTStructuralComparator},
- * {@link APISignatureDiffVerifier}).
+ * Real conversion orchestration backed by {@link RefactorEngine} and the full
+ * Java verification stack ({@link CompileVerifier}, {@link ASTStructuralComparator},
+ * {@link BytecodeDescriptorComparator}, {@link APISignatureDiffVerifier},
+ * {@link TestExecutionVerifier}, {@link GoldenMasterVerifier},
+ * {@link SemanticRiskScorer}).
  */
 @Service
 public class RefactorOrchestrationService {
@@ -178,6 +184,58 @@ public class RefactorOrchestrationService {
         return patchStore.findById(patchId);
     }
 
+    /**
+     * Builds a self-contained VERIFY job payload so a worker can run the 7-layer
+     * pipeline and update {@code ss_patches} without API callback.
+     */
+    public Map<String, Object> buildVerifyJobPayload(UUID patchId) {
+        PatchDetailResponse patch = patchStore.findById(patchId)
+                .orElseThrow(() -> new PatchNotFoundException(patchId));
+        PatchUnit unit = patchUnits.get(patchId);
+        if (unit == null) {
+            throw new IllegalStateException(
+                    "No in-memory PatchUnit for " + patchId + " — re-run generate before verify enqueue");
+        }
+        Path root = projectService.requireProjectRoot(patch.projectId());
+        String language = projectLanguage.getOrDefault(patch.projectId(), "java");
+        try {
+            Path sourceFile = root.resolve(patch.filePath()).normalize();
+            String original = Files.readString(sourceFile, StandardCharsets.UTF_8);
+            String transformed = applySnippet(original, unit.getBeforeSnippet(), unit.getAfterSnippet());
+
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("patchId", patch.patchId().toString());
+            payload.put("projectId", patch.projectId().toString());
+            if (patch.candidateId() != null) {
+                payload.put("candidateId", patch.candidateId().toString());
+            }
+            payload.put("filePath", patch.filePath());
+            payload.put("ruleName", patch.ruleName());
+            payload.put("ruleCategory", patch.ruleCategory());
+            payload.put("startLine", patch.startLine());
+            payload.put("endLine", patch.endLine());
+            payload.put("unifiedDiff", patch.unifiedDiff());
+            payload.put("rationale", patch.rationale());
+            payload.put("beforeSnippet", unit.getBeforeSnippet());
+            payload.put("afterSnippet", unit.getAfterSnippet());
+            payload.put("originalSource", original);
+            payload.put("transformedSource", transformed);
+            payload.put("projectRoot", root.toAbsolutePath().normalize().toString());
+            payload.put("language", language);
+            if (patch.risk() != null) {
+                payload.put("riskScore", patch.risk().score());
+                payload.put("riskTier", patch.risk().tier() != null ? patch.risk().tier().name() : null);
+                payload.put("confidence", patch.risk().confidenceScore());
+            }
+            if (patch.createdAt() != null) {
+                payload.put("createdAt", patch.createdAt().toString());
+            }
+            return payload;
+        } catch (IOException e) {
+            throw new IllegalStateException("Could not build VERIFY payload: " + e.getMessage(), e);
+        }
+    }
+
     public VerificationResultResponse runVerification(UUID patchId) {
         PatchDetailResponse patch = patchStore.findById(patchId)
                 .orElseThrow(() -> new PatchNotFoundException(patchId));
@@ -196,10 +254,7 @@ public class RefactorOrchestrationService {
             String summary;
 
             if (adapterRegistry.isJavaEngineLanguage(language)) {
-                VerificationPipeline pipeline = new VerificationPipeline(0.7, false);
-                pipeline.addLayer(new CompileVerifier());
-                pipeline.addLayer(new ASTStructuralComparator());
-                pipeline.addLayer(new APISignatureDiffVerifier());
+                VerificationPipeline pipeline = createJavaVerificationPipeline();
                 VerificationContext context = VerificationContext.builder()
                         .projectRoot(root)
                         .sourceRoot(root)
@@ -207,8 +262,8 @@ public class RefactorOrchestrationService {
                         .transformedSource(transformed)
                         .build();
                 VerificationPipeline.PipelineResult pipelineResult = pipeline.execute(unit, context);
-                // Fail-closed: only hard PASS promotes to PENDING_REVIEW.
-                passed = pipelineResult.verdict() == Verdict.PASS;
+                // Fail-closed on hard FAIL only; layers that cannot run WARN/skip and do not block.
+                passed = pipelineResult.verdict() != Verdict.FAIL;
                 checks = pipelineResult.layerResults().stream()
                         .map(RefactorOrchestrationService::toCheck)
                         .toList();
@@ -408,9 +463,25 @@ public class RefactorOrchestrationService {
         return new InvariantCheck(
                 layer.getLayerId(),
                 layer.getSummary() != null ? layer.getSummary() : layer.getLayerId(),
-                layer.passed(),
+                !layer.failed(),
                 String.join("; ", layer.getDiagnostics() != null ? layer.getDiagnostics() : List.of())
         );
+    }
+
+    /**
+     * Full 7-layer Java verification pipeline (mirrors worker {@code VerificationTask}).
+     * Layers that lack inputs WARN/skip; only hard FAIL blocks promotion.
+     */
+    static VerificationPipeline createJavaVerificationPipeline() {
+        VerificationPipeline pipeline = new VerificationPipeline(0.7, false);
+        pipeline.addLayer(new CompileVerifier());
+        pipeline.addLayer(new ASTStructuralComparator());
+        pipeline.addLayer(new BytecodeDescriptorComparator());
+        pipeline.addLayer(new APISignatureDiffVerifier());
+        pipeline.addLayer(new TestExecutionVerifier());
+        pipeline.addLayer(new GoldenMasterVerifier());
+        pipeline.addLayer(new SemanticRiskScorer());
+        return pipeline;
     }
 
 

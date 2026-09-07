@@ -295,8 +295,8 @@ Credentials: `admin` / `admin` (HTTP Basic or `POST /api/v1/auth/login`).
 
 What is real today: Java full convert + AST-backed adapters for Python/COBOL/JS/C# → analyze → generate → verify → review queue → accept/reject (with SoD on `createdBy`).
 Gates: Java attempts a multi-layer verify path (`CompileVerifier` + AST/API signature layers; broader 7-layer verify-engine catalog exists for extension), Python `py_compile` (LibCST AST + regex fallback), JS `node --check` (Acorn AST), C# `dotnet build` (Roslyn AST; requires `.csproj`), COBOL-preserving `cobc` (translate track is detect-only).
-What is real for ops: demo uses in-memory stores; `prod`/`docker` use JPA + Flyway (`ss_projects` / `ss_patches` / `ss_jobs` with `claimed_by` job ownership on the API VERIFY poller), env-required credentials, live analytics aggregates from patch/project stores, optional `oidc` profile for IdP JWT, CORS `X-Org-Id` allowed.
-What is stubbed / aspirational: full multi-tenant org isolation, dedicated worker process ownership (API still hosts the claim loop), Postgres migration-corpus analytics depth, and any SOC2 certification.
+What is real for ops: demo uses in-memory stores; `prod`/`docker` use JPA + Flyway (`ss_projects` / `ss_patches` / `ss_jobs`), env-required credentials, API enqueue-only VERIFY jobs (`shadowstack.jobs.poller-enabled=false`), worker-owned dequeue (`JobClaimPoller` + 7-layer `VerificationTask`), live analytics aggregates, optional `oidc` profile for IdP JWT, CORS `X-Org-Id` allowed. Re-enable API polling with `SHADOWSTACK_JOBS_POLLER_ENABLED=true` for single-process deploys.
+What is stubbed / aspirational: full multi-tenant org isolation, Postgres migration-corpus analytics depth, and any SOC2 certification.
 
 > **Docker note:** `infra/docker/Dockerfile.api` is JVM-only. For converter tooling in-container, build `infra/docker/Dockerfile.api-enterprise` (python3/pip + nodejs + `native-engines` copy; optional `cobc` when apt provides it; .NET/Roslyn still host-side). See `docker-compose.yml` comments.
 
