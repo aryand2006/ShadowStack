@@ -52,4 +52,12 @@ public class JpaPatchStore implements PatchStore {
                 .map(mapper::toPatchDetailResponse)
                 .toList();
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<PatchDetailResponse> findAll() {
+        return patchRepository.findAll().stream()
+                .map(mapper::toPatchDetailResponse)
+                .toList();
+    }
 }

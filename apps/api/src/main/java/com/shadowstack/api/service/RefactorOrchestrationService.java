@@ -40,6 +40,8 @@ import org.eclipse.jdt.core.dom.ASTParser;
 import org.eclipse.jdt.core.dom.CompilationUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -159,6 +161,7 @@ public class RefactorOrchestrationService {
                 ),
                 null,
                 null,
+                currentUsername(),
                 now,
                 now
         );
@@ -324,7 +327,7 @@ public class RefactorOrchestrationService {
                             passed, 0, 0, 0, verified, failed,
                             Map.of("verifier", language), completed
                     ),
-                    patch.review(), patch.createdAt(), Instant.now()
+                    patch.review(), patch.createdBy(), patch.createdAt(), Instant.now()
             );
             patchStore.save(updated);
             return result;
@@ -349,7 +352,7 @@ public class RefactorOrchestrationService {
                 patch.unifiedDiff(), patch.rationale(), patch.invariants(),
                 patch.risk(), patch.verificationEvidence(),
                 new ReviewInfo(reviewer, accepted, reason, Instant.now()),
-                patch.createdAt(), Instant.now()
+                patch.createdBy(), patch.createdAt(), Instant.now()
         );
         patchStore.save(updated);
         return updated;
@@ -634,6 +637,16 @@ public class RefactorOrchestrationService {
     }
 
     /** True when the stored patch detail has no meaningful change (blank/null diff). */
+
+    private static String currentUsername() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || auth.getName() == null) {
+            return null;
+        }
+        String name = auth.getName();
+        return "anonymousUser".equals(name) ? null : name;
+    }
+
     static boolean isIdentityPatch(PatchDetailResponse patch) {
         if (patch == null) {
             return true;

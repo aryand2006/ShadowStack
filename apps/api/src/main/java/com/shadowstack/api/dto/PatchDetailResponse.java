@@ -28,6 +28,7 @@ public record PatchDetailResponse(
         RiskAssessment risk,
         VerificationEvidence verificationEvidence,
         ReviewInfo review,
+        String createdBy,
         Instant createdAt,
         Instant updatedAt
 ) {

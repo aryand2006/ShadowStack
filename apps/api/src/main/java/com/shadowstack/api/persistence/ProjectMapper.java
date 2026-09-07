@@ -102,6 +102,7 @@ public class ProjectMapper {
         }
         entity.setVerificationJson(writeJson(patch.verificationEvidence()));
         entity.setReviewJson(writeJson(patch.review()));
+        entity.setCreatedBy(patch.createdBy());
         entity.setCreatedAt(patch.createdAt());
         entity.setUpdatedAt(patch.updatedAt());
     }
@@ -133,6 +134,7 @@ public class ProjectMapper {
                 risk,
                 readJson(entity.getVerificationJson(), VerificationEvidence.class),
                 readJson(entity.getReviewJson(), ReviewInfo.class),
+                entity.getCreatedBy(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );

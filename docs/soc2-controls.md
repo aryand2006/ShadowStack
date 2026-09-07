@@ -16,20 +16,22 @@ This document maps *intended* ShadowStack security controls to SOC 2 Trust Servi
 
 | Control | ShadowStack Implementation | Evidence |
 |---|---|---|
-| Defined organizational roles | RBAC model: `ROLE_ADMIN`, `ROLE_TECH_LEAD`, `ROLE_SENIOR_DEV`, `ROLE_DEVELOPER`, `ROLE_VIEWER` | `JwtTokenProvider` role claims |
-| Separation of duties | Patch generators cannot approve their own patches; reviewer ≠ author enforced | Review queue filtering logic |
+| Defined organizational roles | RBAC model in code: `ADMIN`, `REVIEWER`, `ANALYST`, `VIEWER` (aspirational docs sometimes mention TECH_LEAD/SENIOR_DEV as future risk-tier mapping only) | `JwtTokenProvider` / `@PreAuthorize` |
+| Separation of duties | Patch authors (`createdBy`) cannot accept/reject own patches unless `ADMIN` | `ReviewService.enforceSeparationOfDuties` |
 | Risk-based reviewer assignment | Risk tier determines required reviewer level (see table below) | API controller authorization checks |
 | Code of conduct for AI-assisted changes | All AI-generated transformations require human approval (auto-apply off by default) | `shadowstack.risk.auto-apply-enabled: false` |
 
-### CC1.2 — Risk Tier → Reviewer Mapping
+### CC1.2 — Risk Tier → Reviewer Mapping (aspirational)
 
-| Risk Tier | Minimum Reviewer Role | Auto-Apply Eligible |
+Code today authorizes review with `REVIEWER` or `ADMIN` only. The finer mapping below is a **target**, not enforced:
+
+| Risk Tier | Target minimum reviewer (aspirational) | Auto-Apply Eligible |
 |---|---|---|
-| COSMETIC | ROLE_DEVELOPER | Yes (if ≤ 0.2) |
-| LOW | ROLE_DEVELOPER | No |
-| MEDIUM | ROLE_SENIOR_DEV | No |
-| HIGH | ROLE_TECH_LEAD | No |
-| CRITICAL | ROLE_TECH_LEAD + ROLE_ADMIN | No |
+| COSMETIC | REVIEWER | Yes (if ≤ 0.2 and auto-apply enabled) |
+| LOW | REVIEWER | No |
+| MEDIUM | REVIEWER | No |
+| HIGH | REVIEWER (+ future senior gate) | No |
+| CRITICAL | ADMIN | No |
 
 ---
 
@@ -251,20 +253,23 @@ This document maps *intended* ShadowStack security controls to SOC 2 Trust Servi
 
 ## Compliance Checklist
 
+> Status values: **Partial** (code present, incomplete), **Target** (designed/documented only), **Not implemented**.
+> ShadowStack is **not SOC 2 certified**.
+
 | # | Criteria | Status | Notes |
 |---|---|---|---|
-| 1 | RBAC with least privilege | ✅ Implemented | 5 roles with graduated permissions |
-| 2 | All actions audited | ✅ Implemented | `AuditService` covers all mutations |
-| 3 | Data encrypted in transit | ✅ Implemented | TLS 1.3 via Ingress |
-| 4 | Data encrypted at rest | ✅ Implemented | PostgreSQL TDE + blob encryption |
-| 5 | Human approval for changes | ✅ Implemented | Mandatory review workflow |
-| 6 | Change evidence preserved | ✅ Implemented | BehavioralEquivalenceCertificate |
-| 7 | Monitoring and alerting | ✅ Implemented | Prometheus + Grafana + Actuator |
-| 8 | Incident response capability | ✅ Implemented | Graceful shutdown, circuit breakers |
-| 9 | Risk assessment automation | ✅ Implemented | Multi-factor risk scoring |
-| 10 | Data retention policies | ✅ Implemented | Configurable per data class |
-| 11 | Input validation | ✅ Implemented | Jakarta Bean Validation on all DTOs |
-| 12 | Secrets management | ✅ Implemented | External secrets, never in config |
-| 13 | Dependency pinning | ✅ Implemented | Exact versions in all POMs |
-| 14 | Container security | ✅ Implemented | Non-root, resource limits, seccomp |
-| 15 | Separation of duties | ✅ Implemented | Generator ≠ reviewer enforcement |
+| 1 | RBAC with least privilege | Partial | Roles in code: ADMIN, REVIEWER, ANALYST, VIEWER |
+| 2 | All actions audited | Partial | Interceptor + `audit_log` schema; query path thin |
+| 3 | Data encrypted in transit | Target | TLS expected at ingress; not enforced by the app itself |
+| 4 | Data encrypted at rest | Target | Depends on deployed Postgres/disk config |
+| 5 | Human approval for changes | Partial | Mandatory review workflow in API; auto-apply off by default |
+| 6 | Change evidence preserved | Partial | Verification evidence on patches; certificate story incomplete |
+| 7 | Monitoring and alerting | Partial | Actuator/Prometheus endpoints; Grafana rules not shipped |
+| 8 | Incident response capability | Target | Graceful shutdown config; circuit breakers aspirational |
+| 9 | Risk assessment automation | Partial | Risk scoring on candidates/patches |
+| 10 | Data retention policies | Target | Config keys exist; enforcement jobs not proven |
+| 11 | Input validation | Partial | Bean Validation on many DTOs |
+| 12 | Secrets management | Partial | Env-based secrets for prod/docker; demo defaults remain |
+| 13 | Dependency pinning | Partial | Most POMs pin versions |
+| 14 | Container security | Partial | Non-root user in Dockerfiles; seccomp/network policies target |
+| 15 | Separation of duties | Partial | `createdBy` SoD in `ReviewService`; ADMIN override allowed |

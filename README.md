@@ -222,9 +222,11 @@ These are design goals and control mappings — **not** claimed production certi
 |---------|------------------------|
 | **Offline-first** | Demo path avoids external LLM calls; no production telemetry product |
 | **RBAC** | ADMIN, REVIEWER, ANALYST, VIEWER roles in the API security config |
-| **Audit trail** | Audit model and endpoints exist; durability depends on persistence profile |
+| **Separation of duties** | Reviewers cannot accept/reject patches they authored (`createdBy`); ADMIN may override |
+| **Audit trail** | Request audit interceptor + `audit_log` schema; query API still thin |
 | **Review gate** | Patches require explicit accept/reject after verification |
-| **Auth** | JWT + HTTP Basic for demo/dev |
+| **Auth** | JWT + HTTP Basic for demo/dev; optional Spring profile `oidc` for IdP JWT resource-server SSO |
+| **CORS** | Allows `X-Org-Id` for multi-tenant clients (tenant isolation is a separate track) |
 | **SOC 2** | Control *design* mapping only (`docs/soc2-controls.md`) — **not certified** |
 | **Threat model** | STRIDE analysis documented as a planning artifact |
 
@@ -291,12 +293,12 @@ cd apps/web && npm install && npm run dev
 
 Credentials: `admin` / `admin` (HTTP Basic or `POST /api/v1/auth/login`).
 
-What is real today: Java full convert + AST-backed adapters for Python/COBOL/JS/C# → analyze → generate → verify → review queue → accept/reject.
-Gates: Java `javac` (+ AST/API signature layers), Python `py_compile` (LibCST AST + regex fallback), JS `node --check` (Acorn AST), C# `dotnet build` (Roslyn AST; requires `.csproj` in the project tree), COBOL-preserving `cobc` (translate track is detect-only).
-What is real for ops: demo uses in-memory stores; `prod`/`docker` use JPA + Flyway (`ss_projects` / `ss_patches` / `ss_jobs`), env-required credentials, and an API-hosted VERIFY job poller (`!demo`).
-What is stubbed / aspirational: dedicated worker dequeue ownership, Postgres corpus analytics, invented dashboard KPIs, and SOC2/AES enterprise certifications.
+What is real today: Java full convert + AST-backed adapters for Python/COBOL/JS/C# → analyze → generate → verify → review queue → accept/reject (with SoD on `createdBy`).
+Gates: Java attempts a multi-layer verify path (`CompileVerifier` + AST/API signature layers; broader 7-layer verify-engine catalog exists for extension), Python `py_compile` (LibCST AST + regex fallback), JS `node --check` (Acorn AST), C# `dotnet build` (Roslyn AST; requires `.csproj`), COBOL-preserving `cobc` (translate track is detect-only).
+What is real for ops: demo uses in-memory stores; `prod`/`docker` use JPA + Flyway (`ss_projects` / `ss_patches` / `ss_jobs` with `claimed_by` job ownership on the API VERIFY poller), env-required credentials, live analytics aggregates from patch/project stores, optional `oidc` profile for IdP JWT, CORS `X-Org-Id` allowed.
+What is stubbed / aspirational: full multi-tenant org isolation, dedicated worker process ownership (API still hosts the claim loop), Postgres migration-corpus analytics depth, and any SOC2 certification.
 
-> **Docker note:** `infra/docker/Dockerfile.api` is a JVM-only runtime. Full converter parity (LibCST / Acorn / Roslyn / cobc) is intended for the host demo path above, or an image that also installs those toolchains and copies `packages/language-adapters/native-engines/`.
+> **Docker note:** `infra/docker/Dockerfile.api` is JVM-only. For converter tooling in-container, build `infra/docker/Dockerfile.api-enterprise` (python3/pip + nodejs + `native-engines` copy; optional `cobc` when apt provides it; .NET/Roslyn still host-side). See `docker-compose.yml` comments.
 
 ## Quick Start
 

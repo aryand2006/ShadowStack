@@ -33,6 +33,10 @@ services:
           memory: 1G
 
   # ─── Spring Boot API ────────────────────────────────────────────
+  # Enterprise native-engines image (python/node + native-engines copy):
+  #   dockerfile: infra/docker/Dockerfile.api-enterprise
+  # OIDC / SSO (optional): set SPRING_PROFILES_ACTIVE=docker,oidc and
+  #   SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=https://idp.example/realms/shadowstack
   api:
     build:
       context: .
@@ -51,6 +55,8 @@ services:
       DB_USERNAME: ${DB_USER:-shadowstack}
       DB_PASSWORD: ${DB_PASSWORD:-shadowstack_dev}
       SPRING_PROFILES_ACTIVE: docker
+      # Optional OIDC: SPRING_PROFILES_ACTIVE: docker,oidc
+      # SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: ${SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI:-}
       # DEV ONLY defaults — override JWT_SECRET / SECURITY_* for anything beyond local compose
       JWT_SECRET: ${JWT_SECRET:-local-dev-only-shadowstack-jwt-secret-key-min-32-chars}
       SECURITY_USER: ${SECURITY_USER:-shadowstack_admin}

@@ -16,4 +16,6 @@ public interface PatchStore {
     List<PatchDetailResponse> findByProject(UUID projectId);
 
     List<PatchDetailResponse> findByStatus(PatchStatus status);
+
+    List<PatchDetailResponse> findAll();
 }

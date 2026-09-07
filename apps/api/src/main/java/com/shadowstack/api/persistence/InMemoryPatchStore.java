@@ -40,4 +40,9 @@ public class InMemoryPatchStore implements PatchStore {
                 .filter(p -> p.status() == status)
                 .toList();
     }
+
+    @Override
+    public List<PatchDetailResponse> findAll() {
+        return List.copyOf(patches.values());
+    }
 }

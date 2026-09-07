@@ -61,6 +61,9 @@ public class PersistedPatch {
     @Column(name = "review_json", columnDefinition = "TEXT")
     private String reviewJson;
 
+    @Column(name = "created_by", length = 256)
+    private String createdBy;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -193,6 +196,14 @@ public class PersistedPatch {
 
     public void setReviewJson(String reviewJson) {
         this.reviewJson = reviewJson;
+    }
+
+    public String getCreatedBy() {
+        return createdBy;
+    }
+
+    public void setCreatedBy(String createdBy) {
+        this.createdBy = createdBy;
     }
 
     public Instant getCreatedAt() {

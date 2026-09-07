@@ -55,7 +55,7 @@ public class ReviewController {
     public ResponseEntity<PatchDetailResponse> acceptPatch(
             @PathVariable UUID patchId,
             Authentication authentication) {
-        PatchDetailResponse result = reviewService.acceptPatch(patchId, authentication.getName());
+        PatchDetailResponse result = reviewService.acceptPatch(patchId, authentication);
         return ResponseEntity.ok(result);
     }
 
@@ -66,7 +66,7 @@ public class ReviewController {
             @PathVariable UUID patchId,
             @Valid @RequestBody ReviewDecisionRequest decision,
             Authentication authentication) {
-        PatchDetailResponse result = reviewService.rejectPatch(patchId, decision, authentication.getName());
+        PatchDetailResponse result = reviewService.rejectPatch(patchId, decision, authentication);
         return ResponseEntity.ok(result);
     }
 

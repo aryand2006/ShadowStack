@@ -110,7 +110,8 @@ public class GlobalExceptionHandler {
         log.warn("Access denied: {} on {}", ex.getMessage(), request.getRequestURI());
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiErrorResponse.of(403, "Forbidden",
-                        "Insufficient permissions", request.getRequestURI()));
+                        ex.getMessage() != null ? ex.getMessage() : "Insufficient permissions",
+                        request.getRequestURI()));
     }
 
     @ExceptionHandler(BadCredentialsException.class)

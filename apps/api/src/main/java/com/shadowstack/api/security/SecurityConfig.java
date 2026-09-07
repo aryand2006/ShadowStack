@@ -18,6 +18,8 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import com.shadowstack.api.tenant.TenantFilter;
+
 import java.util.Arrays;
 import java.util.List;
 
@@ -80,6 +82,10 @@ public class SecurityConfig {
                 .addFilterBefore(
                         new JwtAuthenticationFilter(jwtTokenProvider),
                         UsernamePasswordAuthenticationFilter.class
+                )
+                .addFilterAfter(
+                        new TenantFilter(jwtTokenProvider),
+                        JwtAuthenticationFilter.class
                 );
 
         return http.build();
@@ -92,7 +98,8 @@ public class SecurityConfig {
                 Arrays.asList(corsAllowedOrigins.split(","))
         );
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
+        configuration.setAllowedHeaders(List.of(
+                "Authorization", "Content-Type", "X-Requested-With", TenantFilter.ORG_HEADER));
         configuration.setExposedHeaders(List.of("X-Total-Count", "X-Page-Number", "X-Page-Size"));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);

@@ -1,0 +1,106 @@
+# ═══════════════════════════════════════════════════════════════════
+#  ShadowStack API — Multi-stage Docker Build
+#  Eclipse Temurin JDK 21 · Spring Boot 3.3 · Production-optimized
+#
+#  Enterprise variant: runtime includes python3/pip, nodejs, and copies
+#  packages/language-adapters/native-engines. Optional cobc when apt allows.
+#  .NET/Roslyn is not included (use host demo or extend further).
+# ═══════════════════════════════════════════════════════════════════
+
+# ─── Stage 1: Dependency Resolution ──────────────────────────────
+FROM eclipse-temurin:21-jdk-jammy AS deps
+
+WORKDIR /build
+
+COPY packages/core-analysis/pom.xml       packages/core-analysis/pom.xml
+COPY packages/refactor-engine/pom.xml     packages/refactor-engine/pom.xml
+COPY packages/verify-engine/pom.xml       packages/verify-engine/pom.xml
+COPY packages/migration-corpus/pom.xml    packages/migration-corpus/pom.xml
+COPY packages/language-adapters/pom.xml   packages/language-adapters/pom.xml
+COPY apps/api/pom.xml                     apps/api/pom.xml
+
+RUN --mount=type=cache,target=/root/.m2 \
+    apt-get update && apt-get install -y --no-install-recommends maven && \
+    cd /build/packages/language-adapters && mvn dependency:go-offline -B -q || true && \
+    cd /build/packages/core-analysis && mvn dependency:go-offline -B -q || true && \
+    cd /build/packages/refactor-engine && mvn dependency:go-offline -B -q || true && \
+    cd /build/packages/verify-engine && mvn dependency:go-offline -B -q || true && \
+    cd /build/packages/migration-corpus && mvn dependency:go-offline -B -q || true && \
+    cd /build/apps/api && mvn dependency:go-offline -B -q || true
+
+# ─── Stage 2: Build ─────────────────────────────────────────────
+FROM eclipse-temurin:21-jdk-jammy AS build
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends maven && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=deps /root/.m2 /root/.m2
+
+COPY packages/ packages/
+COPY apps/api/ apps/api/
+
+RUN cd packages/language-adapters && mvn install -DskipTests -B -q && \
+    cd /build/packages/core-analysis && mvn install -DskipTests -B -q && \
+    cd /build/packages/refactor-engine && mvn install -DskipTests -B -q && \
+    cd /build/packages/verify-engine && mvn install -DskipTests -B -q && \
+    cd /build/packages/migration-corpus && mvn install -DskipTests -B -q && \
+    cd /build/apps/api && mvn package -DskipTests -B -q
+
+RUN mkdir -p /build/extracted && \
+    java -Djarmode=layertools -jar /build/apps/api/target/*.jar extract --destination /build/extracted
+
+# ─── Stage 3: Runtime (enterprise — native engines) ───────────
+# Installs python3/pip + nodejs and copies native-engines for LibCST/Acorn.
+# Optional GnuCOBOL (cobc): installed when the apt package is available.
+# Roslyn/.NET is NOT baked in (large SDK); use host demo or extend this image.
+FROM eclipse-temurin:21-jre-jammy AS runtime
+
+LABEL maintainer="ShadowStack <engineering@shadowstack.dev>"
+LABEL description="ShadowStack API Service (enterprise native-engines)"
+LABEL org.opencontainers.image.source="https://github.com/shadowstack/shadowstack"
+
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-venv \
+        nodejs npm \
+        curl ca-certificates \
+    && (apt-get install -y --no-install-recommends gnucobol || \
+        apt-get install -y --no-install-recommends open-cobol || \
+        echo "WARN: cobc/gnucobol not available in apt — COBOL full gate needs host toolchain") \
+    && rm -rf /var/lib/apt/lists/*
+
+# Native engines (LibCST requirements + Acorn vendors + optional C# publish)
+COPY packages/language-adapters/native-engines /opt/shadowstack/native-engines
+RUN pip3 install --no-cache-dir -r /opt/shadowstack/native-engines/python/requirements.txt \
+    && chown -R 1001:1001 /opt/shadowstack
+
+RUN groupadd --system --gid 1001 shadowstack && \
+    useradd --system --uid 1001 --gid shadowstack --shell /bin/false shadowstack && \
+    mkdir -p /app /app/logs /app/tmp && \
+    chown -R shadowstack:shadowstack /app
+
+WORKDIR /app
+
+COPY --from=build --chown=shadowstack:shadowstack /build/extracted/dependencies/ ./
+COPY --from=build --chown=shadowstack:shadowstack /build/extracted/spring-boot-loader/ ./
+COPY --from=build --chown=shadowstack:shadowstack /build/extracted/snapshot-dependencies/ ./
+COPY --from=build --chown=shadowstack:shadowstack /build/extracted/application/ ./
+
+USER shadowstack
+
+ENV SHADOWSTACK_NATIVE_ENGINES=/opt/shadowstack/native-engines
+ENV JAVA_OPTS="-XX:+UseG1GC \
+  -XX:MaxRAMPercentage=75.0 \
+  -XX:+UseContainerSupport \
+  -Djava.security.egd=file:/dev/./urandom \
+  -Djava.io.tmpdir=/app/tmp"
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
+    CMD curl -sf http://localhost:8080/actuator/health/liveness || exit 1
+
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS org.springframework.boot.loader.launch.JarLauncher"]

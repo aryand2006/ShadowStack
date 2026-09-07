@@ -1,0 +1,19 @@
+# ═══════════════════════════════════════════════════════════════════
+#  ShadowStack — OIDC / enterprise SSO profile
+#  Activate with: --spring.profiles.active=oidc  (or oidc,docker / oidc,prod)
+#
+#  Required env:
+#    SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI
+#      e.g. https://login.example.com/realms/shadowstack
+#
+#  Local login (POST /api/v1/auth/login + HTTP Basic) remains available.
+#  API calls may use a ShadowStack HMAC JWT or an IdP JWT
+#  (roles from `roles` or realm_access.roles).
+# ═══════════════════════════════════════════════════════════════════
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI:https://idp.example.com/realms/shadowstack}
