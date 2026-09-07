@@ -141,6 +141,8 @@ class CobolAdapterTest {
                 LanguageAdapter.VerificationConfig.defaults());
         assertTrue(vr.compileSuccess(),
                 () -> "post-conversion cobc must PASS: " + vr.layerResults());
+        assertEquals(VerificationResult.Verdict.PASS, vr.verdict(),
+                () -> String.valueOf(vr.layerResults()));
     }
 
     @Test
@@ -274,7 +276,44 @@ class CobolAdapterTest {
         VerificationResult vr = adapter.verifyPatch(
                 patch, tmp, LanguageAdapter.VerificationConfig.defaults());
         assertTrue(vr.compileSuccess(), () -> String.valueOf(vr.layerResults()));
-        assertNotNull(vr.verdict());
+        assertEquals(VerificationResult.Verdict.PASS, vr.verdict(),
+                () -> String.valueOf(vr.layerResults()));
+    }
+
+    @Test
+    void verify_hardFails_whenCobcMissing(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("SAMPLE.cob");
+        Files.writeString(file, FIXED_FORMAT_PROGRAM, StandardCharsets.UTF_8);
+        CobolAdapter adapter = new CobolAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        RefactorCandidate candidate = adapter.listRefactorCandidates(
+                        model, LanguageAdapter.RefactorRuleSet.empty()).stream()
+                .filter(c -> "cobol.stop_run_to_goback".equals(c.ruleId()))
+                .findFirst()
+                .orElseThrow();
+        PatchResult patch = adapter.applyRefactor(candidate, tmp);
+        assertTrue(patch.success());
+
+        String prev = System.getProperty("shadowstack.verify.cobc");
+        System.setProperty("shadowstack.verify.cobc", "/nonexistent/shadowstack-cobc");
+        try {
+            VerificationResult vr = adapter.verifyPatch(
+                    patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+            assertEquals(VerificationResult.Verdict.FAIL, vr.verdict(),
+                    () -> String.valueOf(vr.layerResults()));
+            assertTrue(vr.layerResults().stream()
+                            .anyMatch(l -> "compilation".equals(l.layerName())
+                                    && !l.passed()
+                                    && l.details() != null
+                                    && l.details().contains("cobc not available")),
+                    () -> String.valueOf(vr.layerResults()));
+        } finally {
+            if (prev == null) {
+                System.clearProperty("shadowstack.verify.cobc");
+            } else {
+                System.setProperty("shadowstack.verify.cobc", prev);
+            }
+        }
     }
 
     @Test

@@ -225,4 +225,40 @@ class JavascriptAdapterTest {
         assertEquals(VerificationResult.Verdict.PASS, verification.verdict(),
                 () -> String.valueOf(verification.layerResults()));
     }
+
+    @Test
+    void verify_hardFails_whenNodeMissing(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("sample.js");
+        Files.writeString(file, "var x = 1;\n", StandardCharsets.UTF_8);
+        JavascriptAdapter adapter = new JavascriptAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        RefactorCandidate target = adapter.listRefactorCandidates(
+                        model, LanguageAdapter.RefactorRuleSet.empty()).stream()
+                .filter(c -> "js.var_to_let".equals(c.ruleId()))
+                .findFirst()
+                .orElseThrow();
+        PatchResult patch = adapter.applyRefactor(target, tmp);
+        assertTrue(patch.success());
+
+        String prev = System.getProperty("shadowstack.verify.node");
+        System.setProperty("shadowstack.verify.node", "/nonexistent/shadowstack-node");
+        try {
+            VerificationResult verification = adapter.verifyPatch(
+                    patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+            assertEquals(VerificationResult.Verdict.FAIL, verification.verdict(),
+                    () -> String.valueOf(verification.layerResults()));
+            assertTrue(verification.layerResults().stream()
+                            .anyMatch(l -> "compilation".equals(l.layerName())
+                                    && !l.passed()
+                                    && l.details() != null
+                                    && l.details().contains("node not available")),
+                    () -> String.valueOf(verification.layerResults()));
+        } finally {
+            if (prev == null) {
+                System.clearProperty("shadowstack.verify.node");
+            } else {
+                System.setProperty("shadowstack.verify.node", prev);
+            }
+        }
+    }
 }

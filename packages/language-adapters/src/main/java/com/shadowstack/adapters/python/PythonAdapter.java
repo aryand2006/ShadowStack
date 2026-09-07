@@ -265,12 +265,15 @@ public class PythonAdapter implements LanguageAdapter {
                         && l.passed()
                         && l.details() != null
                         && l.details().contains("py_compile succeeded"));
+        // Hard gate: only PASS when a real py_compile succeeded — never soft-pass
+        // on missing python3 / structural-only probes.
+        boolean nativeGate = structural.passed() && runtimeVerified;
         return VerificationResult.builder()
                 .patchId(patch.patchId())
-                .compileSuccess(compileOk)
-                .testSuccess(runtimeVerified)
+                .compileSuccess(compileOk && structural.passed())
+                .testSuccess(nativeGate)
                 .astStructuralMatchScore(structural.score())
-                .bytecodeDescriptorMatch(runtimeVerified)
+                .bytecodeDescriptorMatch(nativeGate)
                 .apiSurfaceCompatible(structural.passed())
                 .goldenMasterMatch(false)
                 .layerResults(layers)
@@ -287,7 +290,9 @@ public class PythonAdapter implements LanguageAdapter {
         }
         Path target = sourceRoot.resolve(patch.affectedFiles().get(0));
         try {
-            ProcessBuilder pb = new ProcessBuilder("python3", "-c",
+            ProcessBuilder pb = new ProcessBuilder(
+                    System.getProperty("shadowstack.verify.python3", "python3"),
+                    "-c",
                     "import py_compile, sys; py_compile.compile(sys.argv[1], doraise=True)",
                     target.toString());
             pb.redirectErrorStream(true);
@@ -314,10 +319,9 @@ public class PythonAdapter implements LanguageAdapter {
                     "compilation", passed, passed ? 1.0 : 0.0, details, elapsed);
         } catch (IOException e) {
             long elapsed = System.currentTimeMillis() - start;
-            // Runtime missing — structural-only; do not claim a full compile pass.
             return new VerificationResult.LayerResult(
-                    "compilation", true, 0.7,
-                    "python3 not available; structural-only verification", elapsed);
+                    "compilation", false, 0.0,
+                    "python3 not available", elapsed);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             long elapsed = System.currentTimeMillis() - start;

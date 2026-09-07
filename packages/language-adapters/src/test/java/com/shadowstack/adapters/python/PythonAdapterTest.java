@@ -128,6 +128,44 @@ class PythonAdapterTest {
         VerificationResult vr = adapter.verifyPatch(patch, tmp,
                 LanguageAdapter.VerificationConfig.quick());
         assertNotNull(vr.verdict());
+        assertEquals(VerificationResult.Verdict.PASS, vr.verdict(),
+                () -> String.valueOf(vr.layerResults()));
+    }
+
+    @Test
+    void verify_hardFails_whenPythonMissing(@TempDir Path tmp) throws Exception {
+        Path module = tmp.resolve("hello.py");
+        Files.writeString(module, "print \"hi\"\n", StandardCharsets.UTF_8);
+
+        PythonAdapter adapter = new PythonAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        RefactorCandidate printCandidate = adapter.listRefactorCandidates(
+                        model, LanguageAdapter.RefactorRuleSet.empty()).stream()
+                .filter(c -> "py.print_stmt_to_call".equals(c.ruleId()))
+                .findFirst().orElseThrow();
+        PatchResult patch = adapter.applyRefactor(printCandidate, tmp);
+        assertTrue(patch.success());
+
+        String prev = System.getProperty("shadowstack.verify.python3");
+        System.setProperty("shadowstack.verify.python3", "/nonexistent/shadowstack-python3");
+        try {
+            VerificationResult vr = adapter.verifyPatch(
+                    patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+            assertEquals(VerificationResult.Verdict.FAIL, vr.verdict(),
+                    () -> String.valueOf(vr.layerResults()));
+            assertTrue(vr.layerResults().stream()
+                            .anyMatch(l -> "compilation".equals(l.layerName())
+                                    && !l.passed()
+                                    && l.details() != null
+                                    && l.details().contains("python3 not available")),
+                    () -> String.valueOf(vr.layerResults()));
+        } finally {
+            if (prev == null) {
+                System.clearProperty("shadowstack.verify.python3");
+            } else {
+                System.setProperty("shadowstack.verify.python3", prev);
+            }
+        }
     }
 
     @Test

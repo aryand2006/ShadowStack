@@ -162,6 +162,21 @@ RULE_META: dict[str, dict[str, Any]] = {
         "confidence": 0.99,
         "risk": "LOW",
     },
+    "py.map_none_to_zip": {
+        "ruleName": "map(None, ...) → zip(...)",
+        "confidence": 0.85,
+        "risk": "MODERATE",
+    },
+    "py.filter_none_list": {
+        "ruleName": "filter(None, x) → list(filter(None, x))",
+        "confidence": 0.88,
+        "risk": "LOW",
+    },
+    "py.list_dict_views_optional": {
+        "ruleName": "list(d.keys()) → d.keys() (view)",
+        "confidence": 0.7,
+        "risk": "LOW",
+    },
 }
 
 # import old → (new module path parts, asname, ruleId, ruleName)
@@ -544,6 +559,53 @@ class ModernizeTransformer(cst.CSTTransformer):
                 original_node, repl, "py.execfile_to_exec",
                 passthrough=updated_node,
             )
+
+        # map(None, a, b, ...) → zip(a, b, ...)
+        if (
+            _is_simple_name(func, "map")
+            and len(original_node.args) >= 2
+            and isinstance(original_node.args[0].value, cst.Name)
+            and original_node.args[0].value.value == "None"
+        ):
+            repl = cst.Call(func=cst.Name("zip"), args=list(original_node.args[1:]))
+            return self._record_and_maybe_replace(
+                original_node, repl, "py.map_none_to_zip",
+                passthrough=updated_node,
+            )
+
+        # filter(None, x) → list(filter(None, x))  (Py3 iterator → materialize)
+        if (
+            _is_simple_name(func, "filter")
+            and len(original_node.args) >= 2
+            and isinstance(original_node.args[0].value, cst.Name)
+            and original_node.args[0].value.value == "None"
+        ):
+            pos = self.get_metadata(PositionProvider, original_node)
+            line = _line_span(self.source, pos.start.line, pos.start.line)
+            if "list(filter" not in line.replace(" ", ""):
+                repl = cst.Call(func=cst.Name("list"), args=[cst.Arg(value=updated_node)])
+                return self._record_and_maybe_replace(
+                    original_node, repl, "py.filter_none_list",
+                    passthrough=updated_node,
+                )
+
+        # list(d.keys()/values()/items()) → d.keys()/… (optional view drop)
+        if (
+            _is_simple_name(func, "list")
+            and len(original_node.args) == 1
+            and isinstance(original_node.args[0].value, cst.Call)
+        ):
+            inner = original_node.args[0].value
+            if (
+                isinstance(inner.func, cst.Attribute)
+                and isinstance(inner.func.attr, cst.Name)
+                and inner.func.attr.value in ("keys", "values", "items")
+                and len(inner.args) == 0
+            ):
+                return self._record_and_maybe_replace(
+                    original_node, inner, "py.list_dict_views_optional",
+                    passthrough=updated_node,
+                )
 
         # open(p) without encoding → detect encoding="utf-8"
         if _is_simple_name(func, "open") and not _call_has_encoding(original_node):

@@ -166,10 +166,11 @@ public final class RuleCatalog {
                   GUAVA_IMMUTABLEMAP_TO_MAPOF, INPUTSTREAM_READALLBYTES, STRING_FORMATTED,
                   SEQUENCED_GET_FIRST, SEQUENCED_GET_LAST, HTTPURLCONNECTION_TO_HTTPCLIENT,
                   JUNIT4_ASSERT_TO_JUPITER, MAP_GET_OR_DEFAULT, COMPUTE_IF_ABSENT_DETECT
-                Python (full): LibCST AST engine + lib2to3/modernize/pyupgrade catalog
-                COBOL (full preserving / translate adapter): cobc-gated COBOL→COBOL + detect-only stubs
-                JavaScript/TypeScript (full): Acorn AST engine + ESLint/jscodeshift classics
-                C# (full): Roslyn AST engine + .NET Upgrade Assistant / CA classics
+                Python (full): LibCST AST + py_compile hard gate (missing python3 → FAIL)
+                COBOL (full preserving / translate detect-only): cobc hard-gated COBOL→COBOL;
+                  translate stubs stay detect-only (not Blu Age semantic rehost)
+                JavaScript/TypeScript (full): Acorn AST + node --check hard gate (missing node → FAIL)
+                C# (full): Roslyn AST + dotnet build hard gate (missing SDK/.csproj → FAIL)
                 """;
     }
 }

@@ -230,12 +230,15 @@ public class JavascriptAdapter implements LanguageAdapter {
                         && l.passed()
                         && l.details() != null
                         && l.details().contains("node --check succeeded"));
+        // Hard gate: only PASS when a real `node --check` succeeded — never soft-pass
+        // on missing node / structural-only probes.
+        boolean nativeGate = structural.passed() && runtimeVerified;
         return VerificationResult.builder()
                 .patchId(patch.patchId())
-                .compileSuccess(compileOk)
-                .testSuccess(runtimeVerified)
+                .compileSuccess(compileOk && structural.passed())
+                .testSuccess(nativeGate)
                 .astStructuralMatchScore(structural.score())
-                .bytecodeDescriptorMatch(runtimeVerified)
+                .bytecodeDescriptorMatch(nativeGate)
                 .apiSurfaceCompatible(structural.passed())
                 .goldenMasterMatch(false)
                 .layerResults(layers)
@@ -251,7 +254,10 @@ public class JavascriptAdapter implements LanguageAdapter {
         }
         Path target = sourceRoot.resolve(patch.affectedFiles().get(0));
         try {
-            ProcessBuilder pb = new ProcessBuilder("node", "--check", target.toString());
+            ProcessBuilder pb = new ProcessBuilder(
+                    System.getProperty("shadowstack.verify.node", "node"),
+                    "--check",
+                    target.toString());
             pb.redirectErrorStream(true);
             Process p = pb.start();
             StringBuilder out = new StringBuilder();
@@ -279,8 +285,8 @@ public class JavascriptAdapter implements LanguageAdapter {
         } catch (IOException e) {
             long elapsed = System.currentTimeMillis() - start;
             return new VerificationResult.LayerResult(
-                    "compilation", true, 0.7,
-                    "node not available; structural-only verification", elapsed);
+                    "compilation", false, 0.0,
+                    "node not available", elapsed);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return new VerificationResult.LayerResult(

@@ -37,10 +37,12 @@ public class MetaController {
                 ),
                 Map.of(
                         "id", "python",
-                        "status", "adapter",
+                        "status", "full",
                         "capability", "ast-syntax-gated",
                         "parseEngine", "libcst",
+                        "gate", "python3/py_compile",
                         "industryAligned", List.of("lib2to3", "modernize", "futurize", "LibCST", "pyupgrade"),
+                        "claim", "full fail-closed AST converter with industry-aligned gates",
                         "rules", List.of(
                                 "py.apply_to_starcall",
                                 "py.backtick_to_repr",
@@ -131,22 +133,27 @@ public class MetaController {
                 ),
                 Map.of(
                         "id", "cobol",
-                        "status", "adapter",
+                        "status", "full",
                         "capability", "ast-syntax-gated",
                         "parseEngine", "cobol-structure+cobc",
                         "tracks", List.of(
                                 Map.of(
                                         "id", "preserving",
-                                        "status", "adapter",
-                                        "note", "cobc-gated"),
+                                        "status", "full",
+                                        "gate", "cobc",
+                                        "note", "cobc hard-gated COBOL→COBOL; missing cobc → FAIL",
+                                        "claim", "full fail-closed AST converter with industry-aligned gates"),
                                 Map.of(
                                         "id", "translate",
-                                        "status", "detect-only")
+                                        "status", "detect-only",
+                                        "note", "Java-ish stubs; never cobc PASS; not Blu Age semantic rehost")
                         ),
                         "industryAligned", List.of(
                                 "GnuCOBOL",
-                                "IBM Enterprise COBOL modernization patterns"
+                                "IBM Enterprise COBOL modernization patterns",
+                                "toward Blu Age / OpenRewrite / Upgrade Assistant class tools (syntax-gated; not Blu Age semantic rehost)"
                         ),
+                        "claim", "full syntax-gated converter on preserving track; translate remains detect-only",
                         "rules", List.of(
                                 "cobol.accept_to_input",
                                 "cobol.add_to_assign",
@@ -210,10 +217,12 @@ public class MetaController {
                 ),
                 Map.of(
                         "id", "javascript",
-                        "status", "adapter",
+                        "status", "full",
                         "capability", "ast-syntax-gated",
                         "parseEngine", "acorn",
+                        "gate", "node --check",
                         "industryAligned", List.of("ESLint", "jscodeshift", "TypeScript ES5→modern", "CommonJS→ESM"),
+                        "claim", "full fail-closed AST converter with industry-aligned gates",
                         "rules", List.of(
                                 "js.!=_to_!==",
                                 "js.==_to_===",
@@ -242,10 +251,12 @@ public class MetaController {
                 ),
                 Map.of(
                         "id", "csharp",
-                        "status", "adapter",
+                        "status", "full",
                         "capability", "ast-syntax-gated",
                         "parseEngine", "roslyn",
+                        "gate", "dotnet build",
                         "industryAligned", List.of(".NET Upgrade Assistant", "Roslyn", "CA/FxCop classics"),
+                        "claim", "full fail-closed AST converter with industry-aligned gates",
                         "rules", List.of(
                                 "cs.arraylist_to_list",
                                 "cs.asynchronous_begin_end",

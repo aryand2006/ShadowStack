@@ -26,11 +26,11 @@ import java.util.regex.Pattern;
  * <ul>
  *   <li><b>preserving</b> ({@code mode=preserving}) — COBOL stays COBOL
  *       (fixed→free, STOP RUN→GOBACK, terminal GO TO→PERFORM, EXIT PROGRAM→GOBACK,
- *       NEXT SENTENCE→CONTINUE, etc.). Verified with {@code cobc -fsyntax-only}
- *       when GnuCOBOL is available.</li>
+ *       NEXT SENTENCE→CONTINUE, etc.). Hard-gated with {@code cobc -fsyntax-only}
+ *       (missing {@code cobc} → FAIL, never soft structural PASS).</li>
  *   <li><b>translate</b> ({@code mode=translate}) — COBOL→Java-ish migration
- *       stubs (DISPLAY→System.out, MOVE→assignment, …). Never cobc-gated;
- *       detect-oriented / non-auto-apply.</li>
+ *       stubs (DISPLAY→System.out, MOVE→assignment, …). Detect-only; never
+ *       cobc-gated and never Meta status {@code full}.</li>
  * </ul>
  */
 public class CobolAdapter implements LanguageAdapter {
@@ -39,9 +39,9 @@ public class CobolAdapter implements LanguageAdapter {
     private static final String LANGUAGE_ID = "cobol";
     private static final String LANGUAGE_VERSION = "85";
 
-    /** COBOL stays COBOL (industry full track). */
+    /** COBOL stays COBOL (industry full track; cobc hard-gated). */
     public static final String MODE_PRESERVING = "preserving";
-    /** COBOL→Java-ish stubs (adapter track). */
+    /** COBOL→Java-ish stubs (detect-only; never Meta status full). */
     public static final String MODE_TRANSLATE = "translate";
 
     /**
@@ -1575,7 +1575,6 @@ public class CobolAdapter implements LanguageAdapter {
 
         boolean compileOk;
         boolean cobcVerified = false;
-        boolean toolchainMissing = false;
 
         if (!preserving) {
             // Never claim cobc PASS for translate-mode Java-ish stubs.
@@ -1585,24 +1584,24 @@ public class CobolAdapter implements LanguageAdapter {
             VerificationResult.LayerResult compile = verifyWithCobc(
                     sourceRoot.resolve(patch.affectedFiles().get(0)));
             layers.add(compile);
-            if (compile.details() != null && compile.details().contains("cobc not available")) {
-                toolchainMissing = true;
-                compileOk = structuralOk;
-            } else {
-                compileOk = compile.passed();
-                cobcVerified = compile.passed();
-            }
+            compileOk = compile.passed();
+            cobcVerified = compile.passed()
+                    && compile.details() != null
+                    && compile.details().contains("succeeded");
+        } else if (preserving && config.runCompilation()) {
+            // No affected files: structural-only cannot claim a cobc hard gate.
+            compileOk = structuralOk && patch.affectedFiles().isEmpty();
         } else {
             compileOk = structuralOk;
         }
 
-        boolean nativeGate = preserving
-                && structuralOk
-                && (cobcVerified || toolchainMissing);
+        // Hard gate: only PASS when a real `cobc -fsyntax-only` succeeded —
+        // never soft-pass on missing cobc / structural-only probes.
+        boolean nativeGate = preserving && structuralOk && cobcVerified;
 
         return VerificationResult.builder()
                 .patchId(patch.patchId())
-                .compileSuccess(compileOk)
+                .compileSuccess(compileOk && structuralOk)
                 .testSuccess(nativeGate)
                 .astStructuralMatchScore(astScore)
                 .bytecodeDescriptorMatch(nativeGate)
@@ -1631,7 +1630,7 @@ public class CobolAdapter implements LanguageAdapter {
             boolean free = source.toUpperCase(Locale.ROOT).contains(">>SOURCE FREE")
                     || !isFixedFormat(source);
             List<String> cmd = new ArrayList<>();
-            cmd.add("cobc");
+            cmd.add(System.getProperty("shadowstack.verify.cobc", "cobc"));
             cmd.add("-fsyntax-only");
             if (free) {
                 cmd.add("-free");
@@ -1667,8 +1666,8 @@ public class CobolAdapter implements LanguageAdapter {
         } catch (IOException e) {
             long elapsed = System.currentTimeMillis() - start;
             return new VerificationResult.LayerResult(
-                    "compilation", true, 0.7,
-                    "cobc not available; structural-only verification", elapsed);
+                    "compilation", false, 0.0,
+                    "cobc not available", elapsed);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return new VerificationResult.LayerResult(

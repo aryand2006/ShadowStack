@@ -99,6 +99,16 @@ const RULE_META = {
     confidence: 0.9,
     risk: 'LOW',
   },
+  'js.dirname_to_importmeta': {
+    ruleName: '__dirname → import.meta.dirname',
+    confidence: 0.86,
+    risk: 'MODERATE',
+  },
+  'js.filename_to_importmeta': {
+    ruleName: '__filename → import.meta.url',
+    confidence: 0.82,
+    risk: 'MODERATE',
+  },
 };
 
 function parseSource(source, sourceType = 'script') {
@@ -528,6 +538,40 @@ function detectInternal(source) {
             ),
           );
         }
+      }
+    },
+
+    Identifier(node, parent) {
+      // Skip property keys / non-value positions where renaming would be wrong.
+      if (
+        parent &&
+        parent.type === 'MemberExpression' &&
+        parent.property === node &&
+        !parent.computed
+      ) {
+        return;
+      }
+      if (parent && parent.type === 'Property' && parent.key === node && !parent.computed) {
+        return;
+      }
+      if (parent && (parent.type === 'FunctionDeclaration' || parent.type === 'VariableDeclarator')
+          && (parent.id === node || parent.params?.includes?.(node))) {
+        return;
+      }
+      if (node.name === '__dirname') {
+        candidates.push(
+          makeCandidate(
+            'js.dirname_to_importmeta',
+            snippetForRange(source, node.start, node.end, 'import.meta.dirname'),
+          ),
+        );
+      } else if (node.name === '__filename') {
+        candidates.push(
+          makeCandidate(
+            'js.filename_to_importmeta',
+            snippetForRange(source, node.start, node.end, 'import.meta.url'),
+          ),
+        );
       }
     },
   });

@@ -161,6 +161,9 @@ class MultiLanguageLiveConvertTest {
         assertNotNull(verification.verdict());
         assertFalse(verification.layerResults().isEmpty(),
                 adapter.languageId() + " verify must emit layers");
+        assertEquals(VerificationResult.Verdict.PASS, verification.verdict(),
+                () -> adapter.languageId() + " full gate must PASS with CI toolchains: "
+                        + verification.layerResults());
     }
 
     private static Path resolveSample(String relative) {

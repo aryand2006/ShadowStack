@@ -390,7 +390,7 @@ The platform was built in this order, with each layer depending on the previous:
 8. ✅ Embedder training + inference (CodeBERT + FastAPI)
 9. ✅ Web UI (Next.js dashboard)
 10. ✅ Security docs + hardening
-11. ✅ Python adapter — Python 2 → 3 modernization (83 rules)
+11. ✅ Python converter — Python 2 → 3 modernization (**full**, py_compile hard gate)
 12. ✅ COBOL adapter — preserving (adapter/cobc-gated) + translate (detect-only) tracks
 13. ✅ JavaScript/TypeScript adapter — CommonJS/ES5 → modern ESM (20 rules)
 14. ✅ C# adapter — .NET Framework → modern patterns (19 rules)
