@@ -30,6 +30,7 @@ The pipeline is:
 ShadowStack competes on **trust, proof, controlled transformation, and recorded migration intelligence** — not on autocomplete.
 
 See [`docs/converter-parity.md`](docs/converter-parity.md) for claim language vs roadmap.
+Blu Age–class COBOL path: [`docs/blu-age-cobol-roadmap.md`](docs/blu-age-cobol-roadmap.md) (Phase 0–1 ✅, Phase 2 sequential I/O MVP, 3–5 façades).
 
 ---
 

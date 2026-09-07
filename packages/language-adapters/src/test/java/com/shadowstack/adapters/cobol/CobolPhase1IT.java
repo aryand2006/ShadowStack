@@ -61,6 +61,8 @@ class CobolPhase1IT {
             "MAIN.\n" +
             "    OPEN INPUT INFILE.\n" +
             "    READ INFILE.\n" +
+            "    REWRITE OUTREC.\n" +
+            "    SORT WORKFILE.\n" +
             "    DISPLAY WS-MSG.\n" +
             "    STOP RUN.\n";
 
@@ -127,16 +129,15 @@ class CobolPhase1IT {
     }
 
     @Test
-    void gaps_non_empty_for_open_read() {
+    void gaps_non_empty_for_rewrite_sort_not_open_read() throws Exception {
         CobolToJavaTranslator.Result r = CobolToJavaTranslator.translate(OPEN_READ_GAPS);
-        assertFalse(r.unsupportedGaps().isEmpty(), "OPEN/READ must populate gaps");
-        assertTrue(r.unsupportedGaps().stream().anyMatch(g -> g.contains("OPEN")),
+        assertTrue(r.javaSource().contains("__openInput") || r.javaSource().contains("__read"),
+                "Phase 2 OPEN/READ should emit file helpers:\n" + r.javaSource());
+        assertTrue(r.unsupportedGaps().stream().anyMatch(g -> g.contains("REWRITE") || g.contains("SORT")),
                 () -> String.valueOf(r.unsupportedGaps()));
-        assertTrue(r.unsupportedGaps().stream().anyMatch(g -> g.contains("READ")),
-                () -> String.valueOf(r.unsupportedGaps()));
-        assertTrue(r.javaSource().contains("// COBOL: OPEN")
-                        || r.javaSource().contains("// COBOL:"),
-                "still emit comments for javac PASS");
+        assertTrue(r.unsupportedGaps().stream().noneMatch(g -> g.equals("unsupported verb: OPEN")),
+                "OPEN should not remain an unsupported gap");
+        assertJavacOk(r.javaSource(), r.className());
     }
 
     @Test
