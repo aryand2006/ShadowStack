@@ -268,9 +268,25 @@ function ReviewInner() {
                     </li>
                   ))}
                 </ul>
-                <div className="text-2xs text-shadow-text-muted font-mono">
+                <div className="text-2xs text-shadow-text-muted font-mono break-all">
                   layers: {JSON.stringify(evidence.proofArtifacts)}
                 </div>
+                {evidence.proofArtifacts && (
+                  <div className="mt-2 space-y-1">
+                    {"translateGaps" in evidence.proofArtifacts &&
+                      String(evidence.proofArtifacts.translateGaps || "").length > 0 && (
+                        <p className="text-2xs text-amber-300/90">
+                          Translate gaps: {String(evidence.proofArtifacts.translateGaps)}
+                        </p>
+                      )}
+                    {"resolvedCalls" in evidence.proofArtifacts &&
+                      String(evidence.proofArtifacts.resolvedCalls || "").length > 0 && (
+                        <p className="text-2xs text-emerald-300/90">
+                          Resolved CALLs: {String(evidence.proofArtifacts.resolvedCalls)}
+                        </p>
+                      )}
+                  </div>
+                )}
               </>
             )}
           </div>

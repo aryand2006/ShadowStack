@@ -74,7 +74,7 @@ export interface PatchDetail {
     testsSkipped: number;
     invariantsVerified: string[];
     invariantsViolated: string[];
-    proofArtifacts: Record<string, boolean>;
+    proofArtifacts: Record<string, unknown>;
     verifiedAt: string;
   } | null;
   review?: {

@@ -349,6 +349,9 @@ public class CobolAdapter implements LanguageAdapter {
                 .putAstContext("javaClass", translated.className())
                 .putAstContext("javaFile", translated.relativeJavaPath())
                 .putAstContext("translateGaps", gapsJoined)
+                .putAstContext("resolvedCallsJoined", translated.resolvedCalls().isEmpty()
+                        ? ""
+                        : String.join(",", translated.resolvedCalls()))
                 .build());
     }
 
@@ -1611,6 +1614,10 @@ public class CobolAdapter implements LanguageAdapter {
                 .putMetadata("linesAffected", candidate.lineSpan())
                 .putMetadata("translateGaps", gapsJoined)
                 .putMetadata("translateGapsList", translated.unsupportedGaps())
+                .putMetadata("resolvedCalls", translated.resolvedCalls())
+                .putMetadata("resolvedCallsJoined", translated.resolvedCalls().isEmpty()
+                        ? ""
+                        : String.join(",", translated.resolvedCalls()))
                 .build();
     }
 

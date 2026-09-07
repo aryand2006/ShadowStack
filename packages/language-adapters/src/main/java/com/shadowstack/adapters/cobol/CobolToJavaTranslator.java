@@ -46,7 +46,8 @@ public final class CobolToJavaTranslator {
     private static final Pattern SELECT_ASSIGN = Pattern.compile(
             "(?i)^SELECT\\s+([A-Z0-9-]+)\\s+ASSIGN\\s+(?:TO\\s+)?([A-Z0-9-]+)\\s*\\.?\\s*$");
     private static final Pattern CALL_LITERAL = Pattern.compile(
-            "(?i)^CALL\\s+(?:'([^']+)'|\"([^\"]+)\"|([A-Z0-9][A-Z0-9-]*))(?:\\s+USING\\s+.+)?$");
+            "(?i)^CALL\\s+(?:'([^']+)'|\"([^\"]+)\"|([A-Z0-9][A-Z0-9-]*))"
+                    + "(?:\\s+USING\\s+(.+))?$");
     private static final Pattern READ_AT_END_HEAD = Pattern.compile(
             "(?i)^READ\\s+([A-Z0-9-]+)(?:\\s+INTO\\s+\\S+)?\\s+AT\\s+END\\b(.*)$");
 
@@ -760,6 +761,28 @@ public final class CobolToJavaTranslator {
                 parsed.resolvedCalls.add(callee);
             }
             String javaClass = "Translated" + callee.replace('-', '_');
+            String usingClause = cm.group(4);
+            if (usingClause != null && !usingClause.isBlank()) {
+                String upperUsing = usingClause.toUpperCase(Locale.ROOT);
+                if (upperUsing.contains("BY REFERENCE") || upperUsing.contains("BY CONTENT")
+                        || upperUsing.contains("BY VALUE")) {
+                    String gap = "CALL USING BY REFERENCE/CONTENT/VALUE (MVP passes String.valueOf only): " + s;
+                    if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
+                }
+                List<String> args = new ArrayList<>();
+                for (String tok : usingClause.trim().split("\\s+")) {
+                    String t = tok.replace(",", "").trim();
+                    if (t.isEmpty()) continue;
+                    String u = t.toUpperCase(Locale.ROOT);
+                    if (u.equals("BY") || u.equals("REFERENCE") || u.equals("CONTENT") || u.equals("VALUE")) {
+                        continue;
+                    }
+                    args.add("String.valueOf(" + toJavaIdent(t) + ")");
+                }
+                if (!args.isEmpty()) {
+                    return List.of(javaClass + ".main(new String[]{ " + String.join(", ", args) + " });");
+                }
+            }
             return List.of(javaClass + ".main(new String[0]);");
         }
         String gap = "CALL program (unresolved target): " + s;

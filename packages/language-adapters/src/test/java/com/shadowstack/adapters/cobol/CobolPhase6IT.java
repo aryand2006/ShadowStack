@@ -22,10 +22,11 @@ class CobolPhase6IT {
             "DATA DIVISION.\n" +
             "WORKING-STORAGE SECTION.\n" +
             "01 WS-MSG PIC X(16) VALUE \"DRIVER\".\n" +
+            "01 WS-ARG PIC 9(4) VALUE 42.\n" +
             "PROCEDURE DIVISION.\n" +
             "MAIN.\n" +
             "    DISPLAY WS-MSG.\n" +
-            "    CALL 'WORKER'.\n" +
+            "    CALL 'WORKER' USING WS-ARG.\n" +
             "    DISPLAY \"DRIVER-DONE\".\n" +
             "    STOP RUN.\n";
 
@@ -74,6 +75,8 @@ class CobolPhase6IT {
 
         CobolToJavaTranslator.Result driver = summary.results().get("DRIVER");
         assertTrue(driver.javaSource().contains("TranslatedWORKER.main"),
+                () -> driver.javaSource());
+        assertTrue(driver.javaSource().contains("String.valueOf(WS_ARG)"),
                 () -> driver.javaSource());
         assertTrue(driver.resolvedCalls().contains("WORKER"),
                 () -> String.valueOf(driver.resolvedCalls()));

@@ -292,6 +292,7 @@ public class RefactorOrchestrationService {
             double verifyRisk = 0.0;
             List<RiskAssessment.RiskFactor> verifyFactors = new ArrayList<>();
             List<RiskPosterior.LayerSignal> layerSignals = new ArrayList<>();
+            Map<String, Object> lastAppliedMetadata = null;
 
             if (adapterRegistry.isJavaEngineLanguage(language)) {
                 RiskTier priorTier = unit != null && unit.getRiskTier() != null
@@ -384,6 +385,9 @@ public class RefactorOrchestrationService {
                     summary = "adapter:" + language + " verdict=" + vr.verdict()
                             + " apply=" + applyMode;
                     verifyRisk = RiskPosterior.clamp(vr.semanticRiskScore());
+                    if (applied.metadata() != null) {
+                        lastAppliedMetadata = applied.metadata();
+                    }
                     for (var layer : vr.layerResults()) {
                         double contrib = layer.passed() ? Math.max(0, 0.15 * (1.0 - layer.score()))
                                 : Math.max(0.2, 1.0 - layer.score());
@@ -467,6 +471,18 @@ public class RefactorOrchestrationService {
                         patchId, blendedRisk.score(), blendedRisk.evidenceStrength());
             }
 
+            Map<String, Object> proofArtifacts = new LinkedHashMap<>();
+            proofArtifacts.put("verifier", language);
+            proofArtifacts.put("verifyRisk", verifyRisk);
+            proofArtifacts.put("rulePriorScore", patch.risk() != null ? patch.risk().score() : 0.0);
+            proofArtifacts.put("blendedRisk", blendedRisk.score());
+            proofArtifacts.put("evidenceStrength", blendedRisk.evidenceStrength());
+            proofArtifacts.put("outcome", outcome.name());
+            // Phase 7: surface COBOL translate gaps / resolved CALLs on review UI.
+            RefactorCandidate rehostCandidate = patch.candidateId() != null
+                    ? adapterCandidates.get(patch.candidateId()) : null;
+            copyCobolRehostProof(proofArtifacts, lastAppliedMetadata, rehostCandidate);
+
             PatchDetailResponse updated = new PatchDetailResponse(
                     patch.patchId(), patch.projectId(), patch.candidateId(),
                     patch.ruleName(), patch.ruleCategory(),
@@ -476,13 +492,7 @@ public class RefactorOrchestrationService {
                     blendedRisk,
                     new VerificationEvidence(
                             passed, 0, 0, 0, verified, failed,
-                            Map.of(
-                                    "verifier", language,
-                                    "verifyRisk", verifyRisk,
-                                    "rulePriorScore", patch.risk() != null ? patch.risk().score() : 0.0,
-                                    "blendedRisk", blendedRisk.score(),
-                                    "evidenceStrength", blendedRisk.evidenceStrength(),
-                                    "outcome", outcome.name()),
+                            proofArtifacts,
                             completed
                     ),
                     nextStatus == PatchStatus.ACCEPTED
@@ -922,7 +932,58 @@ public class RefactorOrchestrationService {
         return Objects.equals(before, after);
     }
 
-    /** True when the stored patch detail has no meaningful change (blank/null diff). */
+    /**
+     * Copies COBOL rehost gap/CALL metadata into verification proofArtifacts so the
+     * review UI can show translate gaps without a separate patch-metadata field.
+     */
+    static void copyCobolRehostProof(
+            Map<String, Object> proofArtifacts,
+            Map<String, Object> appliedMetadata,
+            RefactorCandidate candidate) {
+        if (proofArtifacts == null) {
+            return;
+        }
+        putProofString(proofArtifacts, "translateGaps", appliedMetadata, candidate, "translateGaps");
+        putProofString(proofArtifacts, "resolvedCalls", appliedMetadata, candidate, "resolvedCallsJoined");
+        if (!proofArtifacts.containsKey("resolvedCalls")) {
+            putProofString(proofArtifacts, "resolvedCalls", appliedMetadata, candidate, "resolvedCalls");
+        }
+        if (appliedMetadata != null && appliedMetadata.get("translateGapsList") != null) {
+            proofArtifacts.put("translateGapsList", appliedMetadata.get("translateGapsList"));
+        }
+        if (appliedMetadata != null && appliedMetadata.get("resolvedCalls") instanceof List<?> calls) {
+            proofArtifacts.putIfAbsent("resolvedCalls",
+                    calls.stream().map(String::valueOf).reduce((a, b) -> a + "," + b).orElse(""));
+        }
+    }
+
+    private static void putProofString(
+            Map<String, Object> proof,
+            String proofKey,
+            Map<String, Object> appliedMetadata,
+            RefactorCandidate candidate,
+            String sourceKey) {
+        Object fromMeta = appliedMetadata != null ? appliedMetadata.get(sourceKey) : null;
+        if (fromMeta instanceof List<?> list) {
+            String joined = list.stream().map(String::valueOf).reduce((a, b) -> a + "," + b).orElse("");
+            if (!joined.isBlank()) {
+                proof.put(proofKey, joined);
+                return;
+            }
+        } else if (fromMeta != null) {
+            String s = String.valueOf(fromMeta);
+            if (!s.isBlank() && !"[]".equals(s)) {
+                proof.put(proofKey, s);
+                return;
+            }
+        }
+        if (candidate != null && candidate.astContext() != null) {
+            String fromAst = candidate.astContext().get(sourceKey);
+            if (fromAst != null && !fromAst.isBlank()) {
+                proof.put(proofKey, fromAst);
+            }
+        }
+    }
 
     private static String currentUsername() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();

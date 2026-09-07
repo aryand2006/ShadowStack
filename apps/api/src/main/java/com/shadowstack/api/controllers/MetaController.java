@@ -173,14 +173,15 @@ public class MetaController {
                                         "status", "full",
                                         "gate", "javac",
                                         "capability", "cobol-to-java-semantic-rehost",
-                                        "note", "javac-gated semantic rehost MVP (DISPLAY/MOVE/COMPUTE/IF/PERFORM/WS→fields); not full Blu Age (CICS/IMS/JCL out of scope)")
+                                        "note", "javac-gated semantic rehost (Phase 0–6 roadmap): dialect+COPY+CALL graph+sequential I/O; not full Blu Age (deep CICS/IMS/JCL)")
                         ),
                         "industryAligned", List.of(
                                 "GnuCOBOL",
                                 "IBM Enterprise COBOL modernization patterns",
-                                "toward Blu Age / OpenRewrite / Upgrade Assistant class tools (preserving syntax-gated; translate javac-gated semantic rehost MVP — not full Blu Age)"
+                                "toward Blu Age / OpenRewrite / Upgrade Assistant class tools (preserving syntax-gated; translate javac-gated semantic rehost — not full Blu Age)"
                         ),
-                        "claim", "full syntax-gated converter on preserving track; translate is javac-gated cobol-to-java-semantic-rehost MVP (not full Blu Age)",
+                        "claim", "full syntax-gated converter on preserving track; translate is javac-gated cobol-to-java-semantic-rehost (roadmap Phases 0–6; not full Blu Age)",
+                        "rehostRoadmap", "docs/blu-age-cobol-roadmap.md",
                         "rules", List.of(
                                 "cobol.accept_to_input",
                                 "cobol.add_to_assign",
@@ -314,6 +315,65 @@ public class MetaController {
                 )
         ));
         body.put("summary", RuleCatalog.supportSummary());
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * Phase 7 gap browser — machine-readable COBOL rehost surface vs known gaps.
+     * Honest: does not claim full Blu Age.
+     */
+    @GetMapping("/cobol-rehost")
+    @Operation(summary = "COBOL→Java rehost capability matrix and known gaps (Blu Age roadmap)")
+    public ResponseEntity<Map<String, Object>> cobolRehost() {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("capability", "cobol-to-java-semantic-rehost");
+        body.put("claim", "javac-gated semantic rehost — roadmap Phases 0–6 shipped; not full Blu Age");
+        body.put("roadmapDoc", "docs/blu-age-cobol-roadmap.md");
+        body.put("phases", Map.of(
+                "0_baseline", "done",
+                "1_dialect", "done",
+                "2_files", "mvp",
+                "3_cics", "facade",
+                "4_ims_sql", "facade",
+                "5_jcl", "parser_mvp",
+                "6_call_goldens", "done",
+                "7_productization", "mvp"
+        ));
+        body.put("supportedSurfaces", List.of(
+                "WORKING-STORAGE PIC/USAGE COMP/COMP-3",
+                "OCCURS + subscripts",
+                "REDEFINES (elementary alias)",
+                "IF / EVALUATE / PERFORM UNTIL|TIMES|VARYING",
+                "COPY / REPLACING",
+                "SECTION entry points",
+                "CALL USING identifiers → String.valueOf args (BY REFERENCE/CONTENT still gap)",
+                "SELECT … ASSIGN TO (light)",
+                "OPEN/READ/WRITE/CLOSE sequential + READ AT END",
+                "stdout goldens (HELLOSS)"
+        ));
+        body.put("knownGaps", List.of(
+                "Nested programs",
+                "Deep FD / record layouts",
+                "VSAM / INDEXED / RELATIVE",
+                "REWRITE / DELETE / START / SORT / MERGE",
+                "BMS / screens",
+                "Embedded CICS/IMS/SQL runtime in generated code",
+                "JCL job runner (parser only)",
+                "CALL BY REFERENCE/CONTENT/VALUE + LINKAGE SECTION",
+                "dynamic CALL targets",
+                "Full PERFORM THRU graphs"
+        ));
+        body.put("failOnGapsProperty", "shadowstack.cobol.fail-on-gaps");
+        body.put("patchMetadataKeys", List.of(
+                "translateGaps", "translateGapsList", "resolvedCalls", "resolvedCallsJoined"));
+        body.put("examples", List.of(
+                "examples/legacy-cobol/HELLOSS.cob",
+                "examples/legacy-cobol/RETAIL.cob",
+                "examples/legacy-cobol/DRIVER.cob",
+                "examples/legacy-cobol/WORKER.cob",
+                "examples/legacy-cobol/BATCHIO.cob",
+                "examples/legacy-cobol/PAYDEMO.jcl"
+        ));
         return ResponseEntity.ok(body);
     }
 }
