@@ -1,7 +1,7 @@
 # Roadmap — Full Blu Age–class COBOL → Java
 
-> **Status on `main` / this branch:** Phase **0–1 complete**, Phase **2 sequential I/O MVP**,
-> Phases **3–5 façades + fail-closed gaps**, Phase **6–7 tracking**.
+> **Status on `main` / this branch:** Phase **0–1 complete**, Phase **2 sequential I/O MVP**
+> (+ light SELECT/AT END), Phases **3–5 façades + fail-closed gaps**, Phase **6 CALL graph + goldens**.
 > Still **not** certified whole-system Blu Age parity (CICS/IMS deep semantics, full JCL).
 
 ## North star
