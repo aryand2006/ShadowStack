@@ -62,7 +62,8 @@ cross-program control flow.
 | `CobolFileFacade` + `SequentialCobolFileFacade` | ✅ (host/runtime) |
 | REWRITE / DELETE / START / SORT / MERGE | ❌ fail-closed gaps |
 | VSAM / INDEXED / RELATIVE | ❌ fail-closed on façade |
-| FD/SELECT deep mapping | Partial (verbs mapped; FD parse light) |
+| FD/SELECT deep mapping | Partial — light `SELECT … ASSIGN TO` → dd map; FD headers skipped |
+| READ AT END | ✅ → `if (!__ok_dd) { … }` |
 
 **Fixtures:** `examples/legacy-cobol/BATCHIO.cob`  
 **Tests:** `CobolRuntimePhaseIT`
@@ -122,9 +123,8 @@ cross-program control flow.
 ## Suggested sequencing (remaining)
 
 ```text
-Phase 2 deepen (FD/SELECT, AT END) ──► Phase 5 job runner
+Phase 2 deepen (full FD/record layouts, VSAM) ──► Phase 5 job runner
 Phase 3/4 embed real façades in generated code (optional imports)
-Phase 6 goldens + CALL graph
 Phase 7 Meta/UI gap browser + claim matrix
 ```
 
