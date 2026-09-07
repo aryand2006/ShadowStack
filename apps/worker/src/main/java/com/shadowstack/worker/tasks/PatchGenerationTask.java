@@ -26,8 +26,8 @@ import java.util.concurrent.CompletableFuture;
  * Executes Phase 2 atomic patch generation for refactoring candidates.
  *
  * <p>Scans source files using the {@link RefactorEngine} to discover
- * transformation candidates, generates independent non-overlapping patches,
- * and queues them for verification and review.</p>
+ * transformation candidates and generates independent non-overlapping patches
+ * for downstream verification and review (durable queue wiring is future work).</p>
  *
  * <h3>Pipeline</h3>
  * <ol>
@@ -35,8 +35,8 @@ import java.util.concurrent.CompletableFuture;
  *   <li>For each source file, parse and scan for candidates</li>
  *   <li>Filter candidates by risk assessment thresholds</li>
  *   <li>Generate atomic patch units</li>
- *   <li>Queue patches for verification</li>
- *   <li>Log audit trail</li>
+ *   <li>Return patches for verification (no durable poller yet)</li>
+ *   <li>Log audit trail when persistence is available</li>
  * </ol>
  */
 @Component

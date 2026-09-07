@@ -1,8 +1,10 @@
 # ShadowStack SOC 2 Control Mapping
 
-> Type II — Trust Service Criteria Alignment
+> **Not certified. Control design / target mapping only. Do not present as implemented SOC2.**
 
-This document maps ShadowStack's security controls to SOC 2 Trust Service Criteria (TSC). Each control references the specific ShadowStack implementation component that satisfies the requirement.
+> Type II — Trust Service Criteria Alignment (aspirational)
+
+This document maps *intended* ShadowStack security controls to SOC 2 Trust Service Criteria (TSC). Each row is a **target design** reference, not evidence of an audited or implemented production control.
 
 ---
 

@@ -16,8 +16,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 /**
  * Configuration for the ShadowStack Worker service.
  *
- * <p>Manages thread pools for asynchronous task execution, task scheduling
- * for queue polling, and worker-specific tuning parameters.</p>
+ * <p>Manages thread pools for asynchronous task execution and a scheduler
+ * reserved for future job-queue polling / heartbeat work.</p>
  */
 @Configuration
 public class WorkerConfig implements AsyncConfigurer {
@@ -66,7 +66,7 @@ public class WorkerConfig implements AsyncConfigurer {
     }
 
     /**
-     * Scheduler for periodic queue polling and heartbeat operations.
+     * Scheduler reserved for future job-queue polling and heartbeat operations.
      */
     @Bean(name = "workerScheduler")
     public ThreadPoolTaskScheduler workerScheduler() {

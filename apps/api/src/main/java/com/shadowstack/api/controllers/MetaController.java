@@ -25,6 +25,7 @@ public class MetaController {
                 Map.of(
                         "id", "java",
                         "status", "full",
+                        "capability", "jdt-javac",
                         "parseEngine", "jdt",
                         "industryAligned", List.of("OpenRewrite", "Sonar", "JDK deprecations", "Jakarta EE"),
                         "rules", RuleCatalog.javaRules().stream()
@@ -36,7 +37,8 @@ public class MetaController {
                 ),
                 Map.of(
                         "id", "python",
-                        "status", "full",
+                        "status", "adapter",
+                        "capability", "ast-syntax-gated",
                         "parseEngine", "libcst",
                         "industryAligned", List.of("lib2to3", "modernize", "futurize", "LibCST", "pyupgrade"),
                         "rules", List.of(
@@ -129,11 +131,17 @@ public class MetaController {
                 ),
                 Map.of(
                         "id", "cobol",
-                        "status", "full",
+                        "status", "adapter",
+                        "capability", "ast-syntax-gated",
                         "parseEngine", "cobol-structure+cobc",
                         "tracks", List.of(
-                                Map.of("id", "preserving", "status", "full"),
-                                Map.of("id", "translate", "status", "adapter")
+                                Map.of(
+                                        "id", "preserving",
+                                        "status", "adapter",
+                                        "note", "cobc-gated"),
+                                Map.of(
+                                        "id", "translate",
+                                        "status", "detect-only")
                         ),
                         "industryAligned", List.of(
                                 "GnuCOBOL",
@@ -202,7 +210,8 @@ public class MetaController {
                 ),
                 Map.of(
                         "id", "javascript",
-                        "status", "full",
+                        "status", "adapter",
+                        "capability", "ast-syntax-gated",
                         "parseEngine", "acorn",
                         "industryAligned", List.of("ESLint", "jscodeshift", "TypeScript ES5→modern", "CommonJS→ESM"),
                         "rules", List.of(
@@ -233,7 +242,8 @@ public class MetaController {
                 ),
                 Map.of(
                         "id", "csharp",
-                        "status", "full",
+                        "status", "adapter",
+                        "capability", "ast-syntax-gated",
                         "parseEngine", "roslyn",
                         "industryAligned", List.of(".NET Upgrade Assistant", "Roslyn", "CA/FxCop classics"),
                         "rules", List.of(

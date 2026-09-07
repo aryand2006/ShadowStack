@@ -14,6 +14,7 @@ import com.shadowstack.api.dto.VerificationResultResponse.InvariantResults.Invar
 import com.shadowstack.api.dto.VerificationResultResponse.InvariantResults;
 import com.shadowstack.api.dto.VerificationResultResponse.TestResults;
 import com.shadowstack.api.dto.VerificationResultResponse.VerificationStatus;
+import com.shadowstack.api.persistence.PatchStore;
 import com.shadowstack.adapters.LanguageAdapter;
 import com.shadowstack.adapters.cobol.CobolAdapter;
 import com.shadowstack.adapters.model.PatchResult;
@@ -29,6 +30,8 @@ import com.shadowstack.refactor.model.RiskTier;
 import com.shadowstack.refactor.model.SemanticContext;
 import com.shadowstack.verify.VerificationPipeline;
 import com.shadowstack.verify.model.Verdict;
+import com.shadowstack.verify.layers.APISignatureDiffVerifier;
+import com.shadowstack.verify.layers.ASTStructuralComparator;
 import com.shadowstack.verify.layers.CompileVerifier;
 import com.shadowstack.verify.model.VerificationContext;
 import com.shadowstack.verify.model.VerificationLayerResult;
@@ -60,7 +63,9 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Real conversion orchestration backed by {@link RefactorEngine} + {@link CompileVerifier}.
+ * Real conversion orchestration backed by {@link RefactorEngine} and Java
+ * verification layers ({@link CompileVerifier}, {@link ASTStructuralComparator},
+ * {@link APISignatureDiffVerifier}).
  */
 @Service
 public class RefactorOrchestrationService {
@@ -69,12 +74,11 @@ public class RefactorOrchestrationService {
 
     private final ProjectService projectService;
     private final LanguageAdapterRegistry adapterRegistry;
+    private final PatchStore patchStore;
 
     private final Map<UUID, List<CandidateInfo>> candidateStore = new ConcurrentHashMap<>();
     private final Map<UUID, PatchUnit> candidateUnits = new ConcurrentHashMap<>();
-    private final Map<UUID, PatchDetailResponse> patchStore = new ConcurrentHashMap<>();
     private final Map<UUID, PatchUnit> patchUnits = new ConcurrentHashMap<>();
-    private final Map<UUID, List<UUID>> projectPatchIndex = new ConcurrentHashMap<>();
     private final Map<UUID, VerificationResultResponse> verificationStore = new ConcurrentHashMap<>();
     private final Map<UUID, String> projectLanguage = new ConcurrentHashMap<>();
     private final Map<UUID, RefactorCandidate> adapterCandidates = new ConcurrentHashMap<>();
@@ -82,9 +86,11 @@ public class RefactorOrchestrationService {
     public RefactorOrchestrationService(
             ShadowStackConfig config,
             ProjectService projectService,
-            LanguageAdapterRegistry adapterRegistry) {
+            LanguageAdapterRegistry adapterRegistry,
+            PatchStore patchStore) {
         this.projectService = projectService;
         this.adapterRegistry = adapterRegistry;
+        this.patchStore = patchStore;
     }
 
     public List<CandidateInfo> runAnalysis(UUID projectId) {
@@ -156,28 +162,22 @@ public class RefactorOrchestrationService {
                 now,
                 now
         );
-        patchStore.put(patchId, patch);
+        patchStore.save(patch);
         patchUnits.put(patchId, unit);
-        projectPatchIndex.computeIfAbsent(projectId, k -> new ArrayList<>()).add(patchId);
         return patch;
     }
 
     public List<PatchDetailResponse> getPatches(UUID projectId) {
-        return projectPatchIndex.getOrDefault(projectId, List.of()).stream()
-                .map(patchStore::get)
-                .filter(Objects::nonNull)
-                .toList();
+        return patchStore.findByProject(projectId);
     }
 
     public Optional<PatchDetailResponse> getPatch(UUID patchId) {
-        return Optional.ofNullable(patchStore.get(patchId));
+        return patchStore.findById(patchId);
     }
 
     public VerificationResultResponse runVerification(UUID patchId) {
-        PatchDetailResponse patch = patchStore.get(patchId);
-        if (patch == null) {
-            throw new PatchNotFoundException(patchId);
-        }
+        PatchDetailResponse patch = patchStore.findById(patchId)
+                .orElseThrow(() -> new PatchNotFoundException(patchId));
         PatchUnit unit = patchUnits.get(patchId);
         Path root = projectService.requireProjectRoot(patch.projectId());
         Instant started = Instant.now();
@@ -195,6 +195,8 @@ public class RefactorOrchestrationService {
             if (adapterRegistry.isJavaEngineLanguage(language)) {
                 VerificationPipeline pipeline = new VerificationPipeline(0.7, false);
                 pipeline.addLayer(new CompileVerifier());
+                pipeline.addLayer(new ASTStructuralComparator());
+                pipeline.addLayer(new APISignatureDiffVerifier());
                 VerificationContext context = VerificationContext.builder()
                         .projectRoot(root)
                         .sourceRoot(root)
@@ -202,6 +204,7 @@ public class RefactorOrchestrationService {
                         .transformedSource(transformed)
                         .build();
                 VerificationPipeline.PipelineResult pipelineResult = pipeline.execute(unit, context);
+                // Fail-closed: only hard PASS promotes to PENDING_REVIEW.
                 passed = pipelineResult.verdict() == Verdict.PASS;
                 checks = pipelineResult.layerResults().stream()
                         .map(RefactorOrchestrationService::toCheck)
@@ -323,7 +326,7 @@ public class RefactorOrchestrationService {
                     ),
                     patch.review(), patch.createdAt(), Instant.now()
             );
-            patchStore.put(patchId, updated);
+            patchStore.save(updated);
             return result;
         } catch (IOException e) {
             throw new IllegalStateException("Verification could not read sources: " + e.getMessage(), e);
@@ -336,10 +339,8 @@ public class RefactorOrchestrationService {
 
     public PatchDetailResponse applyReviewDecision(
             UUID patchId, boolean accepted, String reviewer, String reason) {
-        PatchDetailResponse patch = patchStore.get(patchId);
-        if (patch == null) {
-            throw new PatchNotFoundException(patchId);
-        }
+        PatchDetailResponse patch = patchStore.findById(patchId)
+                .orElseThrow(() -> new PatchNotFoundException(patchId));
         PatchDetailResponse updated = new PatchDetailResponse(
                 patch.patchId(), patch.projectId(), patch.candidateId(),
                 patch.ruleName(), patch.ruleCategory(),
@@ -350,20 +351,19 @@ public class RefactorOrchestrationService {
                 new ReviewInfo(reviewer, accepted, reason, Instant.now()),
                 patch.createdAt(), Instant.now()
         );
-        patchStore.put(patchId, updated);
+        patchStore.save(updated);
         return updated;
     }
 
     public List<PatchDetailResponse> getPendingReviewPatches() {
-        return patchStore.values().stream()
-                .filter(p -> p.status() == PatchStatus.PENDING_REVIEW)
-                .toList();
+        return patchStore.findByStatus(PatchStatus.PENDING_REVIEW);
     }
 
     public List<PatchDetailResponse> getReviewedPatches() {
-        return patchStore.values().stream()
-                .filter(p -> p.status() == PatchStatus.ACCEPTED || p.status() == PatchStatus.REJECTED)
-                .toList();
+        List<PatchDetailResponse> reviewed = new ArrayList<>();
+        reviewed.addAll(patchStore.findByStatus(PatchStatus.ACCEPTED));
+        reviewed.addAll(patchStore.findByStatus(PatchStatus.REJECTED));
+        return reviewed;
     }
 
     public List<PatchDetailResponse> runFullPipeline(UUID projectId) {
@@ -383,7 +383,7 @@ public class RefactorOrchestrationService {
                     log.warn("Verification failed for patch {} ({}): {}",
                             generated.patchId(), candidate.ruleName(), verifyError.getMessage());
                 }
-                PatchDetailResponse current = patchStore.get(generated.patchId());
+                PatchDetailResponse current = patchStore.findById(generated.patchId()).orElse(null);
                 if (current != null) {
                     if (current.status() == PatchStatus.VERIFICATION_FAILED
                             && isIdentityPatch(current)) {

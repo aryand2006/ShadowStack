@@ -1,0 +1,30 @@
+# Docker Compose profile — Postgres sidecar, demo disabled.
+# Requires: JWT_SECRET, SECURITY_USER, SECURITY_PASSWORD (compose supplies DEV defaults).
+
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:postgres}:${DB_PORT:5432}/${DB_NAME:shadowstack}
+    username: ${DB_USERNAME:${DB_USER:shadowstack}}
+    password: ${DB_PASSWORD:shadowstack_dev}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+shadowstack:
+  demo:
+    enabled: false
+  security:
+    jwt-secret: ${JWT_SECRET}
+    jwt-expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+    cors-allowed-origins: ${CORS_ORIGINS:http://localhost:3000,http://web:3000}
+
+logging:
+  level:
+    root: INFO
+    com.shadowstack: INFO
+    org.hibernate.SQL: WARN

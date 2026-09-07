@@ -47,8 +47,16 @@ services:
       DB_PORT: 5432
       DB_NAME: ${DB_NAME:-shadowstack}
       DB_USER: ${DB_USER:-shadowstack}
+      # application.yml binds spring.datasource.username to DB_USERNAME
+      DB_USERNAME: ${DB_USER:-shadowstack}
       DB_PASSWORD: ${DB_PASSWORD:-shadowstack_dev}
       SPRING_PROFILES_ACTIVE: docker
+      # DEV ONLY defaults — override JWT_SECRET / SECURITY_* for anything beyond local compose
+      JWT_SECRET: ${JWT_SECRET:-local-dev-only-shadowstack-jwt-secret-key-min-32-chars}
+      SECURITY_USER: ${SECURITY_USER:-shadowstack_admin}
+      SECURITY_PASSWORD: ${SECURITY_PASSWORD:-shadowstack_dev_change_me}
+      SECURITY_REVIEWER_USER: ${SECURITY_REVIEWER_USER:-}
+      SECURITY_REVIEWER_PASSWORD: ${SECURITY_REVIEWER_PASSWORD:-}
       JAVA_OPTS: >-
         -XX:+UseG1GC
         -XX:MaxRAMPercentage=75.0
@@ -87,8 +95,12 @@ services:
       DB_PORT: 5432
       DB_NAME: ${DB_NAME:-shadowstack}
       DB_USER: ${DB_USER:-shadowstack}
+      DB_USERNAME: ${DB_USER:-shadowstack}
       DB_PASSWORD: ${DB_PASSWORD:-shadowstack_dev}
       SPRING_PROFILES_ACTIVE: docker,worker
+      JWT_SECRET: ${JWT_SECRET:-local-dev-only-shadowstack-jwt-secret-key-min-32-chars}
+      SECURITY_USER: ${SECURITY_USER:-shadowstack_admin}
+      SECURITY_PASSWORD: ${SECURITY_PASSWORD:-shadowstack_dev_change_me}
       WORKER_POOL_CORE: ${WORKER_POOL_CORE:-4}
       WORKER_POOL_MAX: ${WORKER_POOL_MAX:-8}
       WORKER_QUEUE_CAPACITY: ${WORKER_QUEUE_CAPACITY:-50}

@@ -1,6 +1,6 @@
 # ShadowStack
 
-**The Verified Language Modernization Engine**
+**Professional modernization workbench**
 
 > Modernize legacy systems with compile- and syntax-gated patches, and attach verification evidence to every item in the review queue.
 
@@ -8,26 +8,25 @@
 
 ## What Is ShadowStack?
 
-ShadowStack is an enterprise modernization workbench for **verified code conversion** with industry-aligned AST engines:
+ShadowStack is a **professional modernization workbench** for verified code conversion. Java has a full JDT + `javac` path; other languages ship as AST-backed adapters with syntax gates:
 
-| Language | Engine | Gate |
-|----------|--------|------|
-| Java | Eclipse JDT | `javac` compile |
-| Python | LibCST | `py_compile` |
-| JavaScript/TS | Acorn | `node --check` |
-| C# | Roslyn | `dotnet build` |
-| COBOL | Structural + GnuCOBOL | `cobc` (preserving track) |
+| Language | Status | Engine | Gate |
+|----------|--------|--------|------|
+| Java | **Full** | Eclipse JDT | `javac` compile |
+| Python | Adapter | LibCST | `py_compile` |
+| JavaScript/TS | Adapter | Acorn | `node --check` |
+| C# | Adapter | Roslyn | `dotnet build` |
+| COBOL | Adapter | Structural + GnuCOBOL | `cobc` (preserving track; translate is detect-only) |
 
 Soft/WARN results do **not** enter the review queue.
 
 The pipeline is:
 
 - **Fail-closed**: Only hard verification PASS promotes a patch to pending review
-- **Auditable**: Every action is recorded in an immutable audit log
-- **Human-Controlled**: No automatic final conversion — every change requires explicit developer approval
-- **Multi-language full converters**: Java, Python, JavaScript, C#, and COBOL-preserving — each on an industry-standard parse frontend
+- **Human-controlled**: No automatic final conversion — every change requires explicit developer approval
+- **Multi-language adapters**: Java is full; Python / JavaScript / C# / COBOL are AST-backed adapters (not enterprise “full” converters yet)
 
-ShadowStack does not compete on autocomplete. It competes on **trust, proof, controlled transformation, and recorded migration intelligence**.
+ShadowStack competes on **trust, proof, controlled transformation, and recorded migration intelligence** — not on autocomplete.
 
 ---
 
@@ -53,11 +52,11 @@ ShadowStack is built around a **pluggable language adapter framework**:
 
 | Adapter | Status | Description |
 |---------|--------|-------------|
-| **Java** | ✅ Full (JDT + javac) | OpenRewrite/Sonar/Jakarta classics (~62): anon→lambda, diamond, Guava→JDK, `javax`→`jakarta`, Optional/Objects/Map idioms, sequenced collections, JUnit4→5, boxing, collections, charset, deprecations |
-| **Python** | ✅ Full (LibCST + py_compile) | lib2to3/modernize/pyupgrade on AST: xrange/iter*/imports/unicode/has_key/reduce/types.* / octal / f-strings; Py2 print/`<>` via regex fallback when LibCST cannot parse |
-| **COBOL** | ✅ Full preserving (cobc) + translate adapter | **preserving**: fixed→free, GOBACK, PERFORM, NEXT SENTENCE→CONTINUE, EVALUATE TRUE→IF; **translate**: DISPLAY/MOVE/… stubs (detect-only, never cobc PASS) |
-| **JavaScript/TS** | ✅ Full (Acorn + node --check) | ES5/CommonJS→modern on AST: var/let/const, ===, substr, includes/startsWith, spread, escape, template literals; CJS→ESM detect |
-| **C#** | ✅ Full (Roslyn + dotnet) | Upgrade Assistant / CA classics on Roslyn: ArrayList/Hashtable, string.Format, nameof, nullable, using declarations, file-scoped namespaces, HttpClient migrations |
+| **Java** | Full (JDT + javac) | OpenRewrite/Sonar/Jakarta classics (~62): anon→lambda, diamond, Guava→JDK, `javax`→`jakarta`, Optional/Objects/Map idioms, sequenced collections, JUnit4→5, boxing, collections, charset, deprecations |
+| **Python** | Adapter (LibCST + py_compile) | lib2to3/modernize/pyupgrade on AST: xrange/iter*/imports/unicode/has_key/reduce/types.* / octal / f-strings; Py2 print/`<>` via regex fallback when LibCST cannot parse |
+| **COBOL** | Adapter — preserving (cobc-gated) + translate (detect-only) | **preserving**: fixed→free, GOBACK, PERFORM, NEXT SENTENCE→CONTINUE, EVALUATE TRUE→IF; **translate**: DISPLAY/MOVE/… stubs (detect-only, never cobc PASS) |
+| **JavaScript/TS** | Adapter (Acorn + node --check) | ES5/CommonJS→modern on AST: var/let/const, ===, substr, includes/startsWith, spread, escape, template literals; CJS→ESM detect |
+| **C#** | Adapter (Roslyn + dotnet) | Upgrade Assistant / CA classics on Roslyn: ArrayList/Hashtable, string.Format, nameof, nullable, using declarations, file-scoped namespaces, HttpClient migrations |
 
 Each adapter implements: `parse()` → `buildSemanticModel()` → `listRefactorCandidates()` → `applyRefactor()` → `verifyPatch()`
 
@@ -68,7 +67,7 @@ Phase 0              Phase 1              Phase 2              Phase 3
 ┌──────────┐    ┌──────────────┐    ┌──────────────┐    ┌───────────────┐
 │ Baseline │───▶│   Static     │───▶│    Patch     │───▶│  Multi-Layer  │
 │ Capture  │    │  Semantic    │    │  Generation  │    │ Verification  │
-│          │    │  Modeling    │    │  (atomic)    │    │  (7 layers)   │
+│          │    │  Modeling    │    │  (atomic)    │    │  (gated)      │
 └──────────┘    └──────────────┘    └──────────────┘    └───────┬───────┘
   • Compile       • Call Graph        • Independent             │
   • Test          • Data Flow         • Non-overlapping         ▼
@@ -157,8 +156,8 @@ The `CobolAdapter` exposes two tracks:
 
 | Track | Status | Verification |
 |-------|--------|--------------|
-| **preserving** | full | `cobc -fsyntax-only` (adds `-free` after fixed→free / `>>SOURCE FREE`) |
-| **translate** | adapter | Java-ish stubs; cobc intentionally skipped |
+| **preserving** | adapter (cobc-gated) | `cobc -fsyntax-only` (adds `-free` after fixed→free / `>>SOURCE FREE`) |
+| **translate** | detect-only | Java-ish stubs; cobc intentionally skipped |
 
 It parses fixed-format COBOL-85 (cols 1–6 sequence area, col 7 indicator, cols 8–72 program area, cols 73–80 identification area) and free-format COBOL-2002. Industry alignment: GnuCOBOL and IBM Enterprise COBOL modernization patterns.
 
@@ -215,18 +214,19 @@ This corpus is ShadowStack's competitive moat.
 
 ---
 
-## Enterprise Security Posture
+## Security posture (target)
 
-| Control | Implementation |
-|---------|---------------|
-| **Offline-Only** | No telemetry, no external LLM calls |
-| **RBAC** | ADMIN, REVIEWER, ANALYST, VIEWER roles |
-| **Audit Logs** | Every API call logged with actor, timestamp, details |
-| **Immutable Artifacts** | Patches and certificates cannot be modified post-creation |
-| **Encryption at Rest** | AES-256 for stored source code and embeddings |
-| **JWT Authentication** | Stateless token-based auth with role claims |
-| **SOC2 Controls** | Full CC1-CC9 mapping documented |
-| **Threat Model** | STRIDE analysis with mitigations |
+These are design goals and control mappings — **not** claimed production certifications or fully implemented enterprise controls.
+
+| Control | Target / current state |
+|---------|------------------------|
+| **Offline-first** | Demo path avoids external LLM calls; no production telemetry product |
+| **RBAC** | ADMIN, REVIEWER, ANALYST, VIEWER roles in the API security config |
+| **Audit trail** | Audit model and endpoints exist; durability depends on persistence profile |
+| **Review gate** | Patches require explicit accept/reject after verification |
+| **Auth** | JWT + HTTP Basic for demo/dev |
+| **SOC 2** | Control *design* mapping only (`docs/soc2-controls.md`) — **not certified** |
+| **Threat model** | STRIDE analysis documented as a planning artifact |
 
 ---
 
@@ -291,9 +291,10 @@ cd apps/web && npm install && npm run dev
 
 Credentials: `admin` / `admin` (HTTP Basic or `POST /api/v1/auth/login`).
 
-What is real today: multi-language live convert (Java/Python/COBOL/JS/C#) → analyze → generate → verify → review queue → accept/reject.
-Gates: Java `javac`, Python `py_compile` (LibCST AST + regex fallback), JS `node --check` (Acorn AST), C# `dotnet build` (Roslyn AST; requires `.csproj` in the project tree), COBOL-preserving `cobc` (translate track is detect-only).
-What is stubbed: Postgres corpus analytics and invented dashboard KPIs.
+What is real today: Java full convert + AST-backed adapters for Python/COBOL/JS/C# → analyze → generate → verify → review queue → accept/reject.
+Gates: Java `javac` (+ AST/API signature layers), Python `py_compile` (LibCST AST + regex fallback), JS `node --check` (Acorn AST), C# `dotnet build` (Roslyn AST; requires `.csproj` in the project tree), COBOL-preserving `cobc` (translate track is detect-only).
+What is real for ops: demo uses in-memory stores; `prod`/`docker` use JPA + Flyway (`ss_projects` / `ss_patches` / `ss_jobs`), env-required credentials, and an API-hosted VERIFY job poller (`!demo`).
+What is stubbed / aspirational: dedicated worker dequeue ownership, Postgres corpus analytics, invented dashboard KPIs, and SOC2/AES enterprise certifications.
 
 > **Docker note:** `infra/docker/Dockerfile.api` is a JVM-only runtime. Full converter parity (LibCST / Acorn / Roslyn / cobc) is intended for the host demo path above, or an image that also installs those toolchains and copies `packages/language-adapters/native-engines/`.
 
@@ -384,7 +385,7 @@ The platform was built in this order, with each layer depending on the previous:
 9. ✅ Web UI (Next.js dashboard)
 10. ✅ Security docs + hardening
 11. ✅ Python adapter — Python 2 → 3 modernization (83 rules)
-12. ✅ COBOL adapter — preserving (full/cobc) + translate tracks
+12. ✅ COBOL adapter — preserving (adapter/cobc-gated) + translate (detect-only) tracks
 13. ✅ JavaScript/TypeScript adapter — CommonJS/ES5 → modern ESM (20 rules)
 14. ✅ C# adapter — .NET Framework → modern patterns (19 rules)
 15. ✅ Java industry rule catalog expanded to 45 OpenRewrite/Sonar/JDK rules
@@ -398,5 +399,5 @@ Proprietary. All rights reserved.
 ---
 
 <p align="center">
-<strong>ShadowStack</strong>. More serious. More verifiable. More enterprise-ready.
+<strong>ShadowStack</strong>. A professional modernization workbench — verifiable patches, human review, honest capability labels.
 </p>

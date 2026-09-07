@@ -6,6 +6,7 @@ import com.shadowstack.api.dto.ProjectResponse;
 import com.shadowstack.api.dto.ProjectResponse.AnalysisSummary;
 import com.shadowstack.api.dto.ProjectResponse.BaselineSummary;
 import com.shadowstack.api.dto.ProjectResponse.ProjectStatus;
+import com.shadowstack.api.persistence.ProjectStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -15,10 +16,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 /**
@@ -30,11 +29,11 @@ public class ProjectService {
     private static final Logger log = LoggerFactory.getLogger(ProjectService.class);
 
     private final ShadowStackConfig config;
-    private final Map<UUID, ProjectResponse> projectStore = new ConcurrentHashMap<>();
-    private final Map<UUID, Path> projectRoots = new ConcurrentHashMap<>();
+    private final ProjectStore projectStore;
 
-    public ProjectService(ShadowStackConfig config) {
+    public ProjectService(ShadowStackConfig config, ProjectStore projectStore) {
         this.config = config;
+        this.projectStore = projectStore;
     }
 
     public ProjectResponse createProject(ProjectCreateRequest request) {
@@ -59,33 +58,27 @@ public class ProjectService {
                 null,
                 null
         );
-        projectStore.put(id, project);
-        projectRoots.put(id, root.toAbsolutePath().normalize());
+        ProjectResponse saved = projectStore.save(project, root.toAbsolutePath().normalize());
         log.info("Created project id={} name={} root={}", id, request.name(), root);
-        return project;
+        return saved;
     }
 
     public List<ProjectResponse> listProjects() {
-        return List.copyOf(projectStore.values());
+        return projectStore.findAll();
     }
 
     public Optional<ProjectResponse> getProject(UUID id) {
-        return Optional.ofNullable(projectStore.get(id));
+        return projectStore.findById(id);
     }
 
     public Path requireProjectRoot(UUID projectId) {
-        Path root = projectRoots.get(projectId);
-        if (root == null) {
-            throw new ProjectNotFoundException(projectId);
-        }
-        return root;
+        return projectStore.findRoot(projectId)
+                .orElseThrow(() -> new ProjectNotFoundException(projectId));
     }
 
     public ProjectResponse triggerBaseline(UUID projectId) {
-        ProjectResponse existing = projectStore.get(projectId);
-        if (existing == null) {
-            throw new ProjectNotFoundException(projectId);
-        }
+        ProjectResponse existing = projectStore.findById(projectId)
+                .orElseThrow(() -> new ProjectNotFoundException(projectId));
         Path root = requireProjectRoot(projectId);
         int javaFiles = countJavaFiles(root);
         BaselineSummary baseline = new BaselineSummary(javaFiles, 0, 0, 0, Instant.now());
@@ -95,7 +88,7 @@ public class ProjectService {
                 ProjectStatus.BASELINE_CAPTURED, existing.createdAt(), Instant.now(),
                 baseline, existing.analysisSummary()
         );
-        projectStore.put(projectId, updated);
+        projectStore.update(updated);
         return updated;
     }
 
@@ -104,17 +97,15 @@ public class ProjectService {
     }
 
     public ProjectResponse updateAnalysisSummary(UUID projectId, AnalysisSummary summary) {
-        ProjectResponse existing = projectStore.get(projectId);
-        if (existing == null) {
-            throw new ProjectNotFoundException(projectId);
-        }
+        ProjectResponse existing = projectStore.findById(projectId)
+                .orElseThrow(() -> new ProjectNotFoundException(projectId));
         ProjectResponse updated = new ProjectResponse(
                 existing.id(), existing.name(), existing.description(), existing.repositoryUrl(),
                 existing.branch(), existing.sourceLanguage(), existing.targetLanguageVersion(),
                 ProjectStatus.READY, existing.createdAt(), Instant.now(),
                 existing.baseline(), summary
         );
-        projectStore.put(projectId, updated);
+        projectStore.update(updated);
         return updated;
     }
 

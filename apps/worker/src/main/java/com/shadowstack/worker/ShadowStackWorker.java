@@ -12,14 +12,13 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * ShadowStack Worker — asynchronous task executor for the verified language
- * modernization engine.
+ * modernization workbench.
  *
- * <p>This service polls a shared task queue and executes long-running operations
- * including baseline capture, static semantic analysis, atomic patch generation,
- * and multi-layer behavioral equivalence verification.</p>
- *
- * <p>The worker is designed to scale horizontally: multiple instances can
- * consume from the same queue with at-least-once delivery semantics.</p>
+ * <p>Hosts task components (baseline, analysis, patch generation, verification).
+ * Durable {@code ss_jobs} claiming currently runs in the API
+ * ({@code JobPoller} / {@code JobEnqueueService} on {@code !demo}) until job
+ * payloads carry enough context for {@link com.shadowstack.worker.tasks.VerificationTask}
+ * to execute here.</p>
  */
 @SpringBootApplication
 @EnableAsync
@@ -48,6 +47,6 @@ public class ShadowStackWorker {
         app.setAdditionalProfiles("worker");
         app.run(args);
 
-        LOG.info("ShadowStack Worker is ready and polling for tasks");
+        LOG.info("ShadowStack Worker is ready (task beans loaded; ss_jobs poller hosted by API !demo profile)");
     }
 }
