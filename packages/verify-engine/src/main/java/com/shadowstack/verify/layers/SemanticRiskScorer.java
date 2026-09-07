@@ -42,6 +42,7 @@ public class SemanticRiskScorer implements VerificationLayer {
     // Configuration keys for reading upstream layer results
     public static final String KEY_COMPILE_SUCCESS = "compileSuccess";
     public static final String KEY_TEST_SUCCESS = "testSuccess";
+    public static final String KEY_TESTS_EXECUTED = "testsExecuted";
     public static final String KEY_AST_DELTA = "astDelta";
     public static final String KEY_AST_THRESHOLD = "astDeltaThreshold";
     public static final String KEY_BYTECODE_MISMATCH = "bytecodeSignatureMismatch";
@@ -62,6 +63,7 @@ public class SemanticRiskScorer implements VerificationLayer {
 
         // Read upstream results from context configuration
         boolean compileSuccess = context.getConfig(KEY_COMPILE_SUCCESS, true);
+        boolean testsExecuted = context.getConfig(KEY_TESTS_EXECUTED, false);
         boolean testSuccess = context.getConfig(KEY_TEST_SUCCESS, true);
         double astDelta = context.getConfig(KEY_AST_DELTA, 0.0);
         double astThreshold = context.getConfig(KEY_AST_THRESHOLD, 0.30);
@@ -69,13 +71,14 @@ public class SemanticRiskScorer implements VerificationLayer {
         boolean apiSurfaceChanged = context.getConfig(KEY_API_SURFACE_CHANGED, false);
 
         result.addDetail("compileSuccess", compileSuccess);
+        result.addDetail("testsExecuted", testsExecuted);
         result.addDetail("testSuccess", testSuccess);
         result.addDetail("astDelta", astDelta);
         result.addDetail("astDeltaThreshold", astThreshold);
         result.addDetail("bytecodeSignatureMismatch", bytecodeSignatureMismatch);
         result.addDetail("apiSurfaceChanged", apiSurfaceChanged);
 
-        // Apply deterministic risk formula
+        // Apply deterministic risk formula (sole pipeline aggregator when present)
         double risk = 0.0;
         List<String> riskFactors = new ArrayList<>();
 
@@ -85,7 +88,7 @@ public class SemanticRiskScorer implements VerificationLayer {
             log.info("  +0.40: compilation failure");
         }
 
-        if (!testSuccess) {
+        if (testsExecuted && !testSuccess) {
             risk += 0.30;
             riskFactors.add("test_failure(+0.30)");
             log.info("  +0.30: test failure");
@@ -119,21 +122,10 @@ public class SemanticRiskScorer implements VerificationLayer {
 
         log.info("  Final semantic risk score: {:.3f} (factors: {})", risk, riskFactors.size());
 
-        // Determine verdict based on risk level
-        Verdict verdict;
-        if (risk >= 0.40) {
-            verdict = Verdict.FAIL;
-            log.warn("  Risk score {:.3f} → FAIL (threshold 0.40 for FAIL)", risk);
-        } else if (risk >= 0.10) {
-            verdict = Verdict.WARN;
-            log.info("  Risk score {:.3f} → WARN", risk);
-        } else {
-            verdict = Verdict.PASS;
-            log.info("  Risk score {:.3f} → PASS", risk);
-        }
-
+        // Scoring-only: never gate the pipeline via this layer's verdict.
+        // Other layers + risk-threshold gate decide PASS/WARN/FAIL.
         return result
-                .verdict(verdict)
+                .verdict(Verdict.PASS)
                 .riskContribution(risk)
                 .summary("Semantic risk score: %.3f (%d risk factor(s): %s)"
                         .formatted(risk, riskFactors.size(),

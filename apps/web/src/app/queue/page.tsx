@@ -180,7 +180,7 @@ export default function QueuePage() {
                       ["ruleName", "Rule"],
                       ["filePath", "File"],
                       ["riskTier", "Risk"],
-                      ["riskScore", "Blended %"],
+                      ["riskScore", "Residual %"],
                       ["projectName", "Project"],
                     ] as [SortKey, string][]
                   ).map(([key, label]) => (
@@ -222,9 +222,18 @@ export default function QueuePage() {
                     <td className="px-4 py-3.5">
                       <span
                         className="text-xs font-mono text-shadow-text-secondary"
-                        title="max(rule prior, verify pipeline risk) — not a fake demo KPI"
+                        title={
+                          item.evidenceStrength != null
+                            ? `Residual risk after evidence-weighted blend · evidence ${(item.evidenceStrength * 100).toFixed(0)}%`
+                            : "Residual risk after evidence-weighted blend of rule prior, context, verify, and blast radius"
+                        }
                       >
                         {(item.riskScore * 100).toFixed(0)}%
+                        {item.evidenceStrength != null && item.evidenceStrength > 0 && (
+                          <span className="text-shadow-text-muted ml-1">
+                            · e{(item.evidenceStrength * 100).toFixed(0)}
+                          </span>
+                        )}
                       </span>
                     </td>
                     <td className="px-4 py-3.5 text-xs text-shadow-text-muted">{item.projectName}</td>

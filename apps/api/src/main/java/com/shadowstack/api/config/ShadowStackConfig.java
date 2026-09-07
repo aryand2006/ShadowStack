@@ -1,5 +1,6 @@
 package com.shadowstack.api.config;
 
+import com.shadowstack.analysis.RiskPosterior;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -21,12 +22,14 @@ public record ShadowStackConfig(
             double lowThreshold,
             double mediumThreshold,
             double highThreshold,
+            double warnFloor,
+            double contextPriorWeight,
+            double blastRadiusWeight,
+            double evidenceWeightMax,
+            double minAutoApplyEvidence,
             boolean autoApplyEnabled,
             double maxAutoApplyRisk
     ) {
-        /**
-         * Determine the risk tier for a given score.
-         */
         public String tierFor(double score) {
             if (score <= lowThreshold) return "LOW";
             if (score <= mediumThreshold) return "MEDIUM";
@@ -34,11 +37,26 @@ public record ShadowStackConfig(
             return "CRITICAL";
         }
 
-        /**
-         * Whether the given risk score qualifies for auto-apply.
-         */
-        public boolean canAutoApply(double score) {
-            return autoApplyEnabled && score <= maxAutoApplyRisk;
+        public boolean canAutoApply(double residualRisk, double evidenceStrength) {
+            return autoApplyEnabled
+                    && residualRisk <= maxAutoApplyRisk
+                    && evidenceStrength >= minAutoApplyEvidence;
+        }
+
+        public RiskPosterior.BlendConfig toBlendConfig() {
+            return new RiskPosterior.BlendConfig(
+                    contextPriorWeight,
+                    blastRadiusWeight,
+                    evidenceWeightMax,
+                    warnFloor,
+                    highThreshold,
+                    lowThreshold,
+                    mediumThreshold,
+                    highThreshold,
+                    maxAutoApplyRisk,
+                    minAutoApplyEvidence,
+                    autoApplyEnabled
+            );
         }
     }
 

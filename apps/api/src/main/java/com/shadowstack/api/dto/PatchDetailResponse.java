@@ -55,8 +55,17 @@ public record PatchDetailResponse(
             double score,
             RiskTier tier,
             List<RiskFactor> factors,
-            double confidenceScore
+            double confidenceScore,
+            double evidenceStrength
     ) {
+        public RiskAssessment(
+                double score,
+                RiskTier tier,
+                List<RiskFactor> factors,
+                double confidenceScore) {
+            this(score, tier, factors, confidenceScore, 0.0);
+        }
+
         public enum RiskTier {
             LOW, MEDIUM, HIGH, CRITICAL
         }

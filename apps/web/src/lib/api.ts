@@ -28,6 +28,7 @@ export interface ReviewQueueItem {
   endLine: number;
   riskScore: number;
   riskTier: RiskTier;
+  evidenceStrength?: number;
   shortDescription: string;
   verificationPassed: boolean;
   invariantsPreserved: number;
@@ -57,8 +58,14 @@ export interface PatchDetail {
   risk: {
     score: number;
     tier: RiskTier;
-    factors: string[];
+    factors: Array<{
+      name: string;
+      description: string;
+      weight: number;
+      contribution: number;
+    }>;
     confidenceScore: number;
+    evidenceStrength?: number;
   };
   verificationEvidence?: {
     behaviorallyEquivalent: boolean;

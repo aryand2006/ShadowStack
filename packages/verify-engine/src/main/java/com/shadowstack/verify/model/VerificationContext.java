@@ -39,8 +39,10 @@ public final class VerificationContext {
         this.transformedClassFile = builder.transformedClassFile;
         this.goldenMasterSnapshots = builder.goldenMasterSnapshots != null
                 ? Map.copyOf(builder.goldenMasterSnapshots) : Map.of();
+        // Mutable so the pipeline can publish upstream layer signals for SemanticRiskScorer.
         this.configuration = builder.configuration != null
-                ? Map.copyOf(builder.configuration) : Map.of();
+                ? new java.util.concurrent.ConcurrentHashMap<>(builder.configuration)
+                : new java.util.concurrent.ConcurrentHashMap<>();
     }
 
     public Path getProjectRoot() { return projectRoot; }
@@ -61,6 +63,17 @@ public final class VerificationContext {
     public <T> T getConfig(String key, T defaultValue) {
         Object value = configuration.get(key);
         return value != null ? (T) value : defaultValue;
+    }
+
+    /** Publish a signal for downstream aggregators (e.g. SemanticRiskScorer). */
+    public void putConfig(String key, Object value) {
+        if (key != null) {
+            if (value == null) {
+                configuration.remove(key);
+            } else {
+                configuration.put(key, value);
+            }
+        }
     }
 
     public static Builder builder() {

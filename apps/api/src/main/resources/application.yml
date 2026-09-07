@@ -74,6 +74,11 @@ shadowstack:
     low-threshold: 0.3
     medium-threshold: 0.6
     high-threshold: 0.85
+    warn-floor: 0.35
+    context-prior-weight: 0.25
+    blast-radius-weight: 0.15
+    evidence-weight-max: 0.85
+    min-auto-apply-evidence: 0.70
     auto-apply-enabled: false
     max-auto-apply-risk: 0.2
   retention:

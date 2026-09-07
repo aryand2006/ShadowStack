@@ -1,5 +1,6 @@
 package com.shadowstack.worker.jobs;
 
+import com.shadowstack.analysis.RiskPosterior;
 import com.shadowstack.refactor.model.PatchUnit;
 import com.shadowstack.refactor.model.RiskTier;
 import com.shadowstack.verify.VerificationPipeline;
@@ -131,14 +132,11 @@ public class JobClaimPoller {
         }
 
         Instant completed = Instant.now();
-        Map<String, Object> evidence = verificationEvidence(
-                passed, verified, failed,
-                Map.of(
-                        "verifier", "java",
-                        "pipeline", pipelineResult.summary(),
-                        "verdict", pipelineResult.verdict().name(),
-                        "riskScore", pipelineResult.riskScore()),
-                completed);
+        Map<String, Object> proof = new LinkedHashMap<>();
+        proof.put("verifier", "java");
+        proof.put("pipeline", pipelineResult.summary());
+        proof.put("verdict", pipelineResult.verdict().name());
+        proof.put("riskScore", pipelineResult.riskScore());
 
         String patchStatus = passed ? "PENDING_REVIEW" : "VERIFICATION_FAILED";
         double prior = 0.45;
@@ -146,17 +144,44 @@ public class JobClaimPoller {
         if (priorObj instanceof Number n) {
             prior = n.doubleValue();
         }
-        double verifyRisk = pipelineResult.riskScore();
-        double blended = Math.max(prior, verifyRisk);
-        if (!passed) {
-            blended = Math.max(blended, 0.85);
+        double contextPrior = prior;
+        Object ctxObj = payload.get("contextPrior");
+        if (ctxObj instanceof Number n) {
+            contextPrior = n.doubleValue();
         }
-        String tier = blended <= 0.3 ? "LOW" : blended <= 0.6 ? "MEDIUM" : blended <= 0.85 ? "HIGH" : "CRITICAL";
+        double verifyRisk = pipelineResult.riskScore();
+        List<RiskPosterior.LayerSignal> signals = new ArrayList<>();
+        int passedLayers = 0;
+        for (VerificationLayerResult layer : pipelineResult.layerResults()) {
+            signals.add(new RiskPosterior.LayerSignal(
+                    layer.getLayerId(), layer.getRiskContribution(), layer.failed()));
+            if (!layer.failed()) {
+                passedLayers++;
+            }
+        }
+        RiskPosterior.VerifyOutcome outcome = RiskPosterior.VerifyOutcome.fromName(
+                pipelineResult.verdict() != null ? pipelineResult.verdict().name() : "FAIL");
+        double evidence = RiskPosterior.evidenceStrength(
+                outcome, verifyRisk, passedLayers, pipelineResult.layerResults().size());
+        double blast = RiskPosterior.blastRadius(signals);
+        RiskPosterior.Result posterior = RiskPosterior.blend(
+                prior, contextPrior, verifyRisk, blast, evidence, outcome,
+                RiskPosterior.BlendConfig.DEFAULTS, List.of());
+        proof.put("verifyRisk", verifyRisk);
+        proof.put("blendedRisk", posterior.residualRisk());
+        proof.put("evidenceStrength", posterior.evidenceStrength());
+        proof.put("outcome", outcome.name());
+
+        Map<String, Object> evidenceMap = verificationEvidence(
+                passed, verified, failed, proof, completed);
+
         jobClaimService.updatePatchVerification(
-                patchId, patchStatus, jobClaimService.toJson(evidence), blended, tier);
+                patchId, patchStatus, jobClaimService.toJson(evidenceMap),
+                posterior.residualRisk(), posterior.tier());
         jobClaimService.markSucceeded(job.id());
-        log.info("VERIFY job {} completed for patch {} → {} (verdict={}, blendedRisk={})",
-                job.id(), patchId, patchStatus, pipelineResult.verdict(), blended);
+        log.info("VERIFY job {} completed for patch {} → {} (verdict={}, residualRisk={}, evidence={})",
+                job.id(), patchId, patchStatus, pipelineResult.verdict(),
+                posterior.residualRisk(), posterior.evidenceStrength());
     }
 
     private void failPatchAndJob(JobClaimService.ClaimedJob job, String message) {

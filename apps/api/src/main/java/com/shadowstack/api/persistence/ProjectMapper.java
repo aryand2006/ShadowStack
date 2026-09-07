@@ -126,7 +126,8 @@ public class ProjectMapper {
                     entity.getRiskScore() != null ? entity.getRiskScore() : 0.0,
                     tier,
                     List.of(),
-                    entity.getConfidence() != null ? entity.getConfidence() : 0.0
+                    entity.getConfidence() != null ? entity.getConfidence() : 0.0,
+                    0.0
             );
         }
         return new PatchDetailResponse(

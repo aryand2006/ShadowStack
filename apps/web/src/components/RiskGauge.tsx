@@ -9,18 +9,19 @@ interface RiskGaugeProps {
   className?: string;
 }
 
+/** Thresholds aligned with shadowstack.risk.* (0.3 / 0.6 / 0.85). */
 function getGaugeColor(value: number): string {
-  if (value < 0.25) return "#10b981"; // green
-  if (value < 0.5) return "#f59e0b";  // amber
-  if (value < 0.75) return "#f97316"; // orange
-  return "#ef4444";                    // red
+  if (value <= 0.3) return "#10b981";
+  if (value <= 0.6) return "#f59e0b";
+  if (value <= 0.85) return "#f97316";
+  return "#ef4444";
 }
 
 function getRiskLabel(value: number): string {
-  if (value < 0.25) return "Low Risk";
-  if (value < 0.5) return "Medium Risk";
-  if (value < 0.75) return "High Risk";
-  return "Critical Risk";
+  if (value <= 0.3) return "Low residual";
+  if (value <= 0.6) return "Medium residual";
+  if (value <= 0.85) return "High residual";
+  return "Critical residual";
 }
 
 export function RiskGauge({
@@ -44,7 +45,6 @@ export function RiskGauge({
   const centerY = s.height - 10;
   const radius = centerX - s.strokeWidth;
 
-  // Semi-circle arc from 180° to 0° (left to right)
   const startAngle = Math.PI;
   const endAngle = 0;
   const sweepAngle = startAngle - (startAngle - endAngle) * clampedValue;
@@ -66,18 +66,6 @@ export function RiskGauge({
         viewBox={`0 0 ${s.width} ${s.height}`}
         className="overflow-visible"
       >
-        {/* Glow filter */}
-        <defs>
-          <filter id={`glow-${size}`}>
-            <feGaussianBlur stdDeviation="3" result="coloredBlur" />
-            <feMerge>
-              <feMergeNode in="coloredBlur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-        </defs>
-
-        {/* Background arc */}
         <path
           d={`M ${bgArcStartX} ${bgArcStartY} A ${radius} ${radius} 0 0 1 ${bgArcEndX} ${bgArcEndY}`}
           fill="none"
@@ -86,7 +74,6 @@ export function RiskGauge({
           strokeLinecap="round"
         />
 
-        {/* Value arc */}
         {clampedValue > 0.01 && (
           <path
             d={`M ${bgArcStartX} ${bgArcStartY} A ${radius} ${radius} 0 ${largeArc} 1 ${valueArcEndX} ${valueArcEndY}`}
@@ -94,14 +81,12 @@ export function RiskGauge({
             stroke={color}
             strokeWidth={s.strokeWidth}
             strokeLinecap="round"
-            filter={`url(#glow-${size})`}
             style={{
               transition: "all 0.8s cubic-bezier(0.4, 0, 0.2, 1)",
             }}
           />
         )}
 
-        {/* End dot */}
         {clampedValue > 0.01 && (
           <circle
             cx={valueArcEndX}
@@ -116,7 +101,6 @@ export function RiskGauge({
         )}
       </svg>
 
-      {/* Value display */}
       <div className="flex flex-col items-center -mt-2">
         <span className={cn(s.fontSize, "font-bold tracking-tight")} style={{ color }}>
           {(clampedValue * 100).toFixed(0)}

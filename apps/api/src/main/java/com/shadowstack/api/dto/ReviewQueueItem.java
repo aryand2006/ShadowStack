@@ -20,6 +20,7 @@ public record ReviewQueueItem(
         int endLine,
         double riskScore,
         PatchDetailResponse.RiskAssessment.RiskTier riskTier,
+        double evidenceStrength,
         String shortDescription,
         boolean verificationPassed,
         int invariantsPreserved,

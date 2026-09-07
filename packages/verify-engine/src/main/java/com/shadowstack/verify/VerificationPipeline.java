@@ -1,6 +1,7 @@
 package com.shadowstack.verify;
 
 import com.shadowstack.refactor.model.PatchUnit;
+import com.shadowstack.verify.layers.SemanticRiskScorer;
 import com.shadowstack.verify.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -126,6 +127,7 @@ public final class VerificationPipeline {
             }
 
             results.add(result);
+            publishLayerSignals(layer.layerId(), result, context);
 
             // Fail-fast: stop after first FAIL
             if (failFast && result.failed()) {
@@ -182,17 +184,60 @@ public final class VerificationPipeline {
     }
 
     /**
-     * Computes the overall risk score from all layer risk contributions.
-     *
-     * <p>Uses additive risk with normalization to [0.0, 1.0].
-     * Each layer contributes its risk score which is summed and clamped.</p>
+     * Computes overall risk. When {@code semantic_risk_scorer} ran, it is the
+     * sole aggregator (avoids double-counting per-layer contributions).
+     * Otherwise falls back to additive clamped sum of non-aggregator layers.
      */
     private double computeOverallRisk(List<VerificationLayerResult> results) {
+        for (VerificationLayerResult result : results) {
+            if ("semantic_risk_scorer".equals(result.getLayerId())) {
+                return Math.max(0.0, Math.min(1.0, result.getRiskContribution()));
+            }
+        }
         double totalRisk = 0.0;
         for (VerificationLayerResult result : results) {
             totalRisk += result.getRiskContribution();
         }
         return Math.max(0.0, Math.min(1.0, totalRisk));
+    }
+
+    /**
+     * Write upstream layer outcomes into context for {@link SemanticRiskScorer}.
+     */
+    static void publishLayerSignals(
+            String layerId, VerificationLayerResult result, VerificationContext context) {
+        if (layerId == null || result == null || context == null) {
+            return;
+        }
+        Map<String, Object> details = result.getDetails() != null ? result.getDetails() : Map.of();
+        switch (layerId) {
+            case "compile_verifier" -> {
+                context.putConfig(SemanticRiskScorer.KEY_COMPILE_SUCCESS, !result.failed());
+            }
+            case "test_execution_verifier" -> {
+                context.putConfig(SemanticRiskScorer.KEY_TEST_SUCCESS, !result.failed());
+                context.putConfig(SemanticRiskScorer.KEY_TESTS_EXECUTED, true);
+            }
+            case "ast_structural_comparator" -> {
+                Object delta = details.get("astDelta");
+                if (delta instanceof Number n) {
+                    context.putConfig(SemanticRiskScorer.KEY_AST_DELTA, n.doubleValue());
+                } else if (result.getRiskContribution() > 0) {
+                    context.putConfig(SemanticRiskScorer.KEY_AST_DELTA, 0.35);
+                }
+                Object thr = details.get("astDeltaThreshold");
+                if (thr instanceof Number n) {
+                    context.putConfig(SemanticRiskScorer.KEY_AST_THRESHOLD, n.doubleValue());
+                }
+            }
+            case "bytecode_descriptor_comparator" ->
+                    context.putConfig(SemanticRiskScorer.KEY_BYTECODE_MISMATCH,
+                            result.failed() || result.getRiskContribution() >= 0.05);
+            case "api_signature_diff_verifier" ->
+                    context.putConfig(SemanticRiskScorer.KEY_API_SURFACE_CHANGED,
+                            result.failed() || result.getRiskContribution() >= 0.05);
+            default -> { /* other layers ignored for semantic aggregate */ }
+        }
     }
 
     /**

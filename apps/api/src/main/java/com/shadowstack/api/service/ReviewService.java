@@ -137,6 +137,7 @@ public class ReviewService {
                 patch.endLine(),
                 patch.risk() != null ? patch.risk().score() : 0.0,
                 patch.risk() != null ? patch.risk().tier() : null,
+                patch.risk() != null ? patch.risk().evidenceStrength() : 0.0,
                 patch.rationale(),
                 verificationPassed,
                 invariantsPreserved,

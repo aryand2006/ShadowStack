@@ -156,11 +156,19 @@ function ReviewInner() {
             <p className="text-xs text-shadow-text-muted font-mono pl-8">{patch.filePath}</p>
             <p className="text-xs text-shadow-accent-bright font-mono pl-8">{patch.ruleName}</p>
           </div>
-          <div className="flex flex-col items-center gap-1 px-4 py-2 rounded-xl bg-shadow-surface/50 border border-shadow-border">
-            <span className="text-2xs text-shadow-text-muted uppercase tracking-wider font-semibold">Confidence</span>
-            <span className="text-2xl font-bold font-mono text-shadow-accent-bright">
-              {(patch.risk.confidenceScore * 100).toFixed(0)}%
-            </span>
+          <div className="flex items-center gap-3">
+            <div className="flex flex-col items-center gap-1 px-4 py-2 rounded-xl bg-shadow-surface/50 border border-shadow-border">
+              <span className="text-2xs text-shadow-text-muted uppercase tracking-wider font-semibold">Evidence</span>
+              <span className="text-2xl font-bold font-mono text-shadow-accent-bright">
+                {((patch.risk.evidenceStrength ?? patch.risk.confidenceScore) * 100).toFixed(0)}%
+              </span>
+            </div>
+            <div className="flex flex-col items-center gap-1 px-4 py-2 rounded-xl bg-shadow-surface/50 border border-shadow-border">
+              <span className="text-2xs text-shadow-text-muted uppercase tracking-wider font-semibold">Confidence</span>
+              <span className="text-xl font-bold font-mono text-shadow-text-secondary">
+                {(patch.risk.confidenceScore * 100).toFixed(0)}%
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -181,8 +189,32 @@ function ReviewInner() {
 
         <div className="xl:col-span-2 space-y-5">
           <div className="glass-panel p-5 flex flex-col items-center">
-            <span className="section-header mb-4 self-start">Risk Assessment</span>
+            <span className="section-header mb-4 self-start">Residual risk</span>
             <RiskGauge value={patch.risk.score} size="md" />
+            {Array.isArray(patch.risk.factors) && patch.risk.factors.length > 0 && (
+              <ul className="mt-4 w-full space-y-1.5 self-start">
+                {patch.risk.factors
+                  .filter((f) => typeof f !== "string")
+                  .slice(0, 8)
+                  .map((f) => {
+                    const factor = f as {
+                      name: string;
+                      description: string;
+                      contribution: number;
+                    };
+                    return (
+                      <li key={factor.name} className="text-2xs text-shadow-text-muted flex justify-between gap-2">
+                        <span className="font-mono text-shadow-text truncate" title={factor.description}>
+                          {factor.name}
+                        </span>
+                        <span className="font-mono shrink-0">
+                          {(factor.contribution * 100).toFixed(0)}%
+                        </span>
+                      </li>
+                    );
+                  })}
+              </ul>
+            )}
           </div>
 
           <div className="glass-panel p-5 space-y-3">

@@ -21,6 +21,8 @@ import com.shadowstack.adapters.model.PatchResult;
 import com.shadowstack.adapters.model.RefactorCandidate;
 import com.shadowstack.adapters.model.SemanticModel;
 import com.shadowstack.adapters.model.VerificationResult;
+import com.shadowstack.analysis.ContextPriorEstimator;
+import com.shadowstack.analysis.RiskPosterior;
 import com.shadowstack.refactor.model.SafetyInvariant;
 import com.shadowstack.refactor.RefactorEngine;
 import com.shadowstack.refactor.RefactorRule;
@@ -29,7 +31,6 @@ import com.shadowstack.refactor.model.PatchUnit;
 import com.shadowstack.refactor.model.RiskTier;
 import com.shadowstack.refactor.model.SemanticContext;
 import com.shadowstack.verify.VerificationPipeline;
-import com.shadowstack.verify.model.Verdict;
 import com.shadowstack.verify.layers.APISignatureDiffVerifier;
 import com.shadowstack.verify.layers.ASTStructuralComparator;
 import com.shadowstack.verify.layers.BytecodeDescriptorComparator;
@@ -84,6 +85,7 @@ public class RefactorOrchestrationService {
     private final ProjectService projectService;
     private final LanguageAdapterRegistry adapterRegistry;
     private final PatchStore patchStore;
+    private final RulePriorCalibrationService rulePriorCalibration;
 
     private final Map<UUID, List<CandidateInfo>> candidateStore = new ConcurrentHashMap<>();
     private final Map<UUID, PatchUnit> candidateUnits = new ConcurrentHashMap<>();
@@ -91,16 +93,20 @@ public class RefactorOrchestrationService {
     private final Map<UUID, VerificationResultResponse> verificationStore = new ConcurrentHashMap<>();
     private final Map<UUID, String> projectLanguage = new ConcurrentHashMap<>();
     private final Map<UUID, RefactorCandidate> adapterCandidates = new ConcurrentHashMap<>();
+    /** File-relative path → context prior from RiskClassifier/complexity. */
+    private final Map<UUID, Map<String, Double>> projectContextPriors = new ConcurrentHashMap<>();
 
     public RefactorOrchestrationService(
             ShadowStackConfig config,
             ProjectService projectService,
             LanguageAdapterRegistry adapterRegistry,
-            PatchStore patchStore) {
+            PatchStore patchStore,
+            RulePriorCalibrationService rulePriorCalibration) {
         this.config = config;
         this.projectService = projectService;
         this.adapterRegistry = adapterRegistry;
         this.patchStore = patchStore;
+        this.rulePriorCalibration = rulePriorCalibration;
     }
 
     public List<CandidateInfo> runAnalysis(UUID projectId) {
@@ -148,6 +154,22 @@ public class RefactorOrchestrationService {
                         inv.isVerified()))
                 .toList();
 
+        double basePrior = riskScore(unit.getRiskTier());
+        double calibrated = rulePriorCalibration != null
+                ? rulePriorCalibration.calibratedPrior(unit.getRuleId(), basePrior)
+                : basePrior;
+        double contextPrior = ContextPriorEstimator.lookup(
+                projectContextPriors.get(projectId),
+                unit.getSourceFile(),
+                calibrated);
+        double cw = config.risk() != null ? config.risk().contextPriorWeight() : 0.25;
+        double initialScore = RiskPosterior.clamp(calibrated * (1.0 - cw) + contextPrior * cw);
+        List<RiskAssessment.RiskFactor> priorFactors = List.of(
+                new RiskAssessment.RiskFactor("rule_prior", "Static rule tier prior", 1.0, basePrior),
+                new RiskAssessment.RiskFactor("calibrated_prior", "Prior after accept/reject feedback", 1.0, calibrated),
+                new RiskAssessment.RiskFactor("context_prior", "Module complexity / context risk", cw, contextPrior)
+        );
+
         PatchDetailResponse patch = new PatchDetailResponse(
                 patchId,
                 projectId,
@@ -162,10 +184,11 @@ public class RefactorOrchestrationService {
                 unit.getRationale(),
                 invariants,
                 new RiskAssessment(
-                        riskScore(unit.getRiskTier()),
-                        mapRisk(unit.getRiskTier()),
-                        List.of(),
-                        unit.getConfidenceScore()
+                        initialScore,
+                        tierFromScore(initialScore),
+                        priorFactors,
+                        unit.getConfidenceScore(),
+                        0.0
                 ),
                 null,
                 null,
@@ -228,6 +251,17 @@ public class RefactorOrchestrationService {
                 payload.put("riskScore", patch.risk().score());
                 payload.put("riskTier", patch.risk().tier() != null ? patch.risk().tier().name() : null);
                 payload.put("confidence", patch.risk().confidenceScore());
+                payload.put("evidenceStrength", patch.risk().evidenceStrength());
+                double contextPrior = patch.risk().score();
+                if (patch.risk().factors() != null) {
+                    for (RiskAssessment.RiskFactor f : patch.risk().factors()) {
+                        if ("context_prior".equals(f.name())) {
+                            contextPrior = f.contribution();
+                            break;
+                        }
+                    }
+                }
+                payload.put("contextPrior", contextPrior);
             }
             if (patch.createdAt() != null) {
                 payload.put("createdAt", patch.createdAt().toString());
@@ -252,10 +286,12 @@ public class RefactorOrchestrationService {
             String transformed = applySnippet(original, unit.getBeforeSnippet(), unit.getAfterSnippet());
 
             boolean passed;
+            RiskPosterior.VerifyOutcome outcome;
             List<InvariantCheck> checks;
             String summary;
             double verifyRisk = 0.0;
             List<RiskAssessment.RiskFactor> verifyFactors = new ArrayList<>();
+            List<RiskPosterior.LayerSignal> layerSignals = new ArrayList<>();
 
             if (adapterRegistry.isJavaEngineLanguage(language)) {
                 RiskTier priorTier = unit != null && unit.getRiskTier() != null
@@ -270,15 +306,19 @@ public class RefactorOrchestrationService {
                         .build();
                 VerificationPipeline.PipelineResult pipelineResult = pipeline.execute(unit, context);
                 // Fail-closed: only hard PASS promotes to PENDING_REVIEW.
-                // Optional layers skip as PASS when inputs are absent.
-                passed = pipelineResult.verdict() == Verdict.PASS;
+                outcome = RiskPosterior.VerifyOutcome.fromName(
+                        pipelineResult.verdict() != null ? pipelineResult.verdict().name() : "FAIL");
+                passed = outcome == RiskPosterior.VerifyOutcome.PASS;
                 checks = pipelineResult.layerResults().stream()
                         .map(RefactorOrchestrationService::toCheck)
                         .toList();
                 summary = pipelineResult.summary();
                 verifyRisk = pipelineResult.riskScore();
                 for (VerificationLayerResult layer : pipelineResult.layerResults()) {
-                    if (layer.getRiskContribution() > 0) {
+                    layerSignals.add(new RiskPosterior.LayerSignal(
+                            layer.getLayerId(), layer.getRiskContribution(), layer.failed()));
+                    if (layer.getRiskContribution() > 0
+                            && !"semantic_risk_scorer".equals(layer.getLayerId())) {
                         verifyFactors.add(new RiskAssessment.RiskFactor(
                                 layer.getLayerId(),
                                 layer.getSummary() != null ? layer.getSummary() : layer.getLayerId(),
@@ -328,8 +368,9 @@ public class RefactorOrchestrationService {
 
                     VerificationResult vr = adapter.verifyPatch(
                             applied, tempRoot, LanguageAdapter.VerificationConfig.defaults());
-                    // Company-demo bar: WARN / structural-only must NOT enter PENDING_REVIEW.
-                    passed = vr.verdict() == VerificationResult.Verdict.PASS;
+                    outcome = RiskPosterior.VerifyOutcome.fromName(
+                            vr.verdict() != null ? vr.verdict().name() : "FAIL");
+                    passed = outcome == RiskPosterior.VerifyOutcome.PASS;
                     checks = vr.layerResults().stream()
                             .map(layer -> new InvariantCheck(
                                     layer.layerName(),
@@ -342,12 +383,12 @@ public class RefactorOrchestrationService {
                             : "refactor";
                     summary = "adapter:" + language + " verdict=" + vr.verdict()
                             + " apply=" + applyMode;
-                    // Adapter layers expose a 0..1 score; invert pass confidence into risk contrib.
-                    double adapterRisk = 0.0;
+                    verifyRisk = RiskPosterior.clamp(vr.semanticRiskScore());
                     for (var layer : vr.layerResults()) {
                         double contrib = layer.passed() ? Math.max(0, 0.15 * (1.0 - layer.score()))
                                 : Math.max(0.2, 1.0 - layer.score());
-                        adapterRisk += contrib;
+                        layerSignals.add(new RiskPosterior.LayerSignal(
+                                layer.layerName(), contrib, !layer.passed()));
                         if (contrib > 0) {
                             verifyFactors.add(new RiskAssessment.RiskFactor(
                                     layer.layerName(),
@@ -356,7 +397,6 @@ public class RefactorOrchestrationService {
                                     contrib));
                         }
                     }
-                    verifyRisk = Math.min(1.0, adapterRisk);
                 } finally {
                     deleteRecursively(tempRoot);
                 }
@@ -369,6 +409,7 @@ public class RefactorOrchestrationService {
                                 + "(unifiedDiff blank or beforeSnippet==afterSnippet)",
                         patchId, patch.ruleName());
                 passed = false;
+                outcome = RiskPosterior.VerifyOutcome.FAIL;
                 summary = (summary != null ? summary + "; " : "")
                         + "identity-patch-rejected";
             }
@@ -404,12 +445,32 @@ public class RefactorOrchestrationService {
             List<String> failed = checks.stream().filter(c -> !c.preserved())
                     .map(InvariantCheck::description).toList();
 
-            RiskAssessment blendedRisk = blendRiskAfterVerify(patch.risk(), verifyRisk, verifyFactors, passed);
+            int passedLayers = (int) checks.stream().filter(InvariantCheck::preserved).count();
+            RiskAssessment blendedRisk = blendRiskAfterVerify(
+                    patch.risk(),
+                    verifyRisk,
+                    verifyFactors,
+                    layerSignals,
+                    outcome,
+                    passedLayers,
+                    checks.size(),
+                    patch.projectId(),
+                    patch.filePath(),
+                    patch.ruleName());
+
+            PatchStatus nextStatus = passed ? PatchStatus.PENDING_REVIEW : PatchStatus.VERIFICATION_FAILED;
+            if (passed && blendedRisk != null
+                    && config.risk() != null
+                    && config.risk().canAutoApply(blendedRisk.score(), blendedRisk.evidenceStrength())) {
+                nextStatus = PatchStatus.ACCEPTED;
+                log.info("Auto-applying patch {} (residual={}, evidence={})",
+                        patchId, blendedRisk.score(), blendedRisk.evidenceStrength());
+            }
 
             PatchDetailResponse updated = new PatchDetailResponse(
                     patch.patchId(), patch.projectId(), patch.candidateId(),
                     patch.ruleName(), patch.ruleCategory(),
-                    passed ? PatchStatus.PENDING_REVIEW : PatchStatus.VERIFICATION_FAILED,
+                    nextStatus,
                     patch.filePath(), patch.startLine(), patch.endLine(),
                     patch.unifiedDiff(), patch.rationale(), patch.invariants(),
                     blendedRisk,
@@ -419,10 +480,15 @@ public class RefactorOrchestrationService {
                                     "verifier", language,
                                     "verifyRisk", verifyRisk,
                                     "rulePriorScore", patch.risk() != null ? patch.risk().score() : 0.0,
-                                    "blendedRisk", blendedRisk.score()),
+                                    "blendedRisk", blendedRisk.score(),
+                                    "evidenceStrength", blendedRisk.evidenceStrength(),
+                                    "outcome", outcome.name()),
                             completed
                     ),
-                    patch.review(), patch.createdBy(), patch.createdAt(), Instant.now()
+                    nextStatus == PatchStatus.ACCEPTED
+                            ? new ReviewInfo("auto-apply", true, "auto-apply by residual risk gate", completed)
+                            : patch.review(),
+                    patch.createdBy(), patch.createdAt(), Instant.now()
             );
             patchStore.save(updated);
             return result;
@@ -439,6 +505,9 @@ public class RefactorOrchestrationService {
             UUID patchId, boolean accepted, String reviewer, String reason) {
         PatchDetailResponse patch = patchStore.findById(patchId)
                 .orElseThrow(() -> new PatchNotFoundException(patchId));
+        if (rulePriorCalibration != null) {
+            rulePriorCalibration.recordDecision(patch.ruleName(), accepted);
+        }
         PatchDetailResponse updated = new PatchDetailResponse(
                 patch.patchId(), patch.projectId(), patch.candidateId(),
                 patch.ruleName(), patch.ruleCategory(),
@@ -509,8 +578,9 @@ public class RefactorOrchestrationService {
     }
 
     /**
-     * Java verification pipeline. COSMETIC/LOW skip Maven test execution for speed —
-     * compile + AST + API signature still gate. MEDIUM+ run the full 7-layer stack.
+     * Java verification pipeline. COSMETIC/LOW skip Maven test/golden for speed —
+     * compile + AST + API + semantic aggregate still gate. MEDIUM+ run the full stack.
+     * SemanticRiskScorer is always last and is the sole risk aggregator.
      */
     static VerificationPipeline createJavaVerificationPipeline() {
         return createJavaVerificationPipeline(RiskTier.MEDIUM);
@@ -528,8 +598,8 @@ public class RefactorOrchestrationService {
         if (fullStack) {
             pipeline.addLayer(new TestExecutionVerifier());
             pipeline.addLayer(new GoldenMasterVerifier());
-            pipeline.addLayer(new SemanticRiskScorer());
         }
+        pipeline.addLayer(new SemanticRiskScorer());
         return pipeline;
     }
 
@@ -538,11 +608,18 @@ public class RefactorOrchestrationService {
             UUID projectId, Path root, Map<String, Integer> riskDistribution) {
         RefactorEngine engine = createEngine();
         List<CandidateInfo> candidates = new ArrayList<>();
+        Map<String, Double> contextPriors = new ConcurrentHashMap<>();
         try {
             for (Path javaFile : discoverJavaFiles(root)) {
                 String source = Files.readString(javaFile, StandardCharsets.UTF_8);
                 String relative = root.relativize(javaFile).toString().replace('\\', '/');
                 CompilationUnit cu = parseCompilationUnit(source, javaFile);
+                try {
+                    contextPriors.put(relative, ContextPriorEstimator.fromCompilationUnit(cu, javaFile));
+                } catch (Exception e) {
+                    log.debug("Context prior skipped for {}: {}", relative, e.getMessage());
+                    contextPriors.put(relative, 0.45);
+                }
                 SemanticContext context = SemanticContext.builder()
                         .compilationUnit(cu)
                         .sourceFilePath(relative)
@@ -556,6 +633,7 @@ public class RefactorOrchestrationService {
         } catch (IOException e) {
             throw new IllegalStateException("Failed to analyze " + root + ": " + e.getMessage(), e);
         }
+        projectContextPriors.put(projectId, contextPriors);
         return candidates;
     }
 
@@ -693,38 +771,84 @@ public class RefactorOrchestrationService {
     }
 
     /**
-     * Blend rule-prior score with post-verify pipeline risk.
-     * Displayed queue score = max(rulePrior, verifyRisk), then tier from application.yml thresholds.
-     * On hard FAIL, floor at highThreshold so failed patches don't look "low risk".
+     * Evidence-weighted residual risk after verify.
+     * PASS can lower the prior; WARN uses mild floor; FAIL floors at highThreshold.
      */
     RiskAssessment blendRiskAfterVerify(
             RiskAssessment prior,
             double verifyRisk,
             List<RiskAssessment.RiskFactor> verifyFactors,
             boolean passed) {
-        double priorScore = prior != null ? prior.score() : riskScore(RiskTier.MEDIUM);
-        double confidence = prior != null ? prior.confidenceScore() : 0.0;
-        double blended = Math.max(priorScore, Math.max(0.0, Math.min(1.0, verifyRisk)));
-        if (!passed) {
-            double floor = config.risk() != null ? config.risk().highThreshold() : 0.85;
-            blended = Math.max(blended, floor);
+        return blendRiskAfterVerify(
+                prior,
+                verifyRisk,
+                verifyFactors,
+                List.of(),
+                RiskPosterior.VerifyOutcome.fromPassedFlag(passed),
+                passed ? 1 : 0,
+                1,
+                null,
+                null,
+                null);
+    }
+
+    RiskAssessment blendRiskAfterVerify(
+            RiskAssessment prior,
+            double verifyRisk,
+            List<RiskAssessment.RiskFactor> verifyFactors,
+            List<RiskPosterior.LayerSignal> layerSignals,
+            RiskPosterior.VerifyOutcome outcome,
+            int passedLayers,
+            int totalLayers,
+            UUID projectId,
+            String filePath,
+            String ruleName) {
+        double rulePrior = prior != null ? prior.score() : riskScore(RiskTier.MEDIUM);
+        if (rulePriorCalibration != null && ruleName != null) {
+            // Prefer calibrated rule base when we still have a raw tier-ish prior in factors
+            double base = rulePrior;
+            for (RiskAssessment.RiskFactor f : prior != null && prior.factors() != null ? prior.factors() : List.<RiskAssessment.RiskFactor>of()) {
+                if ("calibrated_prior".equals(f.name()) || "rule_prior".equals(f.name())) {
+                    base = f.contribution();
+                    if ("calibrated_prior".equals(f.name())) {
+                        break;
+                    }
+                }
+            }
+            rulePrior = rulePriorCalibration.calibratedPrior(ruleName, base);
         }
-        RiskAssessment.RiskTier tier = tierFromScore(blended);
-        List<RiskAssessment.RiskFactor> factors = new ArrayList<>();
-        factors.add(new RiskAssessment.RiskFactor(
-                "rule_prior",
-                "Static risk prior from modernization rule",
-                1.0,
-                priorScore));
-        factors.add(new RiskAssessment.RiskFactor(
-                "verify_pipeline",
-                "Measured risk from verification layers",
-                1.0,
-                verifyRisk));
+        double contextPrior = ContextPriorEstimator.lookup(
+                projectId != null ? projectContextPriors.get(projectId) : null,
+                filePath,
+                rulePrior);
+        double blast = RiskPosterior.blastRadius(layerSignals);
+        double evidence = RiskPosterior.evidenceStrength(outcome, verifyRisk, passedLayers, totalLayers);
+        RiskPosterior.BlendConfig blendConfig = config.risk() != null
+                ? config.risk().toBlendConfig()
+                : RiskPosterior.BlendConfig.DEFAULTS;
+
+        List<RiskPosterior.Factor> extras = new ArrayList<>();
         if (verifyFactors != null) {
-            factors.addAll(verifyFactors);
+            for (RiskAssessment.RiskFactor f : verifyFactors) {
+                extras.add(new RiskPosterior.Factor(f.name(), f.description(), f.weight(), f.contribution()));
+            }
         }
-        return new RiskAssessment(blended, tier, factors, confidence);
+        RiskPosterior.Result posterior = RiskPosterior.blend(
+                rulePrior, contextPrior, verifyRisk, blast, evidence, outcome, blendConfig, extras);
+
+        double confidence = prior != null ? prior.confidenceScore() : 0.0;
+        // Evidence strength becomes the post-verify confidence signal for UI.
+        double displayConfidence = Math.max(confidence * 0.35, evidence);
+
+        List<RiskAssessment.RiskFactor> factors = posterior.factors().stream()
+                .map(f -> new RiskAssessment.RiskFactor(f.name(), f.description(), f.weight(), f.contribution()))
+                .toList();
+        return new RiskAssessment(
+                posterior.residualRisk(),
+                RiskAssessment.RiskTier.valueOf(posterior.tier()),
+                factors,
+                displayConfidence,
+                posterior.evidenceStrength());
     }
 
     private RiskAssessment.RiskTier tierFromScore(double score) {
