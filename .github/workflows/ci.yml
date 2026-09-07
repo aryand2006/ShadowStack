@@ -42,14 +42,9 @@ jobs:
           sudo apt-get install -y -qq gnucobol || sudo apt-get install -y -qq gnucobol3 || true
           cobc --version || echo "cobc unavailable — COBOL cobc tests may soft-skip"
 
-      - name: Test language-adapters
-        run: mvn -B -f packages/language-adapters/pom.xml test
-
-      - name: Test refactor-engine
-        run: mvn -B -f packages/refactor-engine/pom.xml test
-
-      - name: Test verify-engine
-        run: mvn -B -f packages/verify-engine/pom.xml test
-
-      - name: Test apps/api (if present)
-        run: mvn -B -f apps/api/pom.xml test
+      # Reactor build so SNAPSHOT module deps (language-adapters → refactor-engine → api) resolve.
+      - name: Test reactor modules
+        run: >
+          mvn -B -pl
+          packages/language-adapters,packages/refactor-engine,packages/verify-engine,apps/api
+          -am test
