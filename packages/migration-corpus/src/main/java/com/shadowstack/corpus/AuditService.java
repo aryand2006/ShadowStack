@@ -142,7 +142,9 @@ public class AuditService {
      */
     @Transactional(readOnly = true)
     public List<AuditLog> getAuditTrail(String entityType, String entityId) {
-        return auditLogRepository.findByEntityTypeAndEntityId(entityType, entityId);
+        return auditLogRepository.findByEntityTypeAndEntityId(entityType, entityId).stream()
+                .filter(a -> a.getDeletedAt() == null)
+                .toList();
     }
 
     /**
@@ -150,7 +152,9 @@ public class AuditService {
      */
     @Transactional(readOnly = true)
     public List<AuditLog> getActorHistory(String actorId) {
-        return auditLogRepository.findByActorId(actorId);
+        return auditLogRepository.findByActorId(actorId).stream()
+                .filter(a -> a.getDeletedAt() == null)
+                .toList();
     }
 
     /**
@@ -158,7 +162,9 @@ public class AuditService {
      */
     @Transactional(readOnly = true)
     public List<AuditLog> getAuditLogsBetween(OffsetDateTime start, OffsetDateTime end) {
-        return auditLogRepository.findByTimestampBetween(start, end);
+        return auditLogRepository.findByTimestampBetween(start, end).stream()
+                .filter(a -> a.getDeletedAt() == null)
+                .toList();
     }
 
     /**
@@ -167,6 +173,7 @@ public class AuditService {
     @Transactional(readOnly = true)
     public List<AuditLog> findRecent(int limit) {
         return auditLogRepository.findAll().stream()
+                .filter(a -> a.getDeletedAt() == null)
                 .sorted((a, b) -> b.getTimestamp().compareTo(a.getTimestamp()))
                 .limit(Math.max(0, limit))
                 .toList();

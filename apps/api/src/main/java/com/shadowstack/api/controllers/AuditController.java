@@ -142,7 +142,9 @@ public class AuditController {
                     OffsetDateTime.ofInstant(to, ZoneOffset.UTC));
         }
         if (repo != null) {
-            return repo.findAll();
+            return repo.findAll().stream()
+                    .filter(e -> e.getDeletedAt() == null)
+                    .toList();
         }
         return service.findRecent(10_000);
     }

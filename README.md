@@ -216,7 +216,8 @@ This corpus is ShadowStack's competitive moat.
 
 ## Security posture (enterprise)
 
-Control mappings are **not** a SOC 2 certification. Implemented product controls:
+**SOC 2 control readiness implemented; certification requires independent auditor.**  
+You may claim *SOC 2 control readiness / audit-ready controls* — not *SOC 2 certified*.
 
 | Control | Current state |
 |---------|----------------|
@@ -224,13 +225,17 @@ Control mappings are **not** a SOC 2 certification. Implemented product controls
 | **RBAC** | ADMIN, REVIEWER, ANALYST, VIEWER |
 | **Multi-tenancy** | `org_id` on projects/patches/jobs/audit; `X-Org-Id` / JWT `org_id` via `TenantFilter` |
 | **Separation of duties** | REVIEWER cannot accept/reject own patches (`createdBy`); ADMIN may override |
-| **Audit trail** | Durable `audit_log` on `!demo` with query + CSV export; demo → SLF4J |
+| **Audit trail** | Durable `audit_log` on `!demo` with append-oriented grants, soft-delete retention, query + CSV export; demo → SLF4J |
+| **Retention** | Daily `RetentionCleanupJob` (`!demo`) enforces `shadowstack.retention.*` |
+| **Control evidence** | `ss_control_evidence` + `GET /api/v1/compliance/evidence` (ADMIN) |
+| **Network policy** | Default-deny K8s NetworkPolicy: api↔postgres, worker↔postgres, web→api |
+| **CI vulns** | Trivy filesystem HIGH/CRITICAL `security-scan` job |
 | **Review gate** | Explicit accept/reject after fail-closed verification |
 | **Auth** | JWT + HTTP Basic; optional `oidc` profile for IdP JWT resource-server SSO |
 | **Secrets / Vault** | K8s Secret placeholders + External Secrets → Vault template (`infra/k8s/external-secret-vault.yaml`); see `docs/secrets-and-encryption.md` |
 | **Encryption at rest** | AES-GCM for patch artifacts when `ENCRYPTION_KEY_BASE64` set; Postgres TDE/CMEK via cloud storage class (see `docs/secrets-and-encryption.md`) |
 | **Job isolation** | Worker claims VERIFY with `FOR UPDATE SKIP LOCKED` |
-| **SOC 2** | Design mapping only (`docs/soc2-controls.md`) — **not certified** |
+| **SOC 2** | Control readiness matrix in `docs/soc2-controls.md` — **not certified** |
 | **Threat model** | STRIDE analysis documented as a planning artifact |
 
 ---
@@ -256,7 +261,7 @@ shadowstack/
 ├── docs/
 │   ├── architecture.md   # Full architecture with Mermaid diagrams
 │   ├── threat-model.md   # STRIDE threat analysis
-│   ├── soc2-controls.md  # SOC2 control mapping
+│   ├── soc2-controls.md  # SOC 2 control readiness (not certification)
 │   ├── secrets-and-encryption.md  # Vault, rotation, AES-GCM, TDE/CMEK
 │   ├── api-reference.md  # Complete API documentation
 │   └── deployment-guide.md

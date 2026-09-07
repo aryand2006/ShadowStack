@@ -75,6 +75,7 @@ public class OidcSecurityConfig {
                         .requestMatchers("/api/v1/auth/login").permitAll()
                         .requestMatchers("/actuator/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/audit/**").hasRole("ADMIN")
+                        .requestMatchers("/api/v1/compliance/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/v1/reviews/*/accept", "/api/v1/reviews/*/reject")
                                 .hasAnyRole("REVIEWER", "ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/v1/analytics/**")

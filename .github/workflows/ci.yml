@@ -48,3 +48,20 @@ jobs:
           mvn -B -pl
           packages/language-adapters,packages/refactor-engine,packages/verify-engine,apps/api
           -am test
+
+  # SOC 2 CC9.3 control readiness — filesystem vulnerability scan (HIGH/CRITICAL).
+  # Fails the job on HIGH/CRITICAL findings. Not a substitute for a certified audit.
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem vulnerability scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          format: table

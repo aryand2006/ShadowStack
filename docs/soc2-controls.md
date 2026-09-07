@@ -1,275 +1,193 @@
-# ShadowStack SOC 2 Control Mapping
+# SOC 2 Control Readiness (certification requires external audit)
 
-> **Not certified. Control design / target mapping only. Do not present as implemented SOC2.**
+> **Banner — claim language (mandatory)**  
+> You may claim **"SOC 2 control readiness / audit-ready controls"**.  
+> You may **NOT** claim **"SOC 2 certified"**, **"SOC 2 compliant"**, or **"SOC 2 Type II"** until an independent auditor issues a report.
 
-> Type II — Trust Service Criteria Alignment (aspirational)
+This document maps ShadowStack product and infrastructure controls to SOC 2 Trust Service Criteria (TSC). Status values:
 
-This document maps *intended* ShadowStack security controls to SOC 2 Trust Service Criteria (TSC). Each row is a **target design** reference, not evidence of an audited or implemented production control.
+| Status | Meaning |
+|--------|---------|
+| **Implemented** | Code/infra present and wired; evidence path is real |
+| **Partial** | Some implementation exists; gaps remain |
+| **Target** | Designed/documented only; not enforced in this repo |
 
 ---
 
 ## CC1: Control Environment
 
-*The entity demonstrates a commitment to integrity and ethical values.*
-
 ### CC1.1 — Governance and Oversight
 
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Defined organizational roles | RBAC model in code: `ADMIN`, `REVIEWER`, `ANALYST`, `VIEWER` (aspirational docs sometimes mention TECH_LEAD/SENIOR_DEV as future risk-tier mapping only) | `JwtTokenProvider` / `@PreAuthorize` |
-| Separation of duties | Patch authors (`createdBy`) cannot accept/reject own patches unless `ADMIN` | `ReviewService.enforceSeparationOfDuties` |
-| Risk-based reviewer assignment | Risk tier determines required reviewer level (see table below) | API controller authorization checks |
-| Code of conduct for AI-assisted changes | All AI-generated transformations require human approval (auto-apply off by default) | `shadowstack.risk.auto-apply-enabled: false` |
-
-### CC1.2 — Risk Tier → Reviewer Mapping (aspirational)
-
-Code today authorizes review with `REVIEWER` or `ADMIN` only. The finer mapping below is a **target**, not enforced:
-
-| Risk Tier | Target minimum reviewer (aspirational) | Auto-Apply Eligible |
-|---|---|---|
-| COSMETIC | REVIEWER | Yes (if ≤ 0.2 and auto-apply enabled) |
-| LOW | REVIEWER | No |
-| MEDIUM | REVIEWER | No |
-| HIGH | REVIEWER (+ future senior gate) | No |
-| CRITICAL | ADMIN | No |
+| Control | ShadowStack implementation | Status | Evidence path |
+|---------|---------------------------|--------|---------------|
+| Defined organizational roles | RBAC: `ADMIN`, `REVIEWER`, `ANALYST`, `VIEWER` | Implemented | `apps/api/src/main/java/com/shadowstack/api/security/RBACConfig.java` |
+| Separation of duties | Patch authors cannot accept/reject own patches unless `ADMIN` | Implemented | `apps/api/src/main/java/com/shadowstack/api/service/ReviewService.java` |
+| Auto-apply gated | Auto-apply off by default | Implemented | `apps/api/src/main/resources/application.yml` (`shadowstack.risk.auto-apply-enabled`) |
+| Risk-tier → senior reviewer mapping | Code authorizes `REVIEWER`/`ADMIN` only | Target | (future) risk-tier reviewer gates |
 
 ---
 
 ## CC2: Communication and Information
 
-*The entity internally communicates information necessary to support the functioning of internal control.*
-
 ### CC2.1 — Audit Trail
 
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| All actions logged | `AuditService.logAction()` records actor, action, entity, timestamp | `AuditLog` entity, `AuditLogRepository` |
-| Structured audit entries | Each entry contains: action, entityType, entityId, actorId, actorRole, metadata (JSON) | `AuditLog.java` schema |
-| Tamper-resistant logs | Append-only table; application DB user lacks DELETE/UPDATE on `audit_log` | Database migration scripts, role grants |
-| Audit retention policy | Configurable retention: `shadowstack.retention.audit-log-days: 365` | `application.yml` configuration |
+| Control | ShadowStack implementation | Status | Evidence path |
+|---------|---------------------------|--------|---------------|
+| All actions logged | `AuditService` + HTTP `AuditInterceptor` | Implemented | `packages/migration-corpus/src/main/java/com/shadowstack/corpus/AuditService.java` |
+| Durable schema | `audit_log` table | Implemented | `packages/migration-corpus/src/main/resources/db/migration/V2__create_audit_log.sql` |
+| Append-only app grants | `REVOKE DELETE` on role `shadowstack` when present; soft-delete via `deleted_at` | Implemented | `packages/migration-corpus/src/main/resources/db/migration/V6__soc2_control_readiness.sql` |
+| Retention indexes | Timestamp / org indexes for cleanup | Implemented | `V6__soc2_control_readiness.sql` |
+| Query + CSV export | ADMIN audit API | Implemented | `apps/api/src/main/java/com/shadowstack/api/controllers/AuditController.java` |
 
 ### CC2.2 — Notifications and Alerts
 
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Pipeline failure alerts | Prometheus metrics + Grafana alerting rules | `management.endpoints.web.exposure.include: health,metrics,prometheus` |
-| Review queue SLA monitoring | Dashboard tracks time-to-review per risk tier | `AnalyticsDashboardResponse.PipelineHealth` |
-| Confidence calibration drift | Analytics endpoint surfaces calibration error | `CorpusAnalytics.CalibrationPoint` |
-| Health check monitoring | Spring Boot Actuator liveness/readiness probes | `/actuator/health/liveness`, `/actuator/health/readiness` |
+| Control | ShadowStack implementation | Status | Evidence path |
+|---------|---------------------------|--------|---------------|
+| Health probes | Actuator liveness/readiness | Implemented | `apps/api/src/main/resources/application.yml` |
+| Prometheus metrics | Micrometer exposure | Partial | `application.yml` (`management.endpoints`) — Grafana rules not shipped |
+| Review SLA dashboards | Analytics pipeline health | Partial | `apps/api/src/main/java/com/shadowstack/api/controllers/AnalyticsController.java` |
 
 ---
 
 ## CC3: Risk Assessment
 
-*The entity identifies and analyzes risks to the achievement of its objectives.*
-
 ### CC3.1 — Automated Risk Scoring
 
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Per-patch risk classification | `SemanticRiskScorer` assigns risk tier (COSMETIC → CRITICAL) | `RiskTier` enum, `RefactorCandidate.riskTier` |
-| Multi-factor risk computation | Factors: outer variable capture, concurrent context, generics, statement count | `AnonymousClassToLambdaRule.computeConfidenceScore()` |
-| Risk threshold configuration | `shadowstack.risk.low-threshold: 0.3`, `medium-threshold: 0.6`, `high-threshold: 0.85` | `application.yml` |
-| Risk factor transparency | Each patch includes full `RiskAssessment` with factor breakdown | `PatchDetailResponse.RiskAssessment` |
+| Control | ShadowStack implementation | Status | Evidence path |
+|---------|---------------------------|--------|---------------|
+| Per-patch risk classification | Semantic risk scorer + tiers | Implemented | `packages/verify-engine` |
+| Configurable thresholds | `shadowstack.risk.*` | Implemented | `apps/api/src/main/java/com/shadowstack/api/config/ShadowStackConfig.java` |
 
 ### CC3.2 — Safety Invariant Verification
 
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Pre-transformation invariant checks | 5 safety invariants checked before any transformation | `SafetyInvariant` model, `AnonymousClassToLambdaRule` |
-| Invariant evidence recording | Each invariant records status (VERIFIED/VIOLATED/UNDETERMINED) + evidence string | `SafetyInvariant.getStatus()`, `SafetyInvariant.getEvidence()` |
-| Invariant violation blocks transformation | `allInvariantsVerified()` gate on `PatchUnit.apply()` | `RefactorEngine.filterCandidates()` |
+| Control | ShadowStack implementation | Status | Evidence path |
+|---------|---------------------------|--------|---------------|
+| Safety invariants before transform | Adapter/rule invariant gates | Implemented | `packages/refactor-engine` |
+| Verification layers | Compile → AST → bytecode → API → tests → golden → risk | Implemented | `packages/verify-engine` |
 
 ---
 
 ## CC5: Control Activities
 
-*The entity selects and develops control activities that contribute to the mitigation of risks.*
-
 ### CC5.1 — Role-Based Access Control
 
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| JWT-based authentication | Every API request validated via `JwtAuthenticationFilter` | `JwtAuthenticationFilter.java` |
-| Role-based authorization | `@PreAuthorize` annotations on controller methods | Spring Security configuration |
-| Token expiration | JWT expires after `shadowstack.security.jwt-expiration-ms: 86400000` (24h) | `JwtTokenProvider.generateToken()` |
-| Minimum key strength | HMAC-SHA256 with minimum 256-bit key | `JwtTokenProvider.init()` → `Keys.hmacShaKeyFor()` |
+| Control | ShadowStack implementation | Status | Evidence path |
+|---------|---------------------------|--------|---------------|
+| JWT authentication | `JwtAuthenticationFilter` | Implemented | `apps/api/src/main/java/com/shadowstack/api/security/JwtAuthenticationFilter.java` |
+| Method security | `@PreAuthorize` on controllers | Implemented | `apps/api/src/main/java/com/shadowstack/api/security/SecurityConfig.java` |
+| Optional OIDC | `oidc` profile resource server | Implemented | `apps/api/src/main/java/com/shadowstack/api/security/OidcSecurityConfig.java` |
 
-### CC5.2 — Patch Immutability
+### CC5.2 — Patch / Certificate Integrity
 
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Patches are append-only | No UPDATE endpoints for patch content; new version = new record | API controller design |
-| Content hash integrity | `BehavioralEquivalenceCertificate` includes SHA-256 hash of all fields | `BehavioralEquivalenceCertificate.computeContentHash()` |
-| Certificate integrity verification | `verifyIntegrity()` method validates hash before review presentation | `BehavioralEquivalenceCertificate.verifyIntegrity()` |
-| Digital signature placeholder | Certificate supports `digitalSignature` field for future HMAC/PKI | `BehavioralEquivalenceCertificate.digitalSignature` |
+| Control | ShadowStack implementation | Status | Evidence path |
+|---------|---------------------------|--------|---------------|
+| Behavioral equivalence certificate | Content hash + layer results | Partial | `packages/verify-engine/src/main/java/com/shadowstack/verify/BehavioralEquivalenceCertificate.java` |
+| Digital signature / PKI | Field placeholder only | Target | same |
 
 ### CC5.3 — Multi-Layer Verification
 
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Compilation verification | `CompileVerifier` — hard gate; fail = reject | `layers/CompileVerifier.java` |
-| AST structural comparison | `ASTStructuralComparator` — compares AST shape | `layers/ASTStructuralComparator.java` |
-| Bytecode descriptor comparison | `BytecodeDescriptorComparator` — compares method descriptors | `layers/BytecodeDescriptorComparator.java` |
-| API surface verification | `APISignatureDiffVerifier` — ensures public API unchanged | `layers/APISignatureDiffVerifier.java` |
-| Test execution | `TestExecutionVerifier` — runs existing tests | `layers/TestExecutionVerifier.java` |
-| Golden master comparison | `GoldenMasterVerifier` — compares output snapshots | `layers/GoldenMasterVerifier.java` |
-| Semantic risk aggregation | `SemanticRiskScorer` — final risk score | `layers/SemanticRiskScorer.java` |
+| Control | ShadowStack implementation | Status | Evidence path |
+|---------|---------------------------|--------|---------------|
+| Seven-layer verify pipeline | Worker `VerificationTask` | Implemented | `apps/worker/src/main/java/com/shadowstack/worker/tasks/VerificationTask.java` |
 
 ---
 
-## CC6: Logical and Physical Access Controls
-
-*The entity implements logical access security over information assets.*
+## CC6: Logical Access / Network
 
 ### CC6.1 — Authentication
 
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Bearer token authentication | JWT in `Authorization: Bearer <token>` header | `JwtAuthenticationFilter` |
-| Password hashing | Spring Security BCrypt password encoder | Spring Boot Security auto-configuration |
-| Session management | Stateless — no server-side sessions | `SessionCreationPolicy.STATELESS` |
-| CORS restrictions | `shadowstack.security.cors-allowed-origins` whitelist | `application.yml` |
-
-### CC6.2 — API Security
-
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Input validation | Jakarta Bean Validation on all request DTOs | `@NotBlank`, `@Size`, `@Pattern` annotations |
-| Request size limits | Spring Boot `server.tomcat.max-http-form-post-size` | Server configuration |
-| Error response sanitization | `ApiErrorResponse` DTO strips internal details | `ApiErrorResponse.java` |
-| OpenAPI documentation | SpringDoc generates machine-readable API spec | `/api-docs`, `/swagger-ui.html` |
+| Control | ShadowStack implementation | Status | Evidence path |
+|---------|---------------------------|--------|---------------|
+| Bearer JWT + Basic | Stateless sessions | Implemented | `SecurityConfig.java` |
+| Password hashing | BCrypt via Spring Security | Implemented | `DemoUsersConfig.java` / `ProdUsersConfig.java` |
+| CORS allowlist | `shadowstack.security.cors-allowed-origins` | Implemented | `application.yml` |
 
 ### CC6.3 — Network Security
 
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| TLS termination | Ingress controller handles TLS 1.3 | Kubernetes Ingress TLS configuration |
-| Network policies | Pod-to-pod communication restricted | Kubernetes NetworkPolicy manifests |
-| Egress restrictions | Workers cannot reach external networks | NetworkPolicy egress rules |
-| Internal service auth | mTLS via service mesh (production) | Istio configuration |
+| Control | ShadowStack implementation | Status | Evidence path |
+|---------|---------------------------|--------|---------------|
+| Default-deny NetworkPolicy | Deny all + allow api↔postgres, worker↔postgres, web→api | Implemented | `infra/k8s/networkpolicy.yaml` |
+| TLS at ingress | Expected in cluster ingress | Target | `infra/k8s/ingress.yaml` |
+| mTLS / service mesh | Not shipped | Target | — |
 
 ---
 
 ## CC7: System Operations
 
-*The entity manages the operation of systems to detect and mitigate processing deviations.*
-
-### CC7.1 — Monitoring and Observability
-
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Application metrics | Micrometer metrics exported to Prometheus | `management.endpoints.web.exposure.include: metrics,prometheus` |
-| Health checks | Liveness + Readiness + Startup probes | `/actuator/health/liveness`, `/actuator/health/readiness` |
-| Structured logging | SLF4J + Logback with pattern: `%d [%thread] %-5level %logger{36} - %msg%n` | `application.yml` logging config |
-| Log levels | Production: `root=INFO`, `com.shadowstack=DEBUG` | `application.yml` logging config |
-
-### CC7.2 — Incident Response
-
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Verification failure alerting | Failed verifications logged at ERROR level + metrics counter | Verify Engine error handling |
-| Pipeline timeout | `pipeline.verification-timeout-seconds: 300` prevents hung operations | `application.yml` pipeline config |
-| Graceful shutdown | `server.shutdown: graceful` drains in-flight requests | `application.yml` server config |
-| Circuit breaker | Circuit breaker on worker → verification pipeline | Worker implementation |
-
-### CC7.3 — Capacity Management
-
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Connection pool limits | HikariCP: `maximum-pool-size: 20`, `minimum-idle: 5` | `application.yml` datasource config |
-| Concurrent analysis limits | `pipeline.max-concurrent-analyses: 4` | `application.yml` pipeline config |
-| Auto-scaling | Kubernetes HPA based on CPU/memory utilization | Kubernetes HPA manifests |
-| Resource limits | CPU and memory limits on all pods | Kubernetes pod specs |
+| Control | ShadowStack implementation | Status | Evidence path |
+|---------|---------------------------|--------|---------------|
+| Actuator health/metrics | Enabled | Partial | `application.yml` |
+| Graceful shutdown | `server.shutdown: graceful` | Implemented | `application.yml` |
+| Circuit breakers | Not productized | Target | — |
 
 ---
 
 ## CC8: Change Management
 
-*The entity authorizes, designs, develops, configures, documents, tests, approves, and implements changes.*
-
-### CC8.1 — Verified Transformation Pipeline
-
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Multi-phase pipeline | Detection → Analysis → Patch → Verify → Review | `RefactorEngine.scan()` — 5 phases |
-| Safety invariant gate | Patches blocked if any invariant violated | `filterCandidates()` in RefactorEngine |
-| Behavioral equivalence proof | Certificate with 7 verification layers | `BehavioralEquivalenceCertificate` |
-| Overlap resolution | Greedy algorithm ensures non-overlapping patches | `RefactorEngine.resolveOverlaps()` |
-| Patch independence validation | Post-generation check that no patches overlap | `RefactorEngine.validatePatchIndependence()` |
-
-### CC8.2 — Human Approval Workflow
-
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Mandatory human review | All patches require human approval (default) | `auto-apply-enabled: false` |
-| Risk-based routing | Higher risk → more senior reviewer required | Review queue priority system |
-| Review context | Similar past migrations shown with success probability | `MigrationCorpusService.findSimilarMigrations()` |
-| Accept/reject with reason | `ReviewDecisionRequest` requires `accepted` boolean + optional `reason` | `ReviewDecisionRequest.java` |
-| Decision audit trail | Every review decision logged with actor, decision, timestamp, reason | `AuditService.logAction()` in review flow |
-
-### CC8.3 — Audit Trail
-
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Transformation creation logged | `TRANSFORMATION_ACCEPTED` / `TRANSFORMATION_REJECTED` events | `MigrationCorpusService` audit calls |
-| Full provenance chain | Candidate → Patch → Certificate → Review → Corpus Entry | End-to-end data model |
-| Immutable evidence | Certificates include content hash; patches are append-only | Certificate + database design |
+| Control | ShadowStack implementation | Status | Evidence path |
+|---------|---------------------------|--------|---------------|
+| Verified transform pipeline | Detect → analyze → patch → verify → review | Implemented | `packages/refactor-engine` |
+| Mandatory human review | Auto-apply off; accept/reject API | Implemented | `apps/api/src/main/java/com/shadowstack/api/controllers/ReviewController.java` |
+| Decision audit | Review decisions logged | Implemented | `AuditService` + review flow |
 
 ---
 
 ## CC9: Risk Mitigation
 
-*The entity identifies and mitigates risks from the use of technology.*
-
-### CC9.1 — Encryption
-
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Encryption in transit | TLS 1.3 on all external endpoints | Ingress TLS configuration |
-| Encryption at rest | PostgreSQL TDE, blob storage AES-256 | Infrastructure configuration |
-| Key management | JWT secrets in Vault / Kubernetes Secrets | `${JWT_SECRET}` environment variable |
-| Hash integrity | SHA-256 content hash on certificates | `BehavioralEquivalenceCertificate` |
-
 ### CC9.2 — Data Retention
 
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Audit log retention | 365 days | `shadowstack.retention.audit-log-days: 365` |
-| Patch history retention | 180 days | `shadowstack.retention.patch-history-days: 180` |
-| Verification evidence retention | 90 days | `shadowstack.retention.verification-evidence-days: 90` |
-| Temp file cleanup | Source checkouts deleted after analysis | Worker cleanup logic |
+| Control | ShadowStack implementation | Status | Evidence path |
+|---------|---------------------------|--------|---------------|
+| Configured retention windows | `audit-log-days`, `patch-history-days`, `verification-evidence-days` | Implemented | `application.yml` / `ShadowStackConfig` |
+| Daily cleanup job | Soft-delete audit + archive verification JSON; audits itself | Implemented | `apps/api/src/main/java/com/shadowstack/api/jobs/RetentionCleanupJob.java` |
+| Evidence registry | `ss_control_evidence` + ADMIN API | Implemented | `V6__soc2_control_readiness.sql`, `ControlEvidenceController.java` |
 
 ### CC9.3 — Dependency Management
 
-| Control | ShadowStack Implementation | Evidence |
-|---|---|---|
-| Pinned dependency versions | All POM files specify exact versions | `pom.xml` files across modules |
-| Vulnerability scanning | Integrated with CI pipeline | Build scripts |
-| Minimal base images | Slim JDK 21 container images | Dockerfile configuration |
-| No unnecessary privileges | Non-root containers, read-only FS | Kubernetes SecurityContext |
+| Control | ShadowStack implementation | Status | Evidence path |
+|---------|---------------------------|--------|---------------|
+| CI vulnerability scan | Trivy filesystem HIGH/CRITICAL (`security-scan` job) | Implemented | `.github/workflows/ci.yml` |
+| Pinned Maven versions | Parent/module POMs | Partial | `pom.xml` |
+| Non-root containers | K8s `runAsNonRoot` | Partial | `infra/k8s/*-deployment.yaml` |
 
 ---
 
 ## Compliance Checklist
 
-> Status values: **Partial** (code present, incomplete), **Target** (designed/documented only), **Not implemented**.
-> ShadowStack is **not SOC 2 certified**.
-
 | # | Criteria | Status | Notes |
-|---|---|---|---|
-| 1 | RBAC with least privilege | Partial | Roles in code: ADMIN, REVIEWER, ANALYST, VIEWER |
-| 2 | All actions audited | Partial | Interceptor + `audit_log` schema; query path thin |
-| 3 | Data encrypted in transit | Target | TLS expected at ingress; not enforced by the app itself |
-| 4 | Data encrypted at rest | Target | Depends on deployed Postgres/disk config |
-| 5 | Human approval for changes | Partial | Mandatory review workflow in API; auto-apply off by default |
-| 6 | Change evidence preserved | Partial | Verification evidence on patches; certificate story incomplete |
-| 7 | Monitoring and alerting | Partial | Actuator/Prometheus endpoints; Grafana rules not shipped |
-| 8 | Incident response capability | Target | Graceful shutdown config; circuit breakers aspirational |
-| 9 | Risk assessment automation | Partial | Risk scoring on candidates/patches |
-| 10 | Data retention policies | Target | Config keys exist; enforcement jobs not proven |
+|---|----------|--------|-------|
+| 1 | RBAC with least privilege | Implemented | ADMIN / REVIEWER / ANALYST / VIEWER |
+| 2 | All actions audited | Implemented | Interceptor + durable `audit_log` (`!demo`) |
+| 3 | Data encrypted in transit | Target | TLS expected at ingress |
+| 4 | Data encrypted at rest | Target | Depends on Postgres/disk |
+| 5 | Human approval for changes | Implemented | Review workflow; auto-apply off |
+| 6 | Change evidence preserved | Partial | Verification JSON + certificates; retention archives old evidence |
+| 7 | Monitoring and alerting | Partial | Actuator/Prometheus; no shipped Grafana rules |
+| 8 | Incident response capability | Target | Graceful shutdown only |
+| 9 | Risk assessment automation | Implemented | Risk scoring on candidates/patches |
+| 10 | Data retention policies | Implemented | Config + `RetentionCleanupJob` |
 | 11 | Input validation | Partial | Bean Validation on many DTOs |
-| 12 | Secrets management | Partial | Env-based secrets for prod/docker; demo defaults remain |
+| 12 | Secrets management | Partial | Env/K8s secrets; demo defaults remain |
 | 13 | Dependency pinning | Partial | Most POMs pin versions |
-| 14 | Container security | Partial | Non-root user in Dockerfiles; seccomp/network policies target |
-| 15 | Separation of duties | Partial | `createdBy` SoD in `ReviewService`; ADMIN override allowed |
+| 14 | Container / network security | Implemented | NetworkPolicy + non-root where set |
+| 15 | Separation of duties | Implemented | `createdBy` SoD; ADMIN override |
+| 16 | Control evidence registry | Implemented | `ss_control_evidence` + `/api/v1/compliance/evidence` |
+| 17 | Vulnerability scanning in CI | Implemented | Trivy `security-scan` job |
+
+---
+
+## Path to certification
+
+Control readiness in this repository is **necessary but not sufficient** for SOC 2.
+
+1. **Stabilize production controls** — Deploy with non-demo profiles, apply V6 grants, NetworkPolicies, secrets management, TLS, and retention schedules in the real environment.
+2. **Collect operating evidence** — Retain audit exports, CI scan results, access reviews, change tickets, and incident records for the observation window.
+3. **Engage an independent auditor** — Select an AICPA-aligned CPA firm experienced with SaaS / SOC 2.
+4. **Type I report** — Point-in-time design (and implementation) opinion: controls suitably designed as of a date.
+5. **Type II report** — Operating effectiveness over a period (typically 3–12 months) with sample testing of the controls above.
+6. **Remediate exceptions** — Close auditor findings; update this matrix and evidence registry accordingly.
+7. **Only then** — Marketing and contracts may cite the auditor’s SOC 2 report. Until that report exists, use only: **“SOC 2 control readiness / audit-ready controls.”**
+
+### API for evidence listing
+
+`GET /api/v1/compliance/evidence` (ADMIN) returns the static control catalog plus rows from `ss_control_evidence`.

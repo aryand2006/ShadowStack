@@ -54,6 +54,10 @@ public class AuditLog {
     @Column(name = "org_id")
     private UUID orgId;
 
+    /** Soft-delete timestamp set by retention cleanup; null means active. */
+    @Column(name = "deleted_at", columnDefinition = "TIMESTAMP WITH TIME ZONE")
+    private OffsetDateTime deletedAt;
+
     public AuditLog() {
     }
 
@@ -144,6 +148,14 @@ public class AuditLog {
 
     public void setOrgId(UUID orgId) {
         this.orgId = orgId;
+    }
+
+    public OffsetDateTime getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(OffsetDateTime deletedAt) {
+        this.deletedAt = deletedAt;
     }
 
     @Override
