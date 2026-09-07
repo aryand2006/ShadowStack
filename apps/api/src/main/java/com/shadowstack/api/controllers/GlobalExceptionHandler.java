@@ -1,6 +1,8 @@
 package com.shadowstack.api.controllers;
 
 import com.shadowstack.api.dto.ApiErrorResponse;
+import com.shadowstack.api.service.OrganizationService.OrganizationConflictException;
+import com.shadowstack.api.service.OrganizationService.OrganizationNotFoundException;
 import com.shadowstack.api.service.ProjectService.ProjectNotFoundException;
 import com.shadowstack.api.service.RefactorOrchestrationService.PatchNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -47,6 +49,28 @@ public class GlobalExceptionHandler {
         log.warn("Patch not found: {}", ex.getPatchId());
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiErrorResponse.of(404, "Not Found", ex.getMessage(), request.getRequestURI()));
+    }
+
+    @ExceptionHandler(OrganizationNotFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleOrganizationNotFound(
+            OrganizationNotFoundException ex, HttpServletRequest request) {
+        log.warn("Organization not found: {}", ex.getOrganizationId());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiErrorResponse.of(404, "Not Found", ex.getMessage(), request.getRequestURI()));
+    }
+
+    @ExceptionHandler(OrganizationConflictException.class)
+    public ResponseEntity<ApiErrorResponse> handleOrganizationConflict(
+            OrganizationConflictException ex, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiErrorResponse.of(409, "Conflict", ex.getMessage(), request.getRequestURI()));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiErrorResponse> handleIllegalArgument(
+            IllegalArgumentException ex, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiErrorResponse.of(400, "Bad Request", ex.getMessage(), request.getRequestURI()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -128,6 +152,16 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiErrorResponse.of(404, "Not Found",
                         "Resource not found", request.getRequestURI()));
+    }
+
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
+    public ResponseEntity<ApiErrorResponse> handleResponseStatus(
+            org.springframework.web.server.ResponseStatusException ex, HttpServletRequest request) {
+        HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());
+        String reason = status.getReasonPhrase();
+        String message = ex.getReason() != null ? ex.getReason() : reason;
+        return ResponseEntity.status(status)
+                .body(ApiErrorResponse.of(status.value(), reason, message, request.getRequestURI()));
     }
 
     @ExceptionHandler(Exception.class)

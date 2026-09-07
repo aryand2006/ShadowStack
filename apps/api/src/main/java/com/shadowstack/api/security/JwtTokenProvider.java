@@ -53,7 +53,7 @@ public class JwtTokenProvider {
 
     /**
      * Generate a JWT token for the given authentication.
-     * Includes {@code org_id} claim (default organization until per-user orgs are wired).
+     * Includes {@code org_id} from {@link OrgUserDetails} when present, otherwise the default org.
      */
     public String generateToken(Authentication authentication) {
         String username = authentication.getName();
@@ -61,17 +61,27 @@ public class JwtTokenProvider {
                 .map(GrantedAuthority::getAuthority)
                 .collect(Collectors.joining(","));
 
+        UUID orgId = resolveOrgId(authentication);
+
         Date now = new Date();
         Date expiry = new Date(now.getTime() + jwtExpirationMs);
 
         return Jwts.builder()
                 .subject(username)
                 .claim(ROLES_CLAIM, roles)
-                .claim(ORG_ID_CLAIM, TenantContext.DEFAULT_ORG_ID.toString())
+                .claim(ORG_ID_CLAIM, orgId.toString())
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(signingKey)
                 .compact();
+    }
+
+    private static UUID resolveOrgId(Authentication authentication) {
+        Object principal = authentication.getPrincipal();
+        if (principal instanceof OrgUserDetails orgUser && orgUser.getOrgId() != null) {
+            return orgUser.getOrgId();
+        }
+        return TenantContext.DEFAULT_ORG_ID;
     }
 
     /**

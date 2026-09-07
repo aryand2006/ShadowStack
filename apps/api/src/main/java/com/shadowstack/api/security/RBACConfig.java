@@ -7,7 +7,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 
 /**
  * Shared RBAC infrastructure (password encoder). User stores are profile-specific:
- * {@link DemoUsersConfig} and {@link ProdUsersConfig}.
+ * {@link DemoUsersConfig} (demo) and {@link OrgUserDetailsService} + {@link ProdUsersConfig} (!demo).
  * <p>
  * Roles:
  * <ul>

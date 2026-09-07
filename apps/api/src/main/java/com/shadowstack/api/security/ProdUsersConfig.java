@@ -5,20 +5,21 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
 
 /**
- * Production / docker users from environment variables.
+ * Production / docker credential validation and env-user fallback.
  * Requires {@code SECURITY_USER} / {@code SECURITY_PASSWORD} (password length ≥ 12).
  * Optional reviewer: {@code SECURITY_REVIEWER_USER} / {@code SECURITY_REVIEWER_PASSWORD}.
+ * <p>
+ * Primary authentication for {@code !demo} is {@link OrgUserDetailsService} (DB + this fallback).
+ * {@link com.shadowstack.api.config.OrgBootstrap} upserts {@code SECURITY_USER} into {@code ss_users}.
  */
 @Configuration
 @Profile("!demo")
@@ -59,22 +60,40 @@ public class ProdUsersConfig {
     }
 
     @Bean
-    public UserDetailsService userDetailsService(PasswordEncoder passwordEncoder) {
-        List<UserDetails> users = new ArrayList<>();
-        users.add(User.builder()
-                .username(securityUser)
-                .password(passwordEncoder.encode(securityPassword))
-                .roles("ADMIN")
-                .build());
+    public EnvCredentialUsers envCredentialUsers(PasswordEncoder passwordEncoder) {
+        List<OrgUserDetails> users = new ArrayList<>();
+        users.add(OrgUserDetails.fromEnv(
+                securityUser,
+                passwordEncoder.encode(securityPassword),
+                "ADMIN"));
 
         if (StringUtils.hasText(reviewerUser) && StringUtils.hasText(reviewerPassword)) {
-            users.add(User.builder()
-                    .username(reviewerUser)
-                    .password(passwordEncoder.encode(reviewerPassword))
-                    .roles("REVIEWER")
-                    .build());
+            users.add(OrgUserDetails.fromEnv(
+                    reviewerUser,
+                    passwordEncoder.encode(reviewerPassword),
+                    "REVIEWER"));
+        }
+        return new EnvCredentialUsers(users);
+    }
+
+    /**
+     * In-memory fallback users from environment variables (used when {@code ss_users} has no match).
+     */
+    public static final class EnvCredentialUsers {
+        private final List<OrgUserDetails> users;
+
+        public EnvCredentialUsers(List<OrgUserDetails> users) {
+            this.users = List.copyOf(users);
         }
 
-        return new InMemoryUserDetailsManager(users);
+        public Optional<OrgUserDetails> findByUsername(String username) {
+            if (!StringUtils.hasText(username)) {
+                return Optional.empty();
+            }
+            String needle = username.trim().toLowerCase(Locale.ROOT);
+            return users.stream()
+                    .filter(u -> u.getUsername().toLowerCase(Locale.ROOT).equals(needle))
+                    .findFirst();
+        }
     }
 }
