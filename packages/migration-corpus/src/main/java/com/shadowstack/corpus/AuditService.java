@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,6 +12,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * Service responsible for recording all auditable actions in the system.
@@ -49,6 +49,16 @@ public class AuditService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void logAction(String action, String entityType, String entityId,
                           String actorId, String actorRole, Map<String, Object> details) {
+        logAction(action, entityType, entityId, actorId, actorRole, details, null);
+    }
+
+    /**
+     * Log an auditable action with an optional organization id.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logAction(String action, String entityType, String entityId,
+                          String actorId, String actorRole, Map<String, Object> details,
+                          UUID orgId) {
         Objects.requireNonNull(action, "Action must not be null");
         Objects.requireNonNull(entityType, "Entity type must not be null");
         Objects.requireNonNull(entityId, "Entity ID must not be null");
@@ -63,6 +73,7 @@ public class AuditService {
             entry.setActorId(actorId);
             entry.setActorRole(actorRole);
             entry.setTimestamp(OffsetDateTime.now());
+            entry.setOrgId(orgId);
 
             if (details != null && !details.isEmpty()) {
                 JsonNode detailsNode = objectMapper.valueToTree(details);
@@ -71,8 +82,8 @@ public class AuditService {
 
             auditLogRepository.save(entry);
 
-            log.debug("Audit logged: action={}, entityType={}, entityId={}, actor={}",
-                    action, entityType, entityId, actorId);
+            log.debug("Audit logged: action={}, entityType={}, entityId={}, actor={}, orgId={}",
+                    action, entityType, entityId, actorId, orgId);
 
         } catch (Exception e) {
             log.error("Failed to write audit log: action={}, entityType={}, entityId={}, actor={}",
@@ -87,6 +98,16 @@ public class AuditService {
     public void logActionWithIp(String action, String entityType, String entityId,
                                 String actorId, String actorRole,
                                 Map<String, Object> details, String ipAddress) {
+        logActionWithIp(action, entityType, entityId, actorId, actorRole, details, ipAddress, null);
+    }
+
+    /**
+     * Log an action with IP address and optional organization id.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logActionWithIp(String action, String entityType, String entityId,
+                                String actorId, String actorRole,
+                                Map<String, Object> details, String ipAddress, UUID orgId) {
         Objects.requireNonNull(action, "Action must not be null");
 
         try {
@@ -98,6 +119,7 @@ public class AuditService {
             entry.setActorRole(actorRole);
             entry.setTimestamp(OffsetDateTime.now());
             entry.setIpAddress(ipAddress);
+            entry.setOrgId(orgId);
 
             if (details != null && !details.isEmpty()) {
                 JsonNode detailsNode = objectMapper.valueToTree(details);
@@ -106,8 +128,8 @@ public class AuditService {
 
             auditLogRepository.save(entry);
 
-            log.debug("Audit logged: action={}, entityType={}, entityId={}, actor={}, ip={}",
-                    action, entityType, entityId, actorId, ipAddress);
+            log.debug("Audit logged: action={}, entityType={}, entityId={}, actor={}, ip={}, orgId={}",
+                    action, entityType, entityId, actorId, ipAddress, orgId);
 
         } catch (Exception e) {
             log.error("Failed to write audit log with IP: action={}, entityType={}, entityId={}",
@@ -137,5 +159,16 @@ public class AuditService {
     @Transactional(readOnly = true)
     public List<AuditLog> getAuditLogsBetween(OffsetDateTime start, OffsetDateTime end) {
         return auditLogRepository.findByTimestampBetween(start, end);
+    }
+
+    /**
+     * Retrieve recent audit entries (newest first), optionally capped.
+     */
+    @Transactional(readOnly = true)
+    public List<AuditLog> findRecent(int limit) {
+        return auditLogRepository.findAll().stream()
+                .sorted((a, b) -> b.getTimestamp().compareTo(a.getTimestamp()))
+                .limit(Math.max(0, limit))
+                .toList();
     }
 }

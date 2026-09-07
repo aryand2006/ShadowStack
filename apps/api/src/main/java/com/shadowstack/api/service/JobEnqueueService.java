@@ -2,6 +2,7 @@ package com.shadowstack.api.service;
 
 import com.shadowstack.api.persistence.JobRepository;
 import com.shadowstack.api.persistence.PersistedJob;
+import com.shadowstack.api.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
@@ -42,6 +43,7 @@ public class JobEnqueueService {
         job.setPayloadJson("{\"patchId\":\"" + patchId + "\"}");
         job.setCreatedAt(now);
         job.setUpdatedAt(now);
+        job.setOrgId(TenantContext.requireOrgIdOrDefault());
         jobRepository.save(job);
         log.info("Enqueued VERIFY job {} for patch {}", job.getId(), patchId);
         return job.getId();

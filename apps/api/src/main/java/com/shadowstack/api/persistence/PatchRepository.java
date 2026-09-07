@@ -10,4 +10,8 @@ public interface PatchRepository extends JpaRepository<PersistedPatch, UUID> {
     List<PersistedPatch> findByProjectId(UUID projectId);
 
     List<PersistedPatch> findByStatus(String status);
+
+    List<PersistedPatch> findByStatusAndOrgId(String status, UUID orgId);
+
+    List<PersistedPatch> findByOrgId(UUID orgId);
 }

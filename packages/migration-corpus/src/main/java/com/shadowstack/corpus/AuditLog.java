@@ -51,6 +51,9 @@ public class AuditLog {
     @Column(name = "ip_address", length = 45)
     private String ipAddress;
 
+    @Column(name = "org_id")
+    private UUID orgId;
+
     public AuditLog() {
     }
 
@@ -135,6 +138,14 @@ public class AuditLog {
         this.ipAddress = ipAddress;
     }
 
+    public UUID getOrgId() {
+        return orgId;
+    }
+
+    public void setOrgId(UUID orgId) {
+        this.orgId = orgId;
+    }
+
     @Override
     public String toString() {
         return "AuditLog{" +
@@ -143,6 +154,7 @@ public class AuditLog {
                 ", entityType='" + entityType + '\'' +
                 ", entityId='" + entityId + '\'' +
                 ", actorId='" + actorId + '\'' +
+                ", orgId=" + orgId +
                 ", timestamp=" + timestamp +
                 '}';
     }

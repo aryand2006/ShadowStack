@@ -9,6 +9,7 @@ import com.shadowstack.api.dto.PatchDetailResponse.RiskAssessment;
 import com.shadowstack.api.dto.PatchDetailResponse.VerificationEvidence;
 import com.shadowstack.api.dto.ProjectResponse;
 import com.shadowstack.api.dto.ProjectResponse.ProjectStatus;
+import com.shadowstack.api.tenant.TenantContext;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
@@ -47,6 +48,9 @@ public class ProjectMapper {
         entity.setRootPath(root.toAbsolutePath().normalize().toString());
         entity.setCreatedAt(project.createdAt());
         entity.setUpdatedAt(project.updatedAt());
+        if (entity.getOrgId() == null) {
+            entity.setOrgId(TenantContext.requireOrgIdOrDefault());
+        }
     }
 
     public void apply(PersistedProject entity, ProjectResponse project) {
@@ -104,6 +108,9 @@ public class ProjectMapper {
         entity.setReviewJson(writeJson(patch.review()));
         entity.setCreatedAt(patch.createdAt());
         entity.setUpdatedAt(patch.updatedAt());
+        if (entity.getOrgId() == null) {
+            entity.setOrgId(TenantContext.requireOrgIdOrDefault());
+        }
     }
 
     public PatchDetailResponse toPatchDetailResponse(PersistedPatch entity) {
