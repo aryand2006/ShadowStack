@@ -335,7 +335,7 @@ public class MetaController {
                 "2_files", "mvp_plus",
                 "3_cics", "facade",
                 "4_ims_sql", "facade",
-                "5_jcl", "parser_mvp",
+                "5_jcl", "mvp",
                 "6_call_goldens", "done",
                 "7_productization", "mvp"
         ));
@@ -350,6 +350,7 @@ public class MetaController {
                 "SELECT … ASSIGN TO + FD / 01 record layouts",
                 "OPEN/READ/WRITE/CLOSE sequential + READ AT END + READ INTO",
                 "OPEN I-O + REWRITE (line-oriented sequential MVP)",
+                "JCL job graph + local JclJobRunner (Translated* steps)",
                 "stdout goldens (HELLOSS)"
         ));
         body.put("knownGaps", List.of(
@@ -359,7 +360,7 @@ public class MetaController {
                 "DELETE / START / SORT / MERGE",
                 "BMS / screens",
                 "Embedded CICS/IMS/SQL runtime in generated code",
-                "JCL job runner (parser only)",
+                "JCL COND/PROC/INCLUDE and cataloged datasets",
                 "CALL BY REFERENCE/CONTENT/VALUE + LINKAGE SECTION",
                 "dynamic CALL targets",
                 "Full PERFORM THRU graphs"

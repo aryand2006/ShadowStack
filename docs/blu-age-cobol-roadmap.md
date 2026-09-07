@@ -1,7 +1,7 @@
 # Roadmap — Full Blu Age–class COBOL → Java
 
-> **Status on `main`:** Phase **0–1 ✅**, Phase **2 sequential I/O MVP** (+ SELECT/AT END),
-> Phases **3–5 façades**, Phase **6 ✅ CALL graph + goldens + CALL USING MVP**,
+> **Status on `main`:** Phase **0–1 ✅**, Phase **2 sequential I/O MVP+** (FD/ASSIGN/REWRITE),
+> Phases **3–4 façades**, Phase **5 JCL parser + local runner MVP**, Phase **6 ✅ CALL**,
 > Phase **7 🟡 MVP** Meta gap browser + review proofArtifacts.
 > Still **not** certified whole-system Blu Age parity.
 
@@ -31,7 +31,7 @@ databases, files, JCL, and cross-program control flow.
 | 2 Files | 🟡 MVP+ | SELECT/FD/01, sequential I/O, AT END, OPEN I-O + REWRITE; no VSAM |
 | 3 CICS | 🟡 façade | `CicsFacade` fail-closed; EXEC CICS → gap |
 | 4 IMS/SQL | 🟡 façade | `ImsFacade`; EXEC SQL → gap |
-| 5 JCL | 🟡 parser | `JclJobGraph` + `PAYDEMO.jcl` |
+| 5 JCL | 🟡 MVP | `JclJobGraph` parser + `JclJobRunner` local step executor (no COND/PROC) |
 | 6 CALL/goldens | ✅ | `CobolProgramGraph`, project translate, HELLOSS golden, CALL USING→String[] MVP |
 | 7 Productization | 🟡 MVP | Meta gap browser + review proofArtifacts; deep surfaces still open |
 
