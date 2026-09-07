@@ -93,7 +93,7 @@
         <guava.version>33.1.0-jre</guava.version>
 
         <!-- Database -->
-        <postgresql.version>42.7.11</postgresql.version>
+        <postgresql.version>42.7.12</postgresql.version>
         <pgvector.version>0.1.6</pgvector.version>
         <flyway.version>10.8.1</flyway.version>
 
