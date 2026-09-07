@@ -1,5 +1,7 @@
 package com.shadowstack.adapters.python;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shadowstack.adapters.LanguageAdapter;
 import com.shadowstack.adapters.model.*;
 import org.slf4j.Logger;
@@ -7,6 +9,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -17,17 +20,20 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Full {@link LanguageAdapter} implementation for Python source code.
  *
- * <p>This adapter targets the Python 2 → 3 modernization use case. It ships with a
- * self-contained lexer that tracks string/comment boundaries so that pattern
- * detection never misfires inside string literals or comments. It does not
- * depend on a Python runtime for parsing — only the optional
- * {@code verifyPatch} compile check uses {@code python3} if present.</p>
+ * <p>This adapter targets the Python 2 → 3 modernization use case. Candidate
+ * detection prefers a LibCST AST engine ({@code ast_engine.py}) when
+ * {@code python3} and LibCST are available, then merges in regex-based
+ * findings for rule IDs the AST path did not cover (including Py2-only syntax
+ * LibCST cannot parse). Apply tries the AST engine first and falls back to
+ * line-oriented text replacement.</p>
  *
  * <h3>Refactoring Rules</h3>
  * <ul>
@@ -46,8 +52,14 @@ public class PythonAdapter implements LanguageAdapter {
     private static final Logger LOG = LoggerFactory.getLogger(PythonAdapter.class);
     private static final String LANGUAGE_ID = "python";
     private static final String LANGUAGE_VERSION = "3.12";
+    private static final String AST_ENGINE_RESOURCE =
+            "com/shadowstack/adapters/python/ast_engine.py";
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final Map<Path, SemanticModel> modelCache = new ConcurrentHashMap<>();
+    private final Object astEngineLock = new Object();
+    private volatile Path astEngineScript;
+    private volatile Boolean astEngineAvailable;
 
     @Override
     public String languageId() {
@@ -148,7 +160,20 @@ public class PythonAdapter implements LanguageAdapter {
             try {
                 String source = Files.readString(file, StandardCharsets.UTF_8);
                 String relPath = sourceRoot.relativize(file).toString();
-                all.addAll(detectCandidatesInFile(source, relPath));
+                List<RefactorCandidate> astCandidates = detectWithAstEngine(file, relPath);
+                if (!astCandidates.isEmpty()) {
+                    Set<String> astRuleIds = astCandidates.stream()
+                            .map(RefactorCandidate::ruleId)
+                            .collect(Collectors.toSet());
+                    all.addAll(astCandidates);
+                    for (RefactorCandidate regexCandidate : detectCandidatesInFile(source, relPath)) {
+                        if (!astRuleIds.contains(regexCandidate.ruleId())) {
+                            all.add(regexCandidate);
+                        }
+                    }
+                } else {
+                    all.addAll(detectCandidatesInFile(source, relPath));
+                }
             } catch (IOException e) {
                 LOG.warn("Skipping {}: {}", file, e.getMessage());
             }
@@ -173,17 +198,25 @@ public class PythonAdapter implements LanguageAdapter {
             String originalSource = Files.readString(targetFile, StandardCharsets.UTF_8);
             String beforeHash = computeAstHash(originalSource);
 
-            String patchedSource = applyTextReplacement(originalSource, candidate);
-            String afterHash = computeAstHash(patchedSource);
+            boolean usedAst = false;
+            String patchedSource;
+            if (isAstEngineAvailable()
+                    && tryApplyWithAstEngine(targetFile, candidate.ruleId(), candidate.startLine())) {
+                patchedSource = Files.readString(targetFile, StandardCharsets.UTF_8);
+                usedAst = true;
+            } else {
+                patchedSource = applyTextReplacement(originalSource, candidate);
+                Files.writeString(targetFile, patchedSource, StandardCharsets.UTF_8);
+            }
 
+            String afterHash = computeAstHash(patchedSource);
             String unifiedDiff = generateUnifiedDiff(candidate.sourceFile(), originalSource, patchedSource);
 
-            Files.writeString(targetFile, patchedSource, StandardCharsets.UTF_8);
+            LOG.info("Applied Python refactoring '{}' to {} via {}. AST hash {} → {}",
+                    candidate.ruleId(), candidate.sourceFile(),
+                    usedAst ? "libcst" : "regex", beforeHash, afterHash);
 
-            LOG.info("Applied Python refactoring '{}' to {}. AST hash {} → {}",
-                    candidate.ruleId(), candidate.sourceFile(), beforeHash, afterHash);
-
-            return PatchResult.builder()
+            PatchResult.Builder builder = PatchResult.builder()
                     .candidateId(candidate.candidateId())
                     .unifiedDiff(unifiedDiff)
                     .beforeAstHash(beforeHash)
@@ -191,8 +224,13 @@ public class PythonAdapter implements LanguageAdapter {
                     .addAffectedFile(candidate.sourceFile())
                     .success(true)
                     .putMetadata("ruleId", candidate.ruleId())
-                    .putMetadata("linesAffected", candidate.lineSpan())
-                    .build();
+                    .putMetadata("linesAffected", candidate.lineSpan());
+            if (usedAst) {
+                builder.putMetadata("parseEngine", "libcst");
+            } else {
+                builder.putMetadata("parseEngine", "regex");
+            }
+            return builder.build();
         } catch (Exception e) {
             LOG.error("Failed to apply Python refactoring '{}'", candidate.ruleId(), e);
             return PatchResult.failure(candidate.candidateId(), e.getMessage());
@@ -308,6 +346,230 @@ public class PythonAdapter implements LanguageAdapter {
             long elapsed = System.currentTimeMillis() - start;
             return new VerificationResult.LayerResult("structural", false, 0.0,
                     "Re-parse failed: " + e.getMessage(), elapsed);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  LIBCST AST ENGINE
+    // ═══════════════════════════════════════════════════════════════════════
+
+    private boolean isAstEngineAvailable() {
+        Boolean cached = astEngineAvailable;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (astEngineLock) {
+            if (astEngineAvailable != null) {
+                return astEngineAvailable;
+            }
+            try {
+                Path script = resolveAstEngineScript();
+                if (script == null) {
+                    astEngineAvailable = false;
+                    return false;
+                }
+                ProcessBuilder pb = new ProcessBuilder(
+                        "python3", "-c", "import libcst");
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                boolean finished = p.waitFor(10, TimeUnit.SECONDS);
+                astEngineAvailable = finished && p.exitValue() == 0;
+                if (!astEngineAvailable) {
+                    LOG.info("LibCST AST engine unavailable (python3/libcst probe failed)");
+                }
+                return astEngineAvailable;
+            } catch (Exception e) {
+                LOG.debug("AST engine probe failed: {}", e.getMessage());
+                astEngineAvailable = false;
+                return false;
+            }
+        }
+    }
+
+    private Path resolveAstEngineScript() throws IOException {
+        Path cached = astEngineScript;
+        if (cached != null && Files.isRegularFile(cached)) {
+            return cached;
+        }
+        synchronized (astEngineLock) {
+            if (astEngineScript != null && Files.isRegularFile(astEngineScript)) {
+                return astEngineScript;
+            }
+            // Prefer unpacked resources path during development.
+            Path devPath = Path.of("packages/language-adapters/src/main/resources")
+                    .resolve(AST_ENGINE_RESOURCE)
+                    .toAbsolutePath()
+                    .normalize();
+            if (!Files.isRegularFile(devPath)) {
+                devPath = Path.of("/workspace/packages/language-adapters/src/main/resources")
+                        .resolve(AST_ENGINE_RESOURCE);
+            }
+            if (Files.isRegularFile(devPath)) {
+                astEngineScript = devPath;
+                return astEngineScript;
+            }
+
+            ClassLoader cl = Thread.currentThread().getContextClassLoader();
+            if (cl == null) {
+                cl = PythonAdapter.class.getClassLoader();
+            }
+            try (InputStream in = cl.getResourceAsStream(AST_ENGINE_RESOURCE)) {
+                if (in == null) {
+                    LOG.warn("AST engine resource not found on classpath: {}", AST_ENGINE_RESOURCE);
+                    return null;
+                }
+                Path temp = Files.createTempFile("shadowstack-py-ast-engine-", ".py");
+                temp.toFile().deleteOnExit();
+                Files.copy(in, temp, StandardCopyOption.REPLACE_EXISTING);
+                astEngineScript = temp;
+                return astEngineScript;
+            }
+        }
+    }
+
+    private List<RefactorCandidate> detectWithAstEngine(Path file, String relPath) {
+        if (!isAstEngineAvailable()) {
+            return List.of();
+        }
+        try {
+            Path script = resolveAstEngineScript();
+            if (script == null) {
+                return List.of();
+            }
+            ProcessBuilder pb = new ProcessBuilder(
+                    "python3", script.toString(), "detect", file.toAbsolutePath().toString());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String output;
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                output = reader.lines().collect(Collectors.joining("\n")).trim();
+            }
+            boolean finished = p.waitFor(30, TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                LOG.warn("AST detect timed out for {}", relPath);
+                return List.of();
+            }
+            if (p.exitValue() != 0 || output.isEmpty()) {
+                return List.of();
+            }
+            // Prefer the last JSON line in case of warnings on stdout.
+            String json = output;
+            int lastNl = output.lastIndexOf('\n');
+            if (lastNl >= 0) {
+                String last = output.substring(lastNl + 1).trim();
+                if (last.startsWith("[")) {
+                    json = last;
+                }
+            }
+            if (!json.startsWith("[")) {
+                return List.of();
+            }
+            JsonNode arr = JSON.readTree(json);
+            if (!arr.isArray() || arr.isEmpty()) {
+                return List.of();
+            }
+            List<RefactorCandidate> out = new ArrayList<>();
+            for (JsonNode node : arr) {
+                String ruleId = textOr(node, "ruleId", "");
+                if (ruleId.isEmpty()) {
+                    continue;
+                }
+                String ruleName = textOr(node, "ruleName", ruleId);
+                String before = textOr(node, "beforeSnippet", "");
+                String after = textOr(node, "afterSnippet", before);
+                int startLine = node.path("startLine").asInt(1);
+                int endLine = node.path("endLine").asInt(startLine);
+                double confidence = node.path("confidence").asDouble(0.9);
+                confidence = Math.max(0.0, Math.min(1.0, confidence));
+                RiskTier risk = parseRisk(textOr(node, "risk", "LOW"));
+                out.add(RefactorCandidate.builder()
+                        .sourceFile(relPath)
+                        .startLine(startLine)
+                        .endLine(endLine)
+                        .ruleId(ruleId)
+                        .ruleName(ruleName)
+                        .ruleCategory("MODERNIZATION")
+                        .beforeSnippet(before)
+                        .proposedAfterSnippet(after)
+                        .confidenceScore(confidence)
+                        .riskTier(risk)
+                        .addSafetyInvariant(new SafetyInvariant(
+                                "py-libcst", "Detected via LibCST AST engine",
+                                SafetyInvariant.Category.BEHAVIORAL_EQUIVALENCE,
+                                SafetyInvariant.Status.SATISFIED,
+                                "LibCST structural match"))
+                        .putAstContext("language", "python")
+                        .putAstContext("ruleId", ruleId)
+                        .putAstContext("parseEngine", "libcst")
+                        .build());
+            }
+            return out;
+        } catch (Exception e) {
+            LOG.debug("AST detect failed for {}: {}", relPath, e.getMessage());
+            return List.of();
+        }
+    }
+
+    private boolean tryApplyWithAstEngine(Path file, String ruleId, int startLine) {
+        try {
+            Path script = resolveAstEngineScript();
+            if (script == null) {
+                return false;
+            }
+            ProcessBuilder pb = new ProcessBuilder(
+                    "python3", script.toString(), "apply",
+                    file.toAbsolutePath().toString(), ruleId, Integer.toString(startLine));
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String output;
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                output = reader.lines().collect(Collectors.joining("\n")).trim();
+            }
+            boolean finished = p.waitFor(30, TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                return false;
+            }
+            if (output.isEmpty()) {
+                return false;
+            }
+            String json = output;
+            int lastNl = output.lastIndexOf('\n');
+            if (lastNl >= 0) {
+                String last = output.substring(lastNl + 1).trim();
+                if (last.startsWith("{")) {
+                    json = last;
+                }
+            }
+            JsonNode node = JSON.readTree(json);
+            return node.path("ok").asBoolean(false);
+        } catch (Exception e) {
+            LOG.debug("AST apply failed for {} ({}:{}): {}",
+                    file, ruleId, startLine, e.getMessage());
+            return false;
+        }
+    }
+
+    private static String textOr(JsonNode node, String field, String fallback) {
+        JsonNode v = node.get(field);
+        if (v == null || v.isNull()) {
+            return fallback;
+        }
+        String s = v.asText();
+        return s != null ? s : fallback;
+    }
+
+    private static RiskTier parseRisk(String risk) {
+        if (risk == null) {
+            return RiskTier.LOW;
+        }
+        try {
+            return RiskTier.valueOf(risk.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            return RiskTier.LOW;
         }
     }
 

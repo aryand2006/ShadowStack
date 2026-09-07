@@ -1,75 +1,55 @@
-000100 IDENTIFICATION DIVISION.                                         00000100
-000200 PROGRAM-ID. PAYROLL.                                             00000200
-000300 AUTHOR. SHADOWSTACK-DEMO.                                        00000300
-000400*                                                                 00000400
-000500* Legacy COBOL-85 payroll calculator used as input for the        00000500
-000600* ShadowStack CobolAdapter.                                       00000600
-000700*                                                                 00000700
-000800 ENVIRONMENT DIVISION.                                            00000800
-000900 DATA DIVISION.                                                   00000900
-001000 WORKING-STORAGE SECTION.                                         00001000
-001100 01 EMPLOYEE-RECORD.                                              00001100
-001200    05 EMP-ID         PIC 9(5).                                   00001200
-001300    05 EMP-NAME       PIC X(30).                                  00001300
-001400    05 HOURS-WORKED   PIC 9(3)V99.                                00001400
-001500    05 HOURLY-RATE    PIC 9(3)V99.                                00001500
-001600 01 GROSS-PAY         PIC 9(7)V99.                                00001600
-001700 01 TAX-RATE          PIC V999 VALUE .150.                        00001700
-001750 01 WS-ACTIVE       PIC X VALUE "N".                              00001750
-001800 01 NET-PAY           PIC 9(7)V99.                                00001800
-001900 PROCEDURE DIVISION.                                              00001900
-002000 MAIN-PARA.                                                       00002000
-002100     ACCEPT EMP-NAME.                                             00002100
-002200     MOVE 12345 TO EMP-ID.                                        00002200
-002300     MOVE "JANE SMITH" TO EMP-NAME.                               00002300
-002400     MOVE 040.00 TO HOURS-WORKED.                                 00002400
-002500     MOVE 025.00 TO HOURLY-RATE.                                  00002500
-002600     ADD 1 TO EMP-ID.                                             00002600
-002700     SUBTRACT 1 FROM EMP-ID.                                      00002700
-002800     PERFORM CALC-GROSS.                                          00002800
-002900     PERFORM CALC-NET.                                            00002900
-003000     PERFORM DISPLAY-RESULT.                                      00003000
-003100     GO TO END-PARA.                                              00003100
-003200 CALC-GROSS.                                                      00003200
-003300     COMPUTE GROSS-PAY = HOURS-WORKED * HOURLY-RATE.              00003300
-003400 CALC-NET.                                                        00003400
-003500     COMPUTE NET-PAY = GROSS-PAY - (GROSS-PAY * TAX-RATE).        00003500
-003600 DISPLAY-RESULT.                                                  00003600
-003700     DISPLAY "EMPLOYEE: " EMP-NAME.                               00003700
-003800     DISPLAY "GROSS:    " GROSS-PAY.                              00003800
-003900     DISPLAY "NET:      " NET-PAY.                                00003900
-004000 END-PARA.                                                        00004000
-004050     MULTIPLY HOURLY-RATE BY HOURS-WORKED.                        00004050
-004060     DIVIDE 2 INTO GROSS-PAY.                                     00004060
-004070     INITIALIZE EMP-NAME.                                         00004070
-004080     STRING "EMP-" EMP-ID INTO EMP-NAME.                          00004080
-004090     SET WS-ACTIVE TO TRUE.                                       00004090
-004095     EXIT PROGRAM.                                                00004095
-004092     INSPECT EMP-NAME REPLACING ALL " " BY "0".                   00409200
-004093     UNSTRING EMP-NAME DELIMITED BY "," INTO EMP-ID EMP-NAME.     00409300
-004094     OPEN INPUT EMP-FILE.                                         00409400
-004095     READ EMP-FILE INTO EMPLOYEE-RECORD.                          00409500
-004096     WRITE EMPLOYEE-RECORD FROM EMPLOYEE-RECORD.                  00409600
-004097     CLOSE EMP-FILE.                                              00409700
-004098     CALL "TAXCALC".                                              00409800
-004099     CONTINUE                                                     00409900
-004100     
-       EVALUATE WS-STATUS
-           WHEN "OK"
-               CONTINUE
-           WHEN OTHER
-               DISPLAY "ERR"
-       END-EVALUATE
-       PERFORM CALC-TAX UNTIL WS-DONE = "Y"
-       PERFORM CALC-TAX VARYING WS-IDX FROM 1 BY 1 UNTIL WS-IDX > 10
-       PERFORM CALC-TAX 5 TIMES
-       SORT SORT-FILE ON ASCENDING KEY WS-NAME
-           USING IN-FILE GIVING OUT-FILE
-       SEARCH EMP-TABLE
-           AT WS-FOUND = "Y"
-       END-SEARCH
-       ALTER PARA-A TO PROCEED TO PARA-B
-       ALLOCATE WS-BUF
-       FREE WS-BUF
-
-       STOP RUN.                                                    00004100
+000100 IDENTIFICATION DIVISION.
+000200 PROGRAM-ID. PAYROLL.
+000300 AUTHOR. SHADOWSTACK-DEMO.
+000400*
+000500* Legacy COBOL-85 payroll calculator used as input for the
+000600* ShadowStack CobolAdapter preserving track (cobc-verified).
+000700*
+000800 ENVIRONMENT DIVISION.
+000900 DATA DIVISION.
+001000 WORKING-STORAGE SECTION.
+001100 01 EMPLOYEE-RECORD.
+001200    05 EMP-ID         PIC 9(5) VALUE 12345.
+001300    05 EMP-NAME       PIC X(30) VALUE "JANE SMITH".
+001400    05 HOURS-WORKED   PIC 9(3)V99 VALUE 40.00.
+001500    05 HOURLY-RATE    PIC 9(3)V99 VALUE 25.00.
+001600 01 GROSS-PAY         PIC 9(7)V99.
+001700 01 TAX-RATE          PIC V999 VALUE .150.
+001800 01 NET-PAY           PIC 9(7)V99.
+001900 01 WS-ACTIVE         PIC X VALUE "N".
+002000    88 WS-IS-ACTIVE   VALUE "Y".
+002100 01 WS-STATUS         PIC X(2) VALUE "OK".
+002200 PROCEDURE DIVISION.
+002300 MAIN-PARA.
+002400     MOVE 12345 TO EMP-ID.
+002500     MOVE "JANE SMITH" TO EMP-NAME.
+002600     MOVE 40.00 TO HOURS-WORKED.
+002700     MOVE 25.00 TO HOURLY-RATE.
+002800     ADD 1 TO EMP-ID.
+002900     SUBTRACT 1 FROM EMP-ID.
+003000     PERFORM CALC-GROSS.
+003100     PERFORM CALC-NET.
+003200     PERFORM DISPLAY-RESULT.
+003300     SET WS-IS-ACTIVE TO TRUE.
+003400     EVALUATE TRUE
+003500         WHEN WS-STATUS = "OK"
+003600             CONTINUE
+003700         WHEN OTHER
+003800             DISPLAY "ERR"
+003900     END-EVALUATE
+004000     IF EMP-ID = 12345
+004100         NEXT SENTENCE
+004200     ELSE
+004300         DISPLAY "SKIP".
+004400     GO TO END-PARA.
+004500 CALC-GROSS.
+004600     COMPUTE GROSS-PAY = HOURS-WORKED * HOURLY-RATE.
+004700 CALC-NET.
+004800     COMPUTE NET-PAY = GROSS-PAY - (GROSS-PAY * TAX-RATE).
+004900 DISPLAY-RESULT.
+005000     DISPLAY "EMPLOYEE: " EMP-NAME.
+005100     DISPLAY "GROSS:    " GROSS-PAY.
+005200     DISPLAY "NET:      " NET-PAY.
+005300 END-PARA.
+005400     EXIT PROGRAM.
+005500     STOP RUN.

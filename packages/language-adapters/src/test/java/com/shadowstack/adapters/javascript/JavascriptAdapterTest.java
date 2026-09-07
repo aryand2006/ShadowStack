@@ -5,6 +5,7 @@ import com.shadowstack.adapters.model.*;
 import com.shadowstack.adapters.model.RefactorCandidate;
 import com.shadowstack.adapters.model.SemanticModel;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.charset.StandardCharsets;
@@ -17,6 +18,25 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.*;
 
 class JavascriptAdapterTest {
+
+    static boolean jsAstEngineAvailable() {
+        try {
+            Path engine = Path.of("packages/language-adapters/native-engines/js/ast_engine.mjs");
+            if (!Files.isRegularFile(engine)) {
+                engine = Path.of("/workspace/packages/language-adapters/native-engines/js/ast_engine.mjs");
+            }
+            if (!Files.isRegularFile(engine)) {
+                return false;
+            }
+            Process p = new ProcessBuilder("node", "--check", engine.toString())
+                    .directory(engine.getParent().toFile())
+                    .redirectErrorStream(true)
+                    .start();
+            return p.waitFor() == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
     @Test
     void parses_and_detects_javascript_modernization_rules(@TempDir Path tmp) throws Exception {
@@ -109,6 +129,55 @@ class JavascriptAdapterTest {
         assertEquals(VerificationResult.Verdict.PASS, verification.verdict(),
                 () -> String.valueOf(verification.layerResults()));
         assertTrue(verification.compileSuccess());
+    }
+
+    @Test
+    @EnabledIf("jsAstEngineAvailable")
+    void astEngine_detects_and_applies_var_to_let(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("sample.js");
+        Files.writeString(file, "var x = 1;\n", StandardCharsets.UTF_8);
+        JavascriptAdapter adapter = new JavascriptAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        RefactorCandidate target = adapter.listRefactorCandidates(
+                        model, LanguageAdapter.RefactorRuleSet.empty()).stream()
+                .filter(c -> "js.var_to_let".equals(c.ruleId()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("acorn", target.astContext().get("parseEngine"));
+        PatchResult patch = adapter.applyRefactor(target, tmp);
+        assertTrue(patch.success(), () -> String.valueOf(patch.errorMessage()));
+        assertEquals("acorn", patch.metadata().get("parseEngine"));
+        assertTrue(Files.readString(file).contains("let x"), Files.readString(file));
+        VerificationResult verification = adapter.verifyPatch(
+                patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+        assertEquals(VerificationResult.Verdict.PASS, verification.verdict(),
+                () -> String.valueOf(verification.layerResults()));
+    }
+
+    @Test
+    @EnabledIf("jsAstEngineAvailable")
+    void astEngine_detects_and_applies_strict_equality(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("eq.js");
+        Files.writeString(file, "function isOne(x) {\n  return x == \"1\";\n}\n",
+                StandardCharsets.UTF_8);
+        JavascriptAdapter adapter = new JavascriptAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        RefactorCandidate target = adapter.listRefactorCandidates(
+                        model, LanguageAdapter.RefactorRuleSet.empty()).stream()
+                .filter(c -> "js.==_to_===".equals(c.ruleId()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("acorn", target.astContext().get("parseEngine"));
+        PatchResult patch = adapter.applyRefactor(target, tmp);
+        assertTrue(patch.success(), () -> String.valueOf(patch.errorMessage()));
+        assertEquals("acorn", patch.metadata().get("parseEngine"));
+        String updated = Files.readString(file);
+        assertTrue(updated.contains("==="), updated);
+        assertFalse(updated.contains("x == \""), updated);
+        VerificationResult verification = adapter.verifyPatch(
+                patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+        assertEquals(VerificationResult.Verdict.PASS, verification.verdict(),
+                () -> String.valueOf(verification.layerResults()));
     }
 
     @Test

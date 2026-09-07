@@ -22,24 +22,15 @@ import java.util.regex.Pattern;
 /**
  * Full {@link LanguageAdapter} implementation for COBOL-85 / COBOL-2002 source.
  *
- * <p>The adapter ships with a self-contained fixed-format COBOL scanner that
- * tracks the standard COBOL reference format (cols 1–6 sequence area,
- * col 7 indicator, cols 8–72 program area, cols 73–80 identification area)
- * and a free-format mode. It identifies divisions, sections, paragraphs,
- * working-storage items, and a small set of legacy patterns that map to
- * modernization refactor candidates.</p>
- *
- * <h3>Refactoring Rules</h3>
+ * <p>Two product tracks:</p>
  * <ul>
- *   <li>{@code cobol.fixed_to_free} — Convert fixed-format source (cols 1–7
- *       prefix, cols 73–80 suffix) to COBOL-2002 free-format.</li>
- *   <li>{@code cobol.goto_to_perform} — Replace bare {@code GO TO PARA-X}
- *       branches with {@code PERFORM PARA-X} when the GO TO is the last
- *       statement in its enclosing paragraph (safe linear forward branch).</li>
- *   <li>{@code cobol.stop_run_to_goback} — Replace {@code STOP RUN} program
- *       termination with {@code GOBACK} (COBOL-2002 idiom, also CICS-safe).</li>
- *   <li>{@code cobol.alter_removed} — Flag {@code ALTER} statements as
- *       removed-in-COBOL-2002 anti-patterns.</li>
+ *   <li><b>preserving</b> ({@code mode=preserving}) — COBOL stays COBOL
+ *       (fixed→free, STOP RUN→GOBACK, terminal GO TO→PERFORM, EXIT PROGRAM→GOBACK,
+ *       NEXT SENTENCE→CONTINUE, etc.). Verified with {@code cobc -fsyntax-only}
+ *       when GnuCOBOL is available.</li>
+ *   <li><b>translate</b> ({@code mode=translate}) — COBOL→Java-ish migration
+ *       stubs (DISPLAY→System.out, MOVE→assignment, …). Never cobc-gated;
+ *       detect-oriented / non-auto-apply.</li>
  * </ul>
  */
 public class CobolAdapter implements LanguageAdapter {
@@ -48,12 +39,46 @@ public class CobolAdapter implements LanguageAdapter {
     private static final String LANGUAGE_ID = "cobol";
     private static final String LANGUAGE_VERSION = "85";
 
+    /** COBOL stays COBOL (industry full track). */
+    public static final String MODE_PRESERVING = "preserving";
+    /** COBOL→Java-ish stubs (adapter track). */
+    public static final String MODE_TRANSLATE = "translate";
+
+    /**
+     * All preserving-track rule IDs (auto-applicable allowlist source).
+     * Detect-only entries use identity after-snippets so auto-apply is a no-op.
+     */
+    public static final Set<String> PRESERVING_RULE_IDS = Set.of(
+            "cobol.fixed_to_free",
+            "cobol.free_format_indicator",
+            "cobol.stop_run_to_goback",
+            "cobol.goto_to_perform",
+            "cobol.exit_program_to_goback",
+            "cobol.section_exit_goback",
+            "cobol.next_sentence_to_continue",
+            "cobol.evaluate_true_simplify",
+            "cobol.alter_removed",
+            "cobol.remove_alter",
+            "cobol.continue_to_empty",
+            "cobol.set_true_88",
+            "cobol.inline_perform",
+            "cobol.perform_thru_expand",
+            "cobol.initialize_replacing",
+            "cobol.inspect_converting",
+            "cobol.program_id_is_initial"
+    );
+
     private static final int SEQ_AREA_END = 6;       // cols 1-6  (1-based: 1..6)
     private static final int INDICATOR_COL = 6;       // col 7    (0-based: 6)
     private static final int PROGRAM_AREA_START = 7;  // col 8    (0-based: 7)
     private static final int PROGRAM_AREA_END = 72;   // col 72   (1-based)
 
     private final Map<Path, SemanticModel> modelCache = new ConcurrentHashMap<>();
+
+    /** @return {@code true} when the rule belongs to the COBOL-preserving track */
+    public static boolean isPreservingRule(String ruleId) {
+        return ruleId != null && PRESERVING_RULE_IDS.contains(ruleId);
+    }
 
     @Override
     public String languageId() {
@@ -195,12 +220,26 @@ public class CobolAdapter implements LanguageAdapter {
         List<RefactorCandidate> out = new ArrayList<>();
         boolean fixed = isFixedFormat(source);
 
+        // ── Preserving track (COBOL→COBOL) ──────────────────────────────
         if (fixed) {
             out.addAll(detectFixedToFree(source, relPath));
         }
         out.addAll(detectStopRunToGoback(source, relPath, fixed));
         out.addAll(detectAlter(source, relPath, fixed));
         out.addAll(detectGotoToPerform(source, relPath, fixed));
+        out.addAll(detectExitProgramToGoback(source, relPath, fixed));
+        out.addAll(detectSectionExitGoback(source, relPath, fixed));
+        out.addAll(detectNextSentenceToContinue(source, relPath, fixed));
+        out.addAll(detectEvaluateTrueSimplify(source, relPath, fixed));
+        out.addAll(detectContinuePreserving(source, relPath, fixed));
+        out.addAll(detectSetTrue88(source, relPath, fixed));
+        out.addAll(detectInlinePerform(source, relPath, fixed));
+        out.addAll(detectPerformThruExpand(source, relPath, fixed));
+        out.addAll(detectInitializeReplacing(source, relPath, fixed));
+        out.addAll(detectInspectConverting(source, relPath, fixed));
+        out.addAll(detectProgramIdIsInitial(source, relPath, fixed));
+
+        // ── Translate track (COBOL→Java-ish stubs) ──────────────────────
         out.addAll(detectDisplayToPrint(source, relPath, fixed));
         out.addAll(detectMoveToAssign(source, relPath, fixed));
         out.addAll(detectComputeToAssign(source, relPath, fixed));
@@ -221,7 +260,6 @@ public class CobolAdapter implements LanguageAdapter {
         out.addAll(detectReadFile(source, relPath, fixed));
         out.addAll(detectWriteFile(source, relPath, fixed));
         out.addAll(detectCallProgram(source, relPath, fixed));
-        out.addAll(detectContinue(source, relPath, fixed));
         out.addAll(detectRewrite(source, relPath, fixed));
         out.addAll(detectDelete(source, relPath, fixed));
         out.addAll(detectSort(source, relPath, fixed));
@@ -300,7 +338,14 @@ public class CobolAdapter implements LanguageAdapter {
                         SafetyInvariant.Category.BEHAVIORAL_EQUIVALENCE,
                         SafetyInvariant.Status.SATISFIED,
                         "Each fixed-format comment line is rendered as a *> free-format comment"))
+                .addSafetyInvariant(new SafetyInvariant(
+                        "cobol-free-format-indicator",
+                        ">>SOURCE FREE directive inserted (cobol.free_format_indicator)",
+                        SafetyInvariant.Category.BEHAVIORAL_EQUIVALENCE,
+                        SafetyInvariant.Status.SATISFIED,
+                        "GnuCOBOL / IBM free-format indicator precedes converted source"))
                 .putAstContext("language", "cobol")
+                .putAstContext("mode", MODE_PRESERVING)
                 .putAstContext("format", "fixed→free")
                 .build());
     }
@@ -335,6 +380,7 @@ public class CobolAdapter implements LanguageAdapter {
                                 "Safe for sub-programs and CICS; for main programs the OS returns "
                                         + "anyway"))
                         .putAstContext("language", "cobol")
+                        .putAstContext("mode", MODE_PRESERVING)
                         .build());
             }
         }
@@ -349,6 +395,7 @@ public class CobolAdapter implements LanguageAdapter {
         for (int i = 0; i < lines.length; i++) {
             String code = fixed ? programAreaOf(lines[i]) : lines[i];
             if (ALTER.matcher(code).find()) {
+                // Detect-only (identity after): ALTER requires manual PERFORM/EVALUATE rewrite.
                 out.add(RefactorCandidate.builder()
                         .sourceFile(relPath)
                         .startLine(i + 1)
@@ -357,8 +404,7 @@ public class CobolAdapter implements LanguageAdapter {
                         .ruleName("ALTER statement (removed in COBOL-2002)")
                         .ruleCategory("MODERNIZATION")
                         .beforeSnippet(lines[i])
-                        .proposedAfterSnippet("      *> ALTER removed: " + lines[i].trim()
-                                + "  *> rewrite using PERFORM with EVALUATE/IF")
+                        .proposedAfterSnippet(lines[i])
                         .confidenceScore(0.70)
                         .riskTier(RiskTier.HIGH)
                         .addSafetyInvariant(new SafetyInvariant(
@@ -366,9 +412,12 @@ public class CobolAdapter implements LanguageAdapter {
                                 "ALTER was deleted from COBOL-2002; manual rewrite required",
                                 SafetyInvariant.Category.BEHAVIORAL_EQUIVALENCE,
                                 SafetyInvariant.Status.UNKNOWN,
-                                "Auto-flag only; the actual control-flow rewrite is left to the "
-                                        + "reviewer"))
+                                "Detect-only (cobol.remove_alter); control-flow rewrite is left "
+                                        + "to the reviewer"))
                         .putAstContext("language", "cobol")
+                        .putAstContext("mode", MODE_PRESERVING)
+                        .putAstContext("detectOnly", "true")
+                        .putAstContext("alias", "cobol.remove_alter")
                         .build());
             }
         }
@@ -416,6 +465,7 @@ public class CobolAdapter implements LanguageAdapter {
                             SafetyInvariant.Status.UNKNOWN,
                             "ALTER scan is best-effort; review before applying"))
                     .putAstContext("language", "cobol")
+                    .putAstContext("mode", MODE_PRESERVING)
                     .putAstContext("target", target)
                     .build());
         }
@@ -435,6 +485,353 @@ public class CobolAdapter implements LanguageAdapter {
                     || SECTION_HEADER.matcher(trimmed).matches();
         }
         return true;
+    }
+
+    private static final Pattern EXIT_PROGRAM_PRESERVE =
+            Pattern.compile("(?i)^(\\s*)EXIT\\s+PROGRAM\\s*\\.?\\s*$");
+    private static final Pattern EXIT_SECTION_PRESERVE =
+            Pattern.compile("(?i)^(\\s*)EXIT\\s+SECTION\\s*\\.?\\s*$");
+    private static final Pattern NEXT_SENTENCE =
+            Pattern.compile("(?i)^(\\s*)NEXT\\s+SENTENCE\\s*\\.?\\s*$");
+    private static final Pattern CONTINUE_PRESERVE =
+            Pattern.compile("(?i)^(\\s*)CONTINUE\\s*\\.?\\s*$");
+    private static final Pattern SET_TRUE_88 =
+            Pattern.compile("(?i)^(\\s*)SET\\s+([A-Z0-9-]+)\\s+TO\\s+TRUE\\s*\\.?\\s*$");
+    private static final Pattern PERFORM_THRU =
+            Pattern.compile("(?i)^(\\s*)PERFORM\\s+([A-Z0-9-]+)\\s+THRU\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern INITIALIZE_REPLACING =
+            Pattern.compile("(?i)^(\\s*)INITIALIZE\\s+.+\\bREPLACING\\b.*$");
+    private static final Pattern INSPECT_CONVERTING =
+            Pattern.compile("(?i)^(\\s*)INSPECT\\s+.+\\bCONVERTING\\b.*$");
+    private static final Pattern PROGRAM_ID_LINE =
+            Pattern.compile("(?i)^(\\s*)PROGRAM-ID\\s*\\.\\s*([A-Z0-9][A-Z0-9-]*)\\s*\\.\\s*$");
+    private static final Pattern PROGRAM_ID_INITIAL =
+            Pattern.compile("(?i)\\bIS\\s+INITIAL\\b");
+    private static final Pattern INLINE_PERFORM_START =
+            Pattern.compile("(?i)^(\\s*)PERFORM\\s*$");
+    private static final Pattern END_PERFORM =
+            Pattern.compile("(?i)^(\\s*)END-PERFORM\\s*\\.?\\s*$");
+    private static final Pattern EVALUATE_TRUE =
+            Pattern.compile("(?i)^(\\s*)EVALUATE\\s+TRUE\\s*\\.?\\s*$");
+
+    private List<RefactorCandidate> detectExitProgramToGoback(String source, String relPath, boolean fixed) {
+        return detectPreservingLineRewrite(source, relPath, fixed, EXIT_PROGRAM_PRESERVE,
+                "cobol.exit_program_to_goback", "EXIT PROGRAM → GOBACK",
+                m -> (m.group(1) != null ? m.group(1) : "") + "GOBACK"
+                        + (m.group(0).trim().endsWith(".") ? "." : ""),
+                0.9, RiskTier.LOW,
+                "EXIT PROGRAM and GOBACK both return control to the calling program");
+    }
+
+    private List<RefactorCandidate> detectSectionExitGoback(String source, String relPath, boolean fixed) {
+        return detectPreservingLineRewrite(source, relPath, fixed, EXIT_SECTION_PRESERVE,
+                "cobol.section_exit_goback", "EXIT SECTION → GOBACK",
+                m -> (m.group(1) != null ? m.group(1) : "") + "GOBACK"
+                        + (m.group(0).contains(".") ? "." : ""),
+                0.75, RiskTier.MODERATE,
+                "EXIT SECTION at program exit modernizes to GOBACK (review section-scoped exits)");
+    }
+
+    private List<RefactorCandidate> detectNextSentenceToContinue(String source, String relPath, boolean fixed) {
+        return detectPreservingLineRewrite(source, relPath, fixed, NEXT_SENTENCE,
+                "cobol.next_sentence_to_continue", "NEXT SENTENCE → CONTINUE",
+                m -> (m.group(1) != null ? m.group(1) : "") + "CONTINUE"
+                        + (m.group(0).trim().endsWith(".") ? "." : ""),
+                0.88, RiskTier.MODERATE,
+                "NEXT SENTENCE is obsolete; CONTINUE is the COBOL-2002 structured equivalent "
+                        + "inside IF/EVALUATE (verify fall-through intent)");
+    }
+
+    private List<RefactorCandidate> detectContinuePreserving(String source, String relPath, boolean fixed) {
+        // CONTINUE is already modern COBOL — detect-only identity.
+        return detectPreservingIdentity(source, relPath, fixed, CONTINUE_PRESERVE,
+                "cobol.continue_to_empty", "CONTINUE already modern (no-op)",
+                0.95, RiskTier.LOW,
+                "CONTINUE is the modern structured no-op; no rewrite needed");
+    }
+
+    private List<RefactorCandidate> detectSetTrue88(String source, String relPath, boolean fixed) {
+        // SET condition-name TO TRUE is already the modern 88-level idiom.
+        return detectPreservingIdentity(source, relPath, fixed, SET_TRUE_88,
+                "cobol.set_true_88", "SET … TO TRUE (88-level) already modern",
+                0.9, RiskTier.LOW,
+                "88-level SET TO TRUE is the preferred modern COBOL form");
+    }
+
+    private List<RefactorCandidate> detectPerformThruExpand(String source, String relPath, boolean fixed) {
+        return detectPreservingIdentity(source, relPath, fixed, PERFORM_THRU,
+                "cobol.perform_thru_expand", "PERFORM … THRU (detect-only)",
+                0.55, RiskTier.HIGH,
+                "PERFORM THRU expansion into explicit PERFORM sequence requires paragraph range analysis");
+    }
+
+    private List<RefactorCandidate> detectInitializeReplacing(String source, String relPath, boolean fixed) {
+        return detectPreservingIdentity(source, relPath, fixed, INITIALIZE_REPLACING,
+                "cobol.initialize_replacing", "INITIALIZE … REPLACING (detect-only)",
+                0.6, RiskTier.MODERATE,
+                "INITIALIZE REPLACING is valid modern COBOL; flagged for review only");
+    }
+
+    private List<RefactorCandidate> detectInspectConverting(String source, String relPath, boolean fixed) {
+        return detectPreservingIdentity(source, relPath, fixed, INSPECT_CONVERTING,
+                "cobol.inspect_converting", "INSPECT … CONVERTING (detect-only)",
+                0.6, RiskTier.MODERATE,
+                "INSPECT CONVERTING is valid modern COBOL; flagged for review only");
+    }
+
+    private List<RefactorCandidate> detectProgramIdIsInitial(String source, String relPath, boolean fixed) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        String[] lines = source.split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String code = fixed ? programAreaOf(lines[i]) : lines[i];
+            Matcher m = PROGRAM_ID_LINE.matcher(code);
+            if (!m.matches()) continue;
+            if (PROGRAM_ID_INITIAL.matcher(code).find()) continue;
+            out.add(RefactorCandidate.builder()
+                    .sourceFile(relPath)
+                    .startLine(i + 1)
+                    .endLine(i + 1)
+                    .ruleId("cobol.program_id_is_initial")
+                    .ruleName("PROGRAM-ID … IS INITIAL (detect-only)")
+                    .ruleCategory("MODERNIZATION")
+                    .beforeSnippet(lines[i])
+                    .proposedAfterSnippet(lines[i])
+                    .confidenceScore(0.5)
+                    .riskTier(RiskTier.MODERATE)
+                    .addSafetyInvariant(new SafetyInvariant(
+                            "cobol-program-id-initial",
+                            "Optional: PROGRAM-ID. X IS INITIAL. for fresh working-storage each CALL",
+                            SafetyInvariant.Category.BEHAVIORAL_EQUIVALENCE,
+                            SafetyInvariant.Status.UNKNOWN,
+                            "Detect-only — IS INITIAL changes state lifetime semantics"))
+                    .putAstContext("language", "cobol")
+                    .putAstContext("mode", MODE_PRESERVING)
+                    .putAstContext("detectOnly", "true")
+                    .build());
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectInlinePerform(String source, String relPath, boolean fixed) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        String[] lines = source.split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String code = fixed ? programAreaOf(lines[i]) : lines[i];
+            if (!INLINE_PERFORM_START.matcher(code).matches()) continue;
+            int end = -1;
+            for (int j = i + 1; j < lines.length; j++) {
+                String c2 = fixed ? programAreaOf(lines[j]) : lines[j];
+                if (END_PERFORM.matcher(c2).matches()) {
+                    end = j;
+                    break;
+                }
+            }
+            if (end < 0) continue;
+            String before = String.join("\n", Arrays.copyOfRange(lines, i, end + 1));
+            out.add(RefactorCandidate.builder()
+                    .sourceFile(relPath)
+                    .startLine(i + 1)
+                    .endLine(end + 1)
+                    .ruleId("cobol.inline_perform")
+                    .ruleName("Inline PERFORM … END-PERFORM already modern")
+                    .ruleCategory("MODERNIZATION")
+                    .beforeSnippet(before)
+                    .proposedAfterSnippet(before)
+                    .confidenceScore(0.95)
+                    .riskTier(RiskTier.LOW)
+                    .addSafetyInvariant(new SafetyInvariant(
+                            "cobol-inline-perform",
+                            "Inline PERFORM/END-PERFORM is the preferred structured form",
+                            SafetyInvariant.Category.BEHAVIORAL_EQUIVALENCE,
+                            SafetyInvariant.Status.SATISFIED,
+                            "Detect-only — no rewrite needed"))
+                    .putAstContext("language", "cobol")
+                    .putAstContext("mode", MODE_PRESERVING)
+                    .putAstContext("detectOnly", "true")
+                    .build());
+        }
+        return out;
+    }
+
+    /**
+     * EVALUATE TRUE / WHEN … / END-EVALUATE → IF / ELSE IF / END-IF (free-format friendly).
+     */
+    private List<RefactorCandidate> detectEvaluateTrueSimplify(String source, String relPath, boolean fixed) {
+        // Multi-line IF rewrite emits free-format text; only apply on free-format sources.
+        if (fixed) return List.of();
+        List<RefactorCandidate> out = new ArrayList<>();
+        String[] lines = source.split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String code = fixed ? programAreaOf(lines[i]) : lines[i];
+            Matcher head = EVALUATE_TRUE.matcher(code);
+            if (!head.matches()) continue;
+            String indent = head.group(1) != null ? head.group(1) : "";
+            int end = -1;
+            for (int j = i + 1; j < lines.length; j++) {
+                String c2 = (fixed ? programAreaOf(lines[j]) : lines[j]).trim();
+                if (c2.matches("(?i)END-EVALUATE\\.?\\s*")) {
+                    end = j;
+                    break;
+                }
+            }
+            if (end < 0) continue;
+
+            List<String> whenConds = new ArrayList<>();
+            List<List<String>> whenBodies = new ArrayList<>();
+            List<String> otherBody = null;
+            List<String> currentBody = null;
+            boolean inOther = false;
+            for (int j = i + 1; j < end; j++) {
+                String raw = lines[j];
+                String c2 = fixed ? programAreaOf(raw) : raw;
+                String trimmed = c2.trim();
+                Matcher when = Pattern.compile("(?i)^WHEN\\s+(.+?)\\s*$").matcher(trimmed);
+                if (when.matches()) {
+                    String cond = when.group(1).trim();
+                    if (cond.matches("(?i)OTHER\\.?\\s*")) {
+                        inOther = true;
+                        otherBody = new ArrayList<>();
+                        currentBody = otherBody;
+                    } else {
+                        inOther = false;
+                        whenConds.add(cond.replaceAll("\\.$", ""));
+                        currentBody = new ArrayList<>();
+                        whenBodies.add(currentBody);
+                    }
+                    continue;
+                }
+                if (currentBody != null) {
+                    currentBody.add(raw);
+                }
+            }
+            if (whenConds.isEmpty()) continue;
+
+            StringBuilder after = new StringBuilder();
+            for (int w = 0; w < whenConds.size(); w++) {
+                if (w == 0) {
+                    after.append(indent).append("IF ").append(whenConds.get(w)).append('\n');
+                } else {
+                    after.append(indent).append("ELSE IF ").append(whenConds.get(w)).append('\n');
+                }
+                for (String bodyLine : whenBodies.get(w)) {
+                    after.append(bodyLine).append('\n');
+                }
+            }
+            if (otherBody != null) {
+                after.append(indent).append("ELSE").append('\n');
+                for (String bodyLine : otherBody) {
+                    after.append(bodyLine).append('\n');
+                }
+            }
+            after.append(indent).append("END-IF");
+            // Preserve trailing period style from END-EVALUATE if present
+            String endCode = (fixed ? programAreaOf(lines[end]) : lines[end]).trim();
+            if (endCode.endsWith(".")) {
+                after.append('.');
+            }
+
+            String before = String.join("\n", Arrays.copyOfRange(lines, i, end + 1));
+            out.add(RefactorCandidate.builder()
+                    .sourceFile(relPath)
+                    .startLine(i + 1)
+                    .endLine(end + 1)
+                    .ruleId("cobol.evaluate_true_simplify")
+                    .ruleName("EVALUATE TRUE → IF / ELSE IF")
+                    .ruleCategory("MODERNIZATION")
+                    .beforeSnippet(before)
+                    .proposedAfterSnippet(after.toString())
+                    .confidenceScore(0.72)
+                    .riskTier(RiskTier.MODERATE)
+                    .addSafetyInvariant(new SafetyInvariant(
+                            "cobol-evaluate-true",
+                            "EVALUATE TRUE WHEN chains map to IF/ELSE IF/END-IF",
+                            SafetyInvariant.Category.BEHAVIORAL_EQUIVALENCE,
+                            SafetyInvariant.Status.SATISFIED,
+                            "WHEN OTHER becomes ELSE; body lines preserved"))
+                    .putAstContext("language", "cobol")
+                    .putAstContext("mode", MODE_PRESERVING)
+                    .build());
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectPreservingLineRewrite(
+            String source, String relPath, boolean fixed, Pattern pattern,
+            String ruleId, String ruleName, LineReplacer replacer,
+            double confidence, RiskTier risk, String rationale) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        String[] lines = source.split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String code = fixed ? programAreaOf(lines[i]) : lines[i];
+            Matcher m = pattern.matcher(code);
+            if (!m.matches()) continue;
+            String afterCode = replacer.apply(m);
+            String afterLine;
+            if (fixed && lines[i].length() > PROGRAM_AREA_START) {
+                // Preserve sequence/indicator prefix; afterCode is program-area text.
+                String prefix = lines[i].substring(0, PROGRAM_AREA_START);
+                afterLine = prefix + afterCode;
+            } else {
+                afterLine = afterCode;
+            }
+            out.add(RefactorCandidate.builder()
+                    .sourceFile(relPath)
+                    .startLine(i + 1)
+                    .endLine(i + 1)
+                    .ruleId(ruleId)
+                    .ruleName(ruleName)
+                    .ruleCategory("MODERNIZATION")
+                    .beforeSnippet(lines[i])
+                    .proposedAfterSnippet(afterLine)
+                    .confidenceScore(confidence)
+                    .riskTier(risk)
+                    .addSafetyInvariant(new SafetyInvariant(
+                            "cobol-preserving",
+                            rationale,
+                            SafetyInvariant.Category.BEHAVIORAL_EQUIVALENCE,
+                            SafetyInvariant.Status.SATISFIED,
+                            ruleId))
+                    .putAstContext("language", "cobol")
+                    .putAstContext("mode", MODE_PRESERVING)
+                    .putAstContext("ruleId", ruleId)
+                    .build());
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectPreservingIdentity(
+            String source, String relPath, boolean fixed, Pattern pattern,
+            String ruleId, String ruleName, double confidence, RiskTier risk, String rationale) {
+        List<RefactorCandidate> out = new ArrayList<>();
+        String[] lines = source.split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String code = fixed ? programAreaOf(lines[i]) : lines[i];
+            Matcher m = pattern.matcher(code);
+            if (!m.matches()) continue;
+            out.add(RefactorCandidate.builder()
+                    .sourceFile(relPath)
+                    .startLine(i + 1)
+                    .endLine(i + 1)
+                    .ruleId(ruleId)
+                    .ruleName(ruleName)
+                    .ruleCategory("MODERNIZATION")
+                    .beforeSnippet(lines[i])
+                    .proposedAfterSnippet(lines[i])
+                    .confidenceScore(confidence)
+                    .riskTier(risk)
+                    .addSafetyInvariant(new SafetyInvariant(
+                            "cobol-preserving-detect",
+                            rationale,
+                            SafetyInvariant.Category.BEHAVIORAL_EQUIVALENCE,
+                            SafetyInvariant.Status.SATISFIED,
+                            ruleId))
+                    .putAstContext("language", "cobol")
+                    .putAstContext("mode", MODE_PRESERVING)
+                    .putAstContext("detectOnly", "true")
+                    .putAstContext("ruleId", ruleId)
+                    .build());
+        }
+        return out;
     }
 
     private static final Pattern DISPLAY_STMT =
@@ -520,9 +917,6 @@ public class CobolAdapter implements LanguageAdapter {
             Pattern.compile("(?i)^(\\s*)ALLOCATE\\s+([A-Z0-9-]+)\\b.*$");
     private static final Pattern FREE_STMT =
             Pattern.compile("(?i)^(\\s*)FREE\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
-
-    private static final Pattern CONTINUE_STMT =
-            Pattern.compile("(?i)^(\\s*)CONTINUE\\s*\\.?\\s*$");
 
     private List<RefactorCandidate> detectDisplayToPrint(String source, String relPath, boolean fixed) {
         return detectLinePattern(source, relPath, fixed, DISPLAY_STMT, "cobol.display_to_print",
@@ -984,15 +1378,6 @@ public class CobolAdapter implements LanguageAdapter {
                 "FREE releases based storage");
     }
 
-
-    private List<RefactorCandidate> detectContinue(String source, String relPath, boolean fixed) {
-        return detectLinePattern(source, relPath, fixed, CONTINUE_STMT, "cobol.continue_to_empty",
-                "CONTINUE → no-op / continue",
-                m -> (m.group(1) != null ? m.group(1) : "") + "/* CONTINUE */ ;",
-                0.85, RiskTier.LOW,
-                "CONTINUE is a no-op placeholder in modern control flow");
-    }
-
     @FunctionalInterface
     private interface LineReplacer {
         String apply(Matcher m);
@@ -1027,6 +1412,7 @@ public class CobolAdapter implements LanguageAdapter {
                             SafetyInvariant.Status.SATISFIED,
                             ruleId))
                     .putAstContext("language", "cobol")
+                    .putAstContext("mode", MODE_TRANSLATE)
                     .putAstContext("ruleId", ruleId)
                     .build());
         }
@@ -1092,6 +1478,8 @@ public class CobolAdapter implements LanguageAdapter {
                     .addAffectedFile(candidate.sourceFile())
                     .success(true)
                     .putMetadata("ruleId", candidate.ruleId())
+                    .putMetadata("mode", isPreservingRule(candidate.ruleId())
+                            ? MODE_PRESERVING : MODE_TRANSLATE)
                     .putMetadata("linesAffected", candidate.lineSpan())
                     .build();
         } catch (Exception e) {
@@ -1110,6 +1498,11 @@ public class CobolAdapter implements LanguageAdapter {
         Objects.requireNonNull(sourceRoot, "sourceRoot must not be null");
         Objects.requireNonNull(config, "config must not be null");
 
+        String ruleId = patch.metadata() != null && patch.metadata().get("ruleId") != null
+                ? String.valueOf(patch.metadata().get("ruleId")) : "";
+        boolean preserving = isPreservingRule(ruleId)
+                || MODE_PRESERVING.equals(String.valueOf(patch.metadata().getOrDefault("mode", "")));
+
         List<VerificationResult.LayerResult> layers = new ArrayList<>();
 
         boolean structuralOk = true;
@@ -1120,17 +1513,32 @@ public class CobolAdapter implements LanguageAdapter {
             long start = System.currentTimeMillis();
             try {
                 String source = Files.readString(target, StandardCharsets.UTF_8);
-                ProgramParse reparsed = parseProgram(source, patch.affectedFiles().get(0));
-                boolean structurallySound = reparsed.programId != null
-                        && !reparsed.paragraphs.isEmpty();
-                long elapsed = System.currentTimeMillis() - start;
-                layers.add(new VerificationResult.LayerResult(
-                        "structural", structurallySound, structurallySound ? 1.0 : 0.5,
-                        "Re-parsed: PROGRAM-ID=" + reparsed.programId
-                                + ", paragraphs=" + reparsed.paragraphs.size(),
-                        elapsed));
-                structuralOk = structurallySound;
-                astScore = structurallySound ? 1.0 : 0.5;
+                if (preserving) {
+                    ProgramParse reparsed = parseProgram(source, patch.affectedFiles().get(0));
+                    boolean structurallySound = reparsed.programId != null
+                            && !reparsed.paragraphs.isEmpty();
+                    long elapsed = System.currentTimeMillis() - start;
+                    layers.add(new VerificationResult.LayerResult(
+                            "structural", structurallySound, structurallySound ? 1.0 : 0.5,
+                            "Re-parsed: PROGRAM-ID=" + reparsed.programId
+                                    + ", paragraphs=" + reparsed.paragraphs.size(),
+                            elapsed));
+                    structuralOk = structurallySound;
+                    astScore = structurallySound ? 1.0 : 0.5;
+                } else {
+                    // Translate stubs are intentionally not valid COBOL.
+                    boolean hasStub = source.contains("System.out")
+                            || source.contains(" = ")
+                            || source.contains("return;")
+                            || source.contains("/* ");
+                    long elapsed = System.currentTimeMillis() - start;
+                    layers.add(new VerificationResult.LayerResult(
+                            "translate-structural", true, hasStub ? 0.8 : 0.5,
+                            "Translate-mode patch; COBOL structural re-parse skipped",
+                            elapsed));
+                    structuralOk = true;
+                    astScore = 0.5;
+                }
             } catch (IOException e) {
                 layers.add(new VerificationResult.LayerResult(
                         "structural", false, 0.0,
@@ -1140,27 +1548,32 @@ public class CobolAdapter implements LanguageAdapter {
             }
         }
 
-        boolean compileOk = structuralOk;
+        boolean compileOk;
         boolean cobcVerified = false;
         boolean toolchainMissing = false;
-        if (config.runCompilation() && structuralOk && !patch.affectedFiles().isEmpty()) {
+
+        if (!preserving) {
+            // Never claim cobc PASS for translate-mode Java-ish stubs.
+            layers.add(verifyTranslate(patch));
+            compileOk = false;
+        } else if (config.runCompilation() && structuralOk && !patch.affectedFiles().isEmpty()) {
             VerificationResult.LayerResult compile = verifyWithCobc(
                     sourceRoot.resolve(patch.affectedFiles().get(0)));
             layers.add(compile);
             if (compile.details() != null && compile.details().contains("cobc not available")) {
-                // No GnuCOBOL in the environment: keep a structural PASS for COBOL-preserving
-                // rewrites, but record that the compile toolchain was unavailable.
                 toolchainMissing = true;
                 compileOk = structuralOk;
             } else {
                 compileOk = compile.passed();
                 cobcVerified = compile.passed();
             }
+        } else {
+            compileOk = structuralOk;
         }
 
-        // N/A toolchain layers must not inflate semantic risk into WARN for otherwise
-        // sound COBOL-preserving transforms (fixed→free, STOP RUN→GOBACK, etc.).
-        boolean nativeGate = structuralOk && (cobcVerified || toolchainMissing);
+        boolean nativeGate = preserving
+                && structuralOk
+                && (cobcVerified || toolchainMissing);
 
         return VerificationResult.builder()
                 .patchId(patch.patchId())
@@ -1176,11 +1589,30 @@ public class CobolAdapter implements LanguageAdapter {
                 .build();
     }
 
+    private VerificationResult.LayerResult verifyTranslate(PatchResult patch) {
+        return new VerificationResult.LayerResult(
+                "translate",
+                true,
+                0.6,
+                "Translate-mode rule '" + patch.metadata().getOrDefault("ruleId", "?")
+                        + "' produces Java-ish stubs; cobc verification intentionally skipped",
+                0);
+    }
+
     private VerificationResult.LayerResult verifyWithCobc(Path target) {
         long start = System.currentTimeMillis();
         try {
-            ProcessBuilder pb = new ProcessBuilder(
-                    "cobc", "-fsyntax-only", "-std=cobol85", target.toString());
+            String source = Files.readString(target, StandardCharsets.UTF_8);
+            boolean free = source.toUpperCase(Locale.ROOT).contains(">>SOURCE FREE")
+                    || !isFixedFormat(source);
+            List<String> cmd = new ArrayList<>();
+            cmd.add("cobc");
+            cmd.add("-fsyntax-only");
+            if (free) {
+                cmd.add("-free");
+            }
+            cmd.add(target.toString());
+            ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.redirectErrorStream(true);
             Process p = pb.start();
             StringBuilder out = new StringBuilder();
@@ -1199,11 +1631,12 @@ public class CobolAdapter implements LanguageAdapter {
                         "compilation", false, 0.0, "cobc timed out", elapsed);
             }
             boolean passed = p.exitValue() == 0;
+            String cmdDesc = String.join(" ", cmd);
             return new VerificationResult.LayerResult(
                     "compilation",
                     passed,
                     passed ? 1.0 : 0.0,
-                    passed ? "cobc -fsyntax-only succeeded on " + target.getFileName()
+                    passed ? cmdDesc + " succeeded on " + target.getFileName()
                             : "cobc failed:\n" + out,
                     elapsed);
         } catch (IOException e) {
@@ -1335,7 +1768,11 @@ public class CobolAdapter implements LanguageAdapter {
 
     private String convertFixedToFree(String source) {
         String[] lines = source.split("\n", -1);
-        StringBuilder out = new StringBuilder(source.length());
+        StringBuilder out = new StringBuilder(source.length() + 32);
+        // cobol.free_format_indicator — declare free reference format for GnuCOBOL / IBM.
+        if (!source.toUpperCase(Locale.ROOT).contains(">>SOURCE FREE")) {
+            out.append(">>SOURCE FREE\n");
+        }
         boolean first = true;
         for (String line : lines) {
             if (!first) out.append('\n');
@@ -1455,18 +1892,28 @@ public class CobolAdapter implements LanguageAdapter {
 
     private String applyLineReplacement(String source, RefactorCandidate candidate) {
         String[] lines = source.split("\n", -1);
-        int idx = candidate.startLine() - 1;
-        if (idx < 0 || idx >= lines.length) {
+        int startIdx = candidate.startLine() - 1;
+        int endIdx = candidate.endLine() - 1;
+        if (startIdx < 0 || endIdx >= lines.length || startIdx > endIdx) {
             throw new IllegalStateException(
-                    "Line " + candidate.startLine() + " out of range for " + candidate.sourceFile());
+                    "Lines " + candidate.startLine() + "-" + candidate.endLine()
+                            + " out of range for " + candidate.sourceFile());
         }
-        if (!lines[idx].equals(candidate.beforeSnippet())) {
+        String before = String.join("\n", Arrays.copyOfRange(lines, startIdx, endIdx + 1));
+        if (!before.equals(candidate.beforeSnippet())) {
             throw new IllegalStateException(
-                    "Before-snippet mismatch at line " + candidate.startLine()
+                    "Before-snippet mismatch at lines " + candidate.startLine()
+                            + "-" + candidate.endLine()
                             + " for rule " + candidate.ruleId());
         }
-        lines[idx] = candidate.proposedAfterSnippet();
-        return String.join("\n", lines);
+        String[] afterLines = candidate.proposedAfterSnippet().split("\n", -1);
+        List<String> rebuilt = new ArrayList<>();
+        rebuilt.addAll(Arrays.asList(lines).subList(0, startIdx));
+        rebuilt.addAll(Arrays.asList(afterLines));
+        if (endIdx + 1 < lines.length) {
+            rebuilt.addAll(Arrays.asList(lines).subList(endIdx + 1, lines.length));
+        }
+        return String.join("\n", rebuilt);
     }
 
     private String computeAstHash(String source) {

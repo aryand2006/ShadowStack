@@ -15,9 +15,19 @@ build/
 
 # Node
 node_modules/
+# Keep the JS AST engine deps so Acorn works without a separate npm install
+!packages/language-adapters/native-engines/js/node_modules/
+!packages/language-adapters/native-engines/js/node_modules/**
 .next/
 out/
 dist/
+
+# .NET intermediate build (keep published Roslyn engine)
+packages/language-adapters/native-engines/csharp/**/obj/
+packages/language-adapters/native-engines/csharp/**/bin/
+examples/legacy-csharp/bin/
+examples/legacy-csharp/obj/
+
 
 # Python
 __pycache__/
@@ -53,3 +63,4 @@ htmlcov/
 *.onnx
 *.bin
 checkpoints/
+packages/language-adapters/native-engines/csharp/publish/*/

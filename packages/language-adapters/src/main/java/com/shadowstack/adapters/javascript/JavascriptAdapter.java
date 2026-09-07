@@ -1,5 +1,7 @@
 package com.shadowstack.adapters.javascript;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shadowstack.adapters.LanguageAdapter;
 import com.shadowstack.adapters.model.*;
 import org.slf4j.Logger;
@@ -16,15 +18,19 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Lightweight JavaScript/JSX/TypeScript adapter targeting ES2022.
  *
- * <p>The adapter deliberately uses a structural scanner rather than a full
- * compiler front end. Candidate detection is guarded by a JavaScript-aware
- * string/comment mask so identifiers in comments and literals are ignored.</p>
+ * <p>Candidate detection prefers an Acorn AST engine
+ * ({@code native-engines/js/ast_engine.mjs}) when {@code node} and the engine
+ * script are available, then merges in regex-based findings for rule IDs the
+ * AST path did not cover. Apply tries the AST engine first and falls back to
+ * line-oriented text replacement.</p>
  */
 public class JavascriptAdapter implements LanguageAdapter {
 
@@ -32,6 +38,14 @@ public class JavascriptAdapter implements LanguageAdapter {
     private static final String LANGUAGE_ID = "javascript";
     private static final String LANGUAGE_VERSION = "ES2022";
     private static final Set<String> EXTENSIONS = Set.of(".js", ".jsx", ".ts", ".tsx");
+    private static final String AST_ENGINE_ENV = "SHADOWSTACK_JS_AST_ENGINE";
+    private static final String AST_ENGINE_REL =
+            "packages/language-adapters/native-engines/js/ast_engine.mjs";
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    private final Object astEngineLock = new Object();
+    private volatile Path astEngineScript;
+    private volatile Boolean astEngineAvailable;
 
     private static final Pattern CLASS_DECL =
             Pattern.compile("\\bclass\\s+([A-Za-z_$][\\w$]*)");
@@ -136,7 +150,20 @@ public class JavascriptAdapter implements LanguageAdapter {
             try {
                 String source = Files.readString(file, StandardCharsets.UTF_8);
                 String relPath = normalizedRelativePath(model.sourceRoot(), file);
-                candidates.addAll(detectCandidates(source, relPath));
+                List<RefactorCandidate> astCandidates = detectWithAstEngine(file, relPath);
+                if (!astCandidates.isEmpty()) {
+                    Set<String> astRuleIds = astCandidates.stream()
+                            .map(RefactorCandidate::ruleId)
+                            .collect(Collectors.toSet());
+                    candidates.addAll(astCandidates);
+                    for (RefactorCandidate regexCandidate : detectCandidates(source, relPath)) {
+                        if (!astRuleIds.contains(regexCandidate.ruleId())) {
+                            candidates.add(regexCandidate);
+                        }
+                    }
+                } else {
+                    candidates.addAll(detectCandidates(source, relPath));
+                }
             } catch (IOException e) {
                 LOG.warn("Skipping {}: {}", file, e.getMessage());
             }
@@ -154,10 +181,18 @@ public class JavascriptAdapter implements LanguageAdapter {
         }
         try {
             String before = Files.readString(target, StandardCharsets.UTF_8);
-            String after = replaceCandidateLine(before, candidate);
+            boolean usedAst = false;
+            String after;
+            if (isAstEngineAvailable()
+                    && tryApplyWithAstEngine(target, candidate.ruleId(), candidate.startLine())) {
+                after = Files.readString(target, StandardCharsets.UTF_8);
+                usedAst = true;
+            } else {
+                after = replaceCandidateLine(before, candidate);
+                Files.writeString(target, after, StandardCharsets.UTF_8);
+            }
             String beforeHash = structuralHash(before);
             String afterHash = structuralHash(after);
-            Files.writeString(target, after, StandardCharsets.UTF_8);
             return PatchResult.builder()
                     .candidateId(candidate.candidateId())
                     .unifiedDiff(unifiedDiff(candidate.sourceFile(), before, after))
@@ -167,6 +202,7 @@ public class JavascriptAdapter implements LanguageAdapter {
                     .success(true)
                     .putMetadata("ruleId", candidate.ruleId())
                     .putMetadata("linesAffected", candidate.lineSpan())
+                    .putMetadata("parseEngine", usedAst ? "acorn" : "regex")
                     .build();
         } catch (Exception e) {
             return PatchResult.failure(candidate.candidateId(), e.getMessage());
@@ -272,6 +308,253 @@ public class JavascriptAdapter implements LanguageAdapter {
             return new VerificationResult.LayerResult(
                     "structural", false, 0.0, "Re-parse failed: " + e.getMessage(),
                     System.currentTimeMillis() - start);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  ACORN AST ENGINE
+    // ═══════════════════════════════════════════════════════════════════════
+
+    private boolean isAstEngineAvailable() {
+        Boolean cached = astEngineAvailable;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (astEngineLock) {
+            if (astEngineAvailable != null) {
+                return astEngineAvailable;
+            }
+            try {
+                Path script = resolveAstEngineScript();
+                if (script == null) {
+                    astEngineAvailable = false;
+                    return false;
+                }
+                ProcessBuilder pb = new ProcessBuilder(
+                        "node", "-e",
+                        "import('acorn').then(() => import('astring')).then(() => process.exit(0)).catch(() => process.exit(1))");
+                if (script.getParent() != null) {
+                    pb.directory(script.getParent().toFile());
+                }
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                boolean finished = p.waitFor(10, TimeUnit.SECONDS);
+                astEngineAvailable = finished && p.exitValue() == 0;
+                if (!astEngineAvailable) {
+                    LOG.info("JS AST engine unavailable (node/acorn probe failed)");
+                }
+                return astEngineAvailable;
+            } catch (Exception e) {
+                LOG.debug("JS AST engine probe failed: {}", e.getMessage());
+                astEngineAvailable = false;
+                return false;
+            }
+        }
+    }
+
+    private Path resolveAstEngineScript() {
+        Path cached = astEngineScript;
+        if (cached != null && Files.isRegularFile(cached)) {
+            return cached;
+        }
+        synchronized (astEngineLock) {
+            if (astEngineScript != null && Files.isRegularFile(astEngineScript)) {
+                return astEngineScript;
+            }
+
+            String env = System.getenv(AST_ENGINE_ENV);
+            if (env != null && !env.isBlank()) {
+                Path fromEnv = Path.of(env).toAbsolutePath().normalize();
+                if (Files.isRegularFile(fromEnv)) {
+                    astEngineScript = fromEnv;
+                    return astEngineScript;
+                }
+                LOG.warn("{} set but file missing: {}", AST_ENGINE_ENV, fromEnv);
+            }
+
+            for (Path candidate : astEngineCandidates()) {
+                if (Files.isRegularFile(candidate)) {
+                    astEngineScript = candidate;
+                    return astEngineScript;
+                }
+            }
+            LOG.warn("JS AST engine not found; tried candidates under {}", AST_ENGINE_REL);
+            return null;
+        }
+    }
+
+    private static List<Path> astEngineCandidates() {
+        List<Path> out = new ArrayList<>();
+        String prop = System.getProperty("shadowstack.js.ast.engine");
+        if (prop != null && !prop.isBlank()) {
+            out.add(Path.of(prop).toAbsolutePath().normalize());
+        }
+
+        Path userDir = Path.of(System.getProperty("user.dir", ".")).toAbsolutePath().normalize();
+        out.add(userDir.resolve(AST_ENGINE_REL).normalize());
+        out.add(userDir.resolve("native-engines/js/ast_engine.mjs").normalize());
+        out.add(Path.of("/workspace").resolve(AST_ENGINE_REL).normalize());
+
+        // Walk up from user.dir looking for a Maven root (pom.xml) that owns the engine.
+        Path cursor = userDir;
+        for (int i = 0; i < 8 && cursor != null; i++) {
+            out.add(cursor.resolve(AST_ENGINE_REL).normalize());
+            if (Files.isRegularFile(cursor.resolve("pom.xml"))) {
+                out.add(cursor.resolve(AST_ENGINE_REL).normalize());
+            }
+            Path parent = cursor.getParent();
+            if (parent == null || parent.equals(cursor)) {
+                break;
+            }
+            cursor = parent;
+        }
+        return out;
+    }
+
+    private List<RefactorCandidate> detectWithAstEngine(Path file, String relPath) {
+        if (!isAstEngineAvailable()) {
+            return List.of();
+        }
+        try {
+            Path script = resolveAstEngineScript();
+            if (script == null) {
+                return List.of();
+            }
+            ProcessBuilder pb = new ProcessBuilder(
+                    "node", script.toString(), "detect", file.toAbsolutePath().toString());
+            // Resolve acorn/astring from the engine package directory.
+            pb.directory(script.getParent() != null ? script.getParent().toFile() : null);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String output;
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                output = reader.lines().collect(Collectors.joining("\n")).trim();
+            }
+            boolean finished = p.waitFor(30, TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                LOG.warn("JS AST detect timed out for {}", relPath);
+                return List.of();
+            }
+            if (p.exitValue() != 0 || output.isEmpty()) {
+                return List.of();
+            }
+            String json = output;
+            int lastNl = output.lastIndexOf('\n');
+            if (lastNl >= 0) {
+                String last = output.substring(lastNl + 1).trim();
+                if (last.startsWith("[")) {
+                    json = last;
+                }
+            }
+            if (!json.startsWith("[")) {
+                return List.of();
+            }
+            JsonNode arr = JSON.readTree(json);
+            if (!arr.isArray() || arr.isEmpty()) {
+                return List.of();
+            }
+            List<RefactorCandidate> out = new ArrayList<>();
+            for (JsonNode node : arr) {
+                String ruleId = textOr(node, "ruleId", "");
+                if (ruleId.isEmpty()) {
+                    continue;
+                }
+                String ruleName = textOr(node, "ruleName", ruleId);
+                String before = textOr(node, "beforeSnippet", "");
+                String after = textOr(node, "afterSnippet", before);
+                int startLine = node.path("startLine").asInt(1);
+                int endLine = node.path("endLine").asInt(startLine);
+                double confidence = Math.max(0.0, Math.min(1.0, node.path("confidence").asDouble(0.9)));
+                RiskTier risk = parseRisk(textOr(node, "risk", "LOW"));
+                out.add(RefactorCandidate.builder()
+                        .sourceFile(relPath)
+                        .startLine(startLine)
+                        .endLine(endLine)
+                        .ruleId(ruleId)
+                        .ruleName(ruleName)
+                        .ruleCategory("MODERNIZATION")
+                        .beforeSnippet(before)
+                        .proposedAfterSnippet(after)
+                        .confidenceScore(confidence)
+                        .riskTier(risk)
+                        .addSafetyInvariant(new SafetyInvariant(
+                                "js-acorn", "Detected via Acorn AST engine",
+                                SafetyInvariant.Category.BEHAVIORAL_EQUIVALENCE,
+                                SafetyInvariant.Status.SATISFIED,
+                                "Acorn structural match"))
+                        .putAstContext("language", LANGUAGE_ID)
+                        .putAstContext("ruleId", ruleId)
+                        .putAstContext("parseEngine", "acorn")
+                        .build());
+            }
+            return out;
+        } catch (Exception e) {
+            LOG.debug("JS AST detect failed for {}: {}", relPath, e.getMessage());
+            return List.of();
+        }
+    }
+
+    private boolean tryApplyWithAstEngine(Path file, String ruleId, int startLine) {
+        try {
+            Path script = resolveAstEngineScript();
+            if (script == null) {
+                return false;
+            }
+            ProcessBuilder pb = new ProcessBuilder(
+                    "node", script.toString(), "apply",
+                    file.toAbsolutePath().toString(), ruleId, Integer.toString(startLine));
+            pb.directory(script.getParent() != null ? script.getParent().toFile() : null);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String output;
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                output = reader.lines().collect(Collectors.joining("\n")).trim();
+            }
+            boolean finished = p.waitFor(30, TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                return false;
+            }
+            if (output.isEmpty()) {
+                return false;
+            }
+            String json = output;
+            int lastNl = output.lastIndexOf('\n');
+            if (lastNl >= 0) {
+                String last = output.substring(lastNl + 1).trim();
+                if (last.startsWith("{")) {
+                    json = last;
+                }
+            }
+            JsonNode node = JSON.readTree(json);
+            return node.path("ok").asBoolean(false);
+        } catch (Exception e) {
+            LOG.debug("JS AST apply failed for {} ({}:{}): {}",
+                    file, ruleId, startLine, e.getMessage());
+            return false;
+        }
+    }
+
+    private static String textOr(JsonNode node, String field, String fallback) {
+        JsonNode v = node.get(field);
+        if (v == null || v.isNull()) {
+            return fallback;
+        }
+        String s = v.asText();
+        return s != null ? s : fallback;
+    }
+
+    private static RiskTier parseRisk(String risk) {
+        if (risk == null) {
+            return RiskTier.LOW;
+        }
+        try {
+            return RiskTier.valueOf(risk.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            return RiskTier.LOW;
         }
     }
 

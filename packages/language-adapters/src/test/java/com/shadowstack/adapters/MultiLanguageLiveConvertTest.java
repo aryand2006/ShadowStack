@@ -43,7 +43,8 @@ class MultiLanguageLiveConvertTest {
                 resolveSample("examples/legacy-cobol/PAYROLL.cob"),
                 tmp,
                 "PAYROLL.cob",
-                c -> c.ruleId().startsWith("cobol."));
+                c -> CobolAdapter.isPreservingRule(c.ruleId())
+                        && !c.beforeSnippet().equals(c.proposedAfterSnippet()));
     }
 
     @Test

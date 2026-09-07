@@ -8,15 +8,24 @@
 
 ## What Is ShadowStack?
 
-ShadowStack is an enterprise modernization workbench for **verified code conversion**.
-Java changes are compile-gated; Python and JavaScript use runtime syntax checks; COBOL and C# use structural gates (plus optional toolchains when installed). Soft/WARN results do **not** enter the review queue.
+ShadowStack is an enterprise modernization workbench for **verified code conversion** with industry-aligned AST engines:
+
+| Language | Engine | Gate |
+|----------|--------|------|
+| Java | Eclipse JDT | `javac` compile |
+| Python | LibCST | `py_compile` |
+| JavaScript/TS | Acorn | `node --check` |
+| C# | Roslyn | `dotnet build` |
+| COBOL | Structural + GnuCOBOL | `cobc` (preserving track) |
+
+Soft/WARN results do **not** enter the review queue.
 
 The pipeline is:
 
 - **Fail-closed**: Only hard verification PASS promotes a patch to pending review
 - **Auditable**: Every action is recorded in an immutable audit log
 - **Human-Controlled**: No automatic final conversion — every change requires explicit developer approval
-- **Multi-language**: Java, Python, COBOL, JavaScript, and C# adapters with honest capability status
+- **Multi-language full converters**: Java, Python, JavaScript, C#, and COBOL-preserving — each on an industry-standard parse frontend
 
 ShadowStack does not compete on autocomplete. It competes on **trust, proof, controlled transformation, and recorded migration intelligence**.
 
@@ -44,11 +53,11 @@ ShadowStack is built around a **pluggable language adapter framework**:
 
 | Adapter | Status | Description |
 |---------|--------|-------------|
-| **Java** | ✅ Full (compile-gated) | OpenRewrite/Sonar classics: anon→lambda, diamond, `List.sort`, `StringBuffer`→`StringBuilder`, `Vector`→`ArrayList`, `Hashtable`→`HashMap`, `Stack`→`ArrayDeque`, boxing `valueOf`, `size()==0`→`isEmpty()`, `indexOf`→`contains`, `Class.newInstance`, literal-first `equals`, `toUpper/LowerCase(Locale.ROOT)`, `Collections.EMPTY_*`→`empty*()`, `getBytes(UTF_8)`, `URLEncoder` UTF-8, `trim`→`strip`
-| **Python** | ✅ Adapter (py_compile-gated) | lib2to3/modernize set: print/print>>, xrange, iter*, imap/izip/ifilter, reduce→functools, unicode/basestring, except/as, `<>`, has_key, raw_input, long, raise, file, apply, urllib2/ConfigParser/Queue/thread/commands/urlparse/httplib/BaseHTTPServer/md5/sha/sets/UserDict/robotparser, execfile, u-prefix, unichr, reload, intern, StandardError, `.next()`, backticks, cPickle/cStringIO/__builtin__/Cookie/...
-| **COBOL** | ✅ Adapter (COBOL-preserving auto-apply) | Enterprise COBOL→modern: fixed→free, STOP RUN→GOBACK, GO TO→PERFORM, DISPLAY/MOVE/COMPUTE/PERFORM/ADD/SUBTRACT/ACCEPT/MULTIPLY/DIVIDE/INITIALIZE/EXIT PROGRAM/STRING/SET, INSPECT/UNSTRING/OPEN/CLOSE/READ/WRITE/CALL/CONTINUE/REWRITE/DELETE/SORT/MERGE/EVALUATE/SEARCH/START, ALTER flags
-| **JavaScript/TS** | ✅ Adapter (node --check) | ES5/CommonJS→modern: var→let, ==→===, require→import, module.exports→export, __dirname/__filename→import.meta, substr→substring, escape/unescape, indexOf→includes
-| **C#** | ✅ Adapter (safe-rename auto-apply) | Framework→modern: ArrayList/Hashtable, WebClient→HttpClient, BinaryFormatter/Remoting/Thread.Abort removals, string.Format→interpolation, nameof, nullable enable
+| **Java** | ✅ Full (JDT + javac) | OpenRewrite/Sonar/Jakarta classics (~62): anon→lambda, diamond, Guava→JDK, `javax`→`jakarta`, Optional/Objects/Map idioms, sequenced collections, JUnit4→5, boxing, collections, charset, deprecations |
+| **Python** | ✅ Full (LibCST + py_compile) | lib2to3/modernize/pyupgrade on AST: xrange/iter*/imports/unicode/has_key/reduce/types.* / octal / f-strings; Py2 print/`<>` via regex fallback when LibCST cannot parse |
+| **COBOL** | ✅ Full preserving (cobc) + translate adapter | **preserving**: fixed→free, GOBACK, PERFORM, NEXT SENTENCE→CONTINUE, EVALUATE TRUE→IF; **translate**: DISPLAY/MOVE/… stubs (detect-only, never cobc PASS) |
+| **JavaScript/TS** | ✅ Full (Acorn + node --check) | ES5/CommonJS→modern on AST: var/let/const, ===, substr, includes/startsWith, spread, escape, template literals; CJS→ESM detect |
+| **C#** | ✅ Full (Roslyn + dotnet) | Upgrade Assistant / CA classics on Roslyn: ArrayList/Hashtable, string.Format, nameof, nullable, using declarations, file-scoped namespaces, HttpClient migrations |
 
 Each adapter implements: `parse()` → `buildSemanticModel()` → `listRefactorCandidates()` → `applyRefactor()` → `verifyPatch()`
 
@@ -144,18 +153,27 @@ A worked example lives at [`examples/legacy-python/report_builder.py`](examples/
 
 ## COBOL Modernization Rules
 
-The `CobolAdapter` parses fixed-format COBOL-85 (cols 1–6 sequence area, col 7 indicator, cols 8–72 program area, cols 73–80 identification area) and free-format COBOL-2002. It extracts `PROGRAM-ID`, divisions, sections, paragraphs, working-storage items (with `PIC` clauses mapped to a normalized type system), and `PERFORM`-based call-graph edges.
+The `CobolAdapter` exposes two tracks:
 
-| Rule ID | Transformation | Risk |
-|---------|----------------|------|
-| `cobol.fixed_to_free` | Fixed-format reference format → COBOL-2002 free-format (comments rewritten to `*>`, continuation/debug lines preserved) | MODERATE |
-| `cobol.stop_run_to_goback` | `STOP RUN` → `GOBACK` (CICS-safe, sub-program-safe) | MODERATE |
-| `cobol.goto_to_perform` | Terminal `GO TO PARA.` → `PERFORM PARA.` when the GO TO is the last statement in its paragraph | MODERATE |
-| `cobol.alter_removed` | Flags `ALTER` statements (removed in COBOL-2002) for manual rewrite | HIGH |
+| Track | Status | Verification |
+|-------|--------|--------------|
+| **preserving** | full | `cobc -fsyntax-only` (adds `-free` after fixed→free / `>>SOURCE FREE`) |
+| **translate** | adapter | Java-ish stubs; cobc intentionally skipped |
 
-The fixed→free verifier re-parses the converted program and confirms a canonical-form AST hash equality — proof that the transformation is purely structural.
+It parses fixed-format COBOL-85 (cols 1–6 sequence area, col 7 indicator, cols 8–72 program area, cols 73–80 identification area) and free-format COBOL-2002. Industry alignment: GnuCOBOL and IBM Enterprise COBOL modernization patterns.
 
-A worked example lives at [`examples/legacy-cobol/PAYROLL.cob`](examples/legacy-cobol/PAYROLL.cob).
+| Rule ID | Track | Transformation | Risk |
+|---------|-------|----------------|------|
+| `cobol.fixed_to_free` | preserving | Fixed-format → free-format + `>>SOURCE FREE` | MODERATE |
+| `cobol.stop_run_to_goback` | preserving | `STOP RUN` → `GOBACK` | MODERATE |
+| `cobol.goto_to_perform` | preserving | Terminal `GO TO PARA.` → `PERFORM PARA.` | MODERATE |
+| `cobol.exit_program_to_goback` | preserving | `EXIT PROGRAM` → `GOBACK` | LOW |
+| `cobol.next_sentence_to_continue` | preserving | `NEXT SENTENCE` → `CONTINUE` | MODERATE |
+| `cobol.evaluate_true_simplify` | preserving | `EVALUATE TRUE` → `IF` / `ELSE IF` | MODERATE |
+| `cobol.alter_removed` / `cobol.remove_alter` | preserving | Detect-only ALTER flag | HIGH |
+| `cobol.display_to_print` etc. | translate | COBOL→Java-ish migration stubs | varies |
+
+A worked example lives at [`examples/legacy-cobol/PAYROLL.cob`](examples/legacy-cobol/PAYROLL.cob) (`cobc -fsyntax-only` clean).
 
 ---
 
@@ -357,7 +375,7 @@ The platform was built in this order, with each layer depending on the previous:
 9. ✅ Web UI (Next.js dashboard)
 10. ✅ Security docs + hardening
 11. ✅ Python adapter — Python 2 → 3 modernization (83 rules)
-12. ✅ COBOL adapter — fixed-format parser + 46 modernization rules
+12. ✅ COBOL adapter — preserving (full/cobc) + translate tracks
 13. ✅ JavaScript/TypeScript adapter — CommonJS/ES5 → modern ESM (20 rules)
 14. ✅ C# adapter — .NET Framework → modern patterns (19 rules)
 15. ✅ Java industry rule catalog expanded to 45 OpenRewrite/Sonar/JDK rules

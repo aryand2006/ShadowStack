@@ -17,38 +17,40 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * End-to-end exercise of the CobolAdapter on a fixed-format payroll program.
  * Verifies division/paragraph extraction, fixed-to-free conversion, and the
- * legacy-pattern refactor rules.
+ * legacy-pattern refactor rules (preserving + translate tracks).
  */
 class CobolAdapterTest {
 
+    /** cobc -fsyntax-only clean fixed-format sample. */
     private static final String FIXED_FORMAT_PROGRAM =
-            "000100 IDENTIFICATION DIVISION.                                         00000100\n" +
-            "000200 PROGRAM-ID. SAMPLE.                                              00000200\n" +
-            "000300 DATA DIVISION.                                                   00000300\n" +
-            "000400 WORKING-STORAGE SECTION.                                         00000400\n" +
-            "000500 01 GREETING PIC X(10) VALUE \"HELLO\".                             00000500\n" +
-            "000600 01 WS-COUNT PIC 9(3) VALUE 1.                                    00000600\n" +
-            "000650 01 WS-FLAG PIC X VALUE \"N\".                                      00000650\n" +
-            "000700 PROCEDURE DIVISION.                                              00000700\n" +
-            "000800 MAIN-PARA.                                                       00000800\n" +
-            "000900     ACCEPT GREETING.                                             00000900\n" +
-            "001000     MOVE \"READY\" TO GREETING.                                    00001000\n" +
-            "001100     ADD 1 TO WS-COUNT.                                           00001100\n" +
-            "001200     SUBTRACT 1 FROM WS-COUNT.                                    00001200\n" +
-            "001250     MULTIPLY 2 BY WS-COUNT.                                      00001250\n" +
-            "001260     DIVIDE 2 INTO WS-COUNT.                                      00001260\n" +
-            "001270     INITIALIZE GREETING.                                         00001270\n" +
-            "001280     STRING \"HI\" GREETING INTO GREETING.                          00001280\n" +
-            "001290     SET WS-FLAG TO TRUE.                                         00001290\n" +
-            "001300     COMPUTE WS-COUNT = WS-COUNT * 2.                             00001300\n" +
-            "001400     PERFORM SHOW-GREETING.                                       00001400\n" +
-            "001500     DISPLAY GREETING.                                            00001500\n" +
-            "001600     GO TO END-PARA.                                              00001600\n" +
-            "001700 SHOW-GREETING.                                                   00001700\n" +
-            "001800     DISPLAY GREETING.                                            00001800\n" +
-            "001900 END-PARA.                                                        00001900\n" +
-            "001950     EXIT PROGRAM.                                                00001950\n" +
-            "002000     STOP RUN.                                                    00002000\n";
+            "000100 IDENTIFICATION DIVISION.\n" +
+            "000200 PROGRAM-ID. SAMPLE.\n" +
+            "000300 DATA DIVISION.\n" +
+            "000400 WORKING-STORAGE SECTION.\n" +
+            "000500 01 GREETING PIC X(10) VALUE \"HELLO\".\n" +
+            "000600 01 WS-COUNT PIC 9(3) VALUE 1.\n" +
+            "000650 01 WS-FLAG PIC X VALUE \"N\".\n" +
+            "000660    88 WS-FLAG-ON VALUE \"Y\".\n" +
+            "000700 PROCEDURE DIVISION.\n" +
+            "000800 MAIN-PARA.\n" +
+            "000900     ACCEPT GREETING.\n" +
+            "001000     MOVE \"READY\" TO GREETING.\n" +
+            "001100     ADD 1 TO WS-COUNT.\n" +
+            "001200     SUBTRACT 1 FROM WS-COUNT.\n" +
+            "001250     MULTIPLY 2 BY WS-COUNT.\n" +
+            "001260     DIVIDE 2 INTO WS-COUNT.\n" +
+            "001270     INITIALIZE GREETING.\n" +
+            "001280     STRING \"HI\" DELIMITED BY SIZE INTO GREETING.\n" +
+            "001290     SET WS-FLAG-ON TO TRUE.\n" +
+            "001300     COMPUTE WS-COUNT = WS-COUNT * 2.\n" +
+            "001400     PERFORM SHOW-GREETING.\n" +
+            "001500     DISPLAY GREETING.\n" +
+            "001600     GO TO END-PARA.\n" +
+            "001700 SHOW-GREETING.\n" +
+            "001800     DISPLAY GREETING.\n" +
+            "001900 END-PARA.\n" +
+            "001950     EXIT PROGRAM.\n" +
+            "002000     STOP RUN.\n";
 
     @Test
     void parses_fixed_format_program(@TempDir Path tmp) throws Exception {
@@ -82,7 +84,9 @@ class CobolAdapterTest {
         assertTrue(ruleIds.contains("cobol.fixed_to_free"), "fixed-to-free rule must fire");
         assertTrue(ruleIds.contains("cobol.stop_run_to_goback"), "STOP RUN rule must fire");
         assertTrue(ruleIds.contains("cobol.goto_to_perform"), "GO TO rule must fire");
-        assertTrue(ruleIds.contains("cobol.display_to_print"), "DISPLAY rule must fire");
+        assertTrue(ruleIds.contains("cobol.exit_program_to_goback"), "EXIT PROGRAM→GOBACK must fire");
+        assertTrue(ruleIds.contains("cobol.set_true_88"), "SET TO TRUE preserving must fire");
+        assertTrue(ruleIds.contains("cobol.display_to_print"), "DISPLAY translate rule must fire");
         assertTrue(ruleIds.contains("cobol.move_to_assign"), "MOVE rule must fire");
         assertTrue(ruleIds.contains("cobol.compute_to_assign"), "COMPUTE rule must fire");
         assertTrue(ruleIds.contains("cobol.perform_to_call"), "PERFORM rule must fire");
@@ -92,9 +96,20 @@ class CobolAdapterTest {
         assertTrue(ruleIds.contains("cobol.multiply_to_assign"), "MULTIPLY rule must fire");
         assertTrue(ruleIds.contains("cobol.divide_to_assign"), "DIVIDE rule must fire");
         assertTrue(ruleIds.contains("cobol.initialize_to_clear"), "INITIALIZE rule must fire");
-        assertTrue(ruleIds.contains("cobol.exit_program_to_return"), "EXIT PROGRAM rule must fire");
+        assertTrue(ruleIds.contains("cobol.exit_program_to_return"), "EXIT PROGRAM translate must fire");
         assertTrue(ruleIds.contains("cobol.string_to_concat"), "STRING rule must fire");
-        assertTrue(ruleIds.contains("cobol.set_to_true"), "SET TO TRUE rule must fire");
+        assertTrue(ruleIds.contains("cobol.set_to_true"), "SET TO TRUE translate must fire");
+
+        assertTrue(candidates.stream()
+                        .filter(c -> CobolAdapter.isPreservingRule(c.ruleId()))
+                        .allMatch(c -> CobolAdapter.MODE_PRESERVING.equals(
+                                c.astContext().get("mode"))),
+                "preserving candidates must tag mode=preserving");
+        assertTrue(candidates.stream()
+                        .filter(c -> !CobolAdapter.isPreservingRule(c.ruleId()))
+                        .allMatch(c -> CobolAdapter.MODE_TRANSLATE.equals(
+                                c.astContext().get("mode"))),
+                "translate candidates must tag mode=translate");
     }
 
     @Test
@@ -114,7 +129,9 @@ class CobolAdapterTest {
         assertTrue(patch.success(), "fixed-to-free patch must succeed");
 
         String converted = Files.readString(file);
-        assertFalse(converted.startsWith("000100"),
+        assertTrue(converted.startsWith(">>SOURCE FREE"),
+                "free-format must insert >>SOURCE FREE indicator");
+        assertFalse(converted.contains("000100 IDENTIFICATION"),
                 "free-format must drop the leading sequence area");
         assertTrue(converted.contains("IDENTIFICATION DIVISION"));
         assertTrue(converted.contains("PROGRAM-ID. SAMPLE."));
@@ -123,7 +140,7 @@ class CobolAdapterTest {
         VerificationResult vr = adapter.verifyPatch(patch, tmp,
                 LanguageAdapter.VerificationConfig.defaults());
         assertTrue(vr.compileSuccess(),
-                "post-conversion program must still re-parse cleanly");
+                () -> "post-conversion cobc must PASS: " + vr.layerResults());
     }
 
     @Test
@@ -170,6 +187,33 @@ class CobolAdapterTest {
         assertTrue(contIds.contains("cobol.continue_to_empty"), contIds.toString());
     }
 
+    @Test
+    void nextSentence_and_evaluateTrue_preserving(@TempDir Path tmp) throws Exception {
+        String src =
+                ">>SOURCE FREE\n" +
+                "IDENTIFICATION DIVISION.\n" +
+                "PROGRAM-ID. EV.\n" +
+                "DATA DIVISION.\n" +
+                "WORKING-STORAGE SECTION.\n" +
+                "01 WS-X PIC 9 VALUE 1.\n" +
+                "PROCEDURE DIVISION.\n" +
+                "MAIN.\n" +
+                "    IF WS-X = 1\n" +
+                "        NEXT SENTENCE\n" +
+                "    ELSE\n" +
+                "        DISPLAY \"NO\".\n" +
+                "    EVALUATE TRUE\n" +
+                "        WHEN WS-X = 1\n" +
+                "            DISPLAY \"ONE\"\n" +
+                "        WHEN OTHER\n" +
+                "            DISPLAY \"OTHER\"\n" +
+                "    END-EVALUATE\n" +
+                "    GOBACK.\n";
+        Set<String> ids = detectIds(tmp, "ev.cob", src);
+        assertTrue(ids.contains("cobol.next_sentence_to_continue"), ids.toString());
+        assertTrue(ids.contains("cobol.evaluate_true_simplify"), ids.toString());
+    }
+
     private static void assertDetects(Path tmp, String name, String source, String ruleId)
             throws Exception {
         Set<String> ids = detectIds(tmp, name, source);
@@ -186,7 +230,6 @@ class CobolAdapterTest {
                 .stream().map(RefactorCandidate::ruleId).collect(Collectors.toSet());
     }
 
-
     @Test
     void applies_stop_run_and_verifies(@TempDir Path tmp) throws Exception {
         Path file = tmp.resolve("SAMPLE.cob");
@@ -198,13 +241,35 @@ class CobolAdapterTest {
                 .filter(c -> "cobol.stop_run_to_goback".equals(c.ruleId()))
                 .findFirst()
                 .orElseThrow();
+        assertEquals(CobolAdapter.MODE_PRESERVING, candidate.astContext().get("mode"));
         PatchResult patch = adapter.applyRefactor(candidate, tmp);
         assertTrue(patch.success(), () -> String.valueOf(patch.errorMessage()));
         String updated = Files.readString(file, StandardCharsets.UTF_8);
         assertTrue(updated.toUpperCase().contains("GOBACK"), updated);
         VerificationResult vr = adapter.verifyPatch(
                 patch, tmp, LanguageAdapter.VerificationConfig.defaults());
-        assertTrue(vr.compileSuccess());
+        assertTrue(vr.compileSuccess(), () -> String.valueOf(vr.layerResults()));
         assertNotNull(vr.verdict());
+    }
+
+    @Test
+    void translate_verify_skips_cobc(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("SAMPLE.cob");
+        Files.writeString(file, FIXED_FORMAT_PROGRAM, StandardCharsets.UTF_8);
+        CobolAdapter adapter = new CobolAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        RefactorCandidate candidate = adapter.listRefactorCandidates(
+                        model, LanguageAdapter.RefactorRuleSet.empty()).stream()
+                .filter(c -> "cobol.display_to_print".equals(c.ruleId()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(CobolAdapter.MODE_TRANSLATE, candidate.astContext().get("mode"));
+        PatchResult patch = adapter.applyRefactor(candidate, tmp);
+        assertTrue(patch.success());
+        VerificationResult vr = adapter.verifyPatch(
+                patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+        assertFalse(vr.compileSuccess(), "translate must not claim cobc PASS");
+        assertTrue(vr.layerResults().stream()
+                .anyMatch(l -> "translate".equals(l.layerName())));
     }
 }

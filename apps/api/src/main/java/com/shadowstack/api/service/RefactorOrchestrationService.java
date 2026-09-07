@@ -15,6 +15,7 @@ import com.shadowstack.api.dto.VerificationResultResponse.InvariantResults;
 import com.shadowstack.api.dto.VerificationResultResponse.TestResults;
 import com.shadowstack.api.dto.VerificationResultResponse.VerificationStatus;
 import com.shadowstack.adapters.LanguageAdapter;
+import com.shadowstack.adapters.cobol.CobolAdapter;
 import com.shadowstack.adapters.model.PatchResult;
 import com.shadowstack.adapters.model.RefactorCandidate;
 import com.shadowstack.adapters.model.SemanticModel;
@@ -631,18 +632,10 @@ public class RefactorOrchestrationService {
         return switch (lang) {
             case "java" -> true;
             case "python", "python3", "py" -> ruleId.startsWith("py.");
-            case "cobol", "cbl", "cob" -> Set.of(
-                    "cobol.fixed_to_free",
-                    "cobol.stop_run_to_goback",
-                    "cobol.goto_to_perform",
-                    "cobol.exit_program_to_return",
-                    "cobol.exit_section_to_return",
-                    "cobol.exit_paragraph_to_return",
-                    "cobol.continue_to_empty",
-                    "cobol.alter_removed"
-            ).contains(ruleId);
+            case "cobol", "cbl", "cob" -> CobolAdapter.isPreservingRule(ruleId);
             case "javascript", "js", "typescript", "ts" -> Set.of(
                     "js.var_to_let",
+                    "js.prefer_const",
                     "js.==_to_===",
                     "js.!=_to_!==",
                     "js.substr_to_substring",
@@ -652,18 +645,22 @@ public class RefactorOrchestrationService {
                     "js.object_assign_to_spread",
                     "js.escape_to_encodeuri",
                     "js.unescape_to_decodeuri",
-                    "js.string_concat_plus"
+                    "js.string_concat_plus",
+                    "js.optional_catch_binding"
             ).contains(ruleId);
             case "csharp", "cs", "c#" -> Set.of(
                     "cs.arraylist_to_list",
                     "cs.hashtable_to_dictionary",
                     "cs.string_format_to_interpolation",
+                    "cs.string_concat_interpolate",
                     "cs.stringbuilder_appendformat",
                     "cs.string_isempty",
                     "cs.nameof_for_literals",
                     "cs.nullable_enable",
                     "cs.readonlycollection_to_ilist",
-                    "cs.concurrentdict_tryadd"
+                    "cs.concurrentdict_tryadd",
+                    "cs.using_declaration",
+                    "cs.file_scoped_namespace"
             ).contains(ruleId);
             default -> false;
         };

@@ -12,9 +12,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class CsharpAdapterTest {
 
@@ -115,5 +117,55 @@ class CsharpAdapterTest {
         VerificationResult verification = adapter.verifyPatch(
                 patch, tmp, LanguageAdapter.VerificationConfig.defaults());
         assertNotNull(verification.verdict());
+    }
+
+    @Test
+    void roslyn_detect_finds_arraylist_when_dotnet_available(@TempDir Path tmp) throws Exception {
+        assumeTrue(isDotnetAvailable(), "dotnet SDK not available");
+        assumeTrue(isRoslynEnginePublished(), "CsharpAstEngine publish output missing");
+
+        String source = """
+                using System.Collections;
+                class Sample {
+                    void Run() { ArrayList items = new ArrayList(); }
+                }
+                """;
+        Files.writeString(tmp.resolve("Sample.cs"), source, StandardCharsets.UTF_8);
+
+        CsharpAdapter adapter = new CsharpAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        List<RefactorCandidate> candidates = adapter.listRefactorCandidates(
+                model, LanguageAdapter.RefactorRuleSet.empty());
+
+        RefactorCandidate arrayList = candidates.stream()
+                .filter(c -> "cs.arraylist_to_list".equals(c.ruleId()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("missing cs.arraylist_to_list in " +
+                        candidates.stream().map(RefactorCandidate::ruleId).toList()));
+
+        assertEquals("roslyn", arrayList.astContext().get("parseEngine"));
+        PatchResult patch = adapter.applyRefactor(arrayList, tmp);
+        assertTrue(patch.success(), () -> String.valueOf(patch.errorMessage()));
+        assertEquals("roslyn", patch.metadata().get("parseEngine"));
+        assertTrue(Files.readString(tmp.resolve("Sample.cs")).contains("List<object>"));
+    }
+
+    private static boolean isDotnetAvailable() {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("dotnet", "--info");
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            boolean finished = p.waitFor(15, TimeUnit.SECONDS);
+            return finished && p.exitValue() == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static boolean isRoslynEnginePublished() {
+        return Files.isRegularFile(Path.of(
+                "/workspace/packages/language-adapters/native-engines/csharp/publish/CsharpAstEngine.dll"))
+                || Files.isRegularFile(Path.of(
+                "packages/language-adapters/native-engines/csharp/publish/CsharpAstEngine.dll"));
     }
 }

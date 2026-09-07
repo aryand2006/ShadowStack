@@ -1,5 +1,7 @@
 package com.shadowstack.adapters.csharp;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shadowstack.adapters.LanguageAdapter;
 import com.shadowstack.adapters.model.*;
 import org.slf4j.Logger;
@@ -16,20 +18,30 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
- * Lightweight structural adapter for C# 12 source.
+ * Structural adapter for C# 12 source.
  *
- * <p>This implementation recognizes common declarations and modernization
- * opportunities without requiring a .NET SDK or Roslyn installation.</p>
+ * <p>Candidate detection prefers the Roslyn {@code CsharpAstEngine} when
+ * {@code dotnet} and a published engine DLL are available, then merges in
+ * regex-based findings for rule IDs the Roslyn path did not cover. Apply tries
+ * the Roslyn engine first and falls back to line-oriented text replacement.</p>
  */
 public class CsharpAdapter implements LanguageAdapter {
 
     private static final Logger LOG = LoggerFactory.getLogger(CsharpAdapter.class);
     private static final String LANGUAGE_ID = "csharp";
     private static final String LANGUAGE_VERSION = "12";
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final String ENGINE_DLL_NAME = "CsharpAstEngine.dll";
+
+    private final Object roslynEngineLock = new Object();
+    private volatile Path roslynEngineDll;
+    private volatile Boolean roslynEngineAvailable;
 
     private static final Pattern NAMESPACE =
             Pattern.compile("\\bnamespace\\s+([A-Za-z_][\\w.]*)");
@@ -135,8 +147,21 @@ public class CsharpAdapter implements LanguageAdapter {
         for (Path file : collectFiles(model.sourceRoot())) {
             try {
                 String source = Files.readString(file, StandardCharsets.UTF_8);
-                candidates.addAll(detectCandidates(
-                        source, normalizedRelativePath(model.sourceRoot(), file)));
+                String relPath = normalizedRelativePath(model.sourceRoot(), file);
+                List<RefactorCandidate> roslyn = detectWithRoslynEngine(file, relPath);
+                if (!roslyn.isEmpty()) {
+                    Set<String> roslynIds = roslyn.stream()
+                            .map(RefactorCandidate::ruleId)
+                            .collect(Collectors.toSet());
+                    candidates.addAll(roslyn);
+                    for (RefactorCandidate regexCandidate : detectCandidates(source, relPath)) {
+                        if (!roslynIds.contains(regexCandidate.ruleId())) {
+                            candidates.add(regexCandidate);
+                        }
+                    }
+                } else {
+                    candidates.addAll(detectCandidates(source, relPath));
+                }
             } catch (IOException e) {
                 LOG.warn("Skipping {}: {}", file, e.getMessage());
             }
@@ -154,10 +179,17 @@ public class CsharpAdapter implements LanguageAdapter {
         }
         try {
             String before = Files.readString(target, StandardCharsets.UTF_8);
-            String after = replaceCandidateLine(before, candidate);
             String beforeHash = structuralHash(before);
+            boolean usedRoslyn = isRoslynEngineAvailable()
+                    && tryApplyWithRoslynEngine(target, candidate.ruleId(), candidate.startLine());
+            String after;
+            if (usedRoslyn) {
+                after = Files.readString(target, StandardCharsets.UTF_8);
+            } else {
+                after = replaceCandidateLine(before, candidate);
+                Files.writeString(target, after, StandardCharsets.UTF_8);
+            }
             String afterHash = structuralHash(after);
-            Files.writeString(target, after, StandardCharsets.UTF_8);
             return PatchResult.builder()
                     .candidateId(candidate.candidateId())
                     .unifiedDiff(unifiedDiff(candidate.sourceFile(), before, after))
@@ -167,6 +199,7 @@ public class CsharpAdapter implements LanguageAdapter {
                     .success(true)
                     .putMetadata("ruleId", candidate.ruleId())
                     .putMetadata("linesAffected", candidate.lineSpan())
+                    .putMetadata("parseEngine", usedRoslyn ? "roslyn" : "regex")
                     .build();
         } catch (Exception e) {
             return PatchResult.failure(candidate.candidateId(), e.getMessage());
@@ -265,23 +298,16 @@ public class CsharpAdapter implements LanguageAdapter {
                         "dotnet present but unusable; structural-only verification", elapsed);
             }
             Path target = sourceRoot.resolve(patch.affectedFiles().get(0));
-            // Look for a nearby .csproj; if none, report honest structural-only compile layer.
-            Path dir = target.getParent();
-            boolean hasProj = false;
-            if (dir != null && Files.isDirectory(dir)) {
-                try (var stream = Files.list(dir)) {
-                    hasProj = stream.anyMatch(f -> f.getFileName().toString().endsWith(".csproj"));
-                }
-            }
-            if (!hasProj) {
+            Path projectDir = findCsprojDirectory(sourceRoot, target);
+            if (projectDir == null) {
                 return new VerificationResult.LayerResult(
                         "compilation", true, 0.85,
-                        "dotnet available; no .csproj beside " + target.getFileName()
+                        "dotnet available; no .csproj under " + sourceRoot
                                 + " (structural verification only)",
                         elapsed);
             }
             ProcessBuilder build = new ProcessBuilder("dotnet", "build", "--nologo", "-v", "q");
-            build.directory(dir.toFile());
+            build.directory(projectDir.toFile());
             build.redirectErrorStream(true);
             Process bp = build.start();
             StringBuilder out = new StringBuilder();
@@ -308,6 +334,270 @@ public class CsharpAdapter implements LanguageAdapter {
             return new VerificationResult.LayerResult(
                     "compilation", true, 0.7,
                     "dotnet not available; structural-only verification", elapsed);
+        }
+    }
+
+    /**
+     * Prefer a .csproj beside the affected file (walking up to {@code sourceRoot}),
+     * otherwise any .csproj discovered under the source root.
+     */
+    private static Path findCsprojDirectory(Path sourceRoot, Path affectedFile) {
+        Path dir = affectedFile.getParent();
+        while (dir != null && (dir.startsWith(sourceRoot) || dir.equals(sourceRoot))) {
+            if (firstCsprojIn(dir) != null) {
+                return dir;
+            }
+            if (dir.equals(sourceRoot)) {
+                break;
+            }
+            dir = dir.getParent();
+        }
+        try {
+            final Path[] found = {null};
+            Files.walkFileTree(sourceRoot, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    if (file.getFileName().toString().endsWith(".csproj")) {
+                        found[0] = file.getParent();
+                        return FileVisitResult.TERMINATE;
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult preVisitDirectory(Path d, BasicFileAttributes attrs) {
+                    String name = d.getFileName() == null ? "" : d.getFileName().toString();
+                    return Set.of(".git", "bin", "obj").contains(name)
+                            ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+                }
+            });
+            return found[0];
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private static Path firstCsprojIn(Path dir) {
+        if (dir == null || !Files.isDirectory(dir)) return null;
+        try (var stream = Files.list(dir)) {
+            return stream
+                    .filter(f -> f.getFileName().toString().endsWith(".csproj"))
+                    .findFirst()
+                    .orElse(null);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  ROSLYN AST ENGINE
+    // ═══════════════════════════════════════════════════════════════════════
+
+    private boolean isRoslynEngineAvailable() {
+        Boolean cached = roslynEngineAvailable;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (roslynEngineLock) {
+            if (roslynEngineAvailable != null) {
+                return roslynEngineAvailable;
+            }
+            try {
+                Path dll = resolveRoslynEngineDll();
+                if (dll == null) {
+                    roslynEngineAvailable = false;
+                    return false;
+                }
+                ProcessBuilder pb = new ProcessBuilder("dotnet", "--info");
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                boolean finished = p.waitFor(10, TimeUnit.SECONDS);
+                roslynEngineAvailable = finished && p.exitValue() == 0;
+                if (!roslynEngineAvailable) {
+                    LOG.info("Roslyn C# engine unavailable (dotnet probe failed)");
+                }
+                return roslynEngineAvailable;
+            } catch (Exception e) {
+                LOG.debug("Roslyn engine probe failed: {}", e.getMessage());
+                roslynEngineAvailable = false;
+                return false;
+            }
+        }
+    }
+
+    private Path resolveRoslynEngineDll() {
+        Path cached = roslynEngineDll;
+        if (cached != null && Files.isRegularFile(cached)) {
+            return cached;
+        }
+        synchronized (roslynEngineLock) {
+            if (roslynEngineDll != null && Files.isRegularFile(roslynEngineDll)) {
+                return roslynEngineDll;
+            }
+            List<Path> candidates = List.of(
+                    Path.of("packages/language-adapters/native-engines/csharp/publish")
+                            .resolve(ENGINE_DLL_NAME).toAbsolutePath().normalize(),
+                    Path.of("/workspace/packages/language-adapters/native-engines/csharp/publish")
+                            .resolve(ENGINE_DLL_NAME),
+                    Path.of("native-engines/csharp/publish").resolve(ENGINE_DLL_NAME)
+                            .toAbsolutePath().normalize(),
+                    Path.of("../native-engines/csharp/publish").resolve(ENGINE_DLL_NAME)
+                            .toAbsolutePath().normalize()
+            );
+            for (Path candidate : candidates) {
+                if (Files.isRegularFile(candidate)) {
+                    roslynEngineDll = candidate;
+                    return roslynEngineDll;
+                }
+            }
+            LOG.warn("Roslyn engine DLL not found (expected under native-engines/csharp/publish)");
+            return null;
+        }
+    }
+
+    private List<String> roslynCommand(String... args) {
+        Path dll = resolveRoslynEngineDll();
+        List<String> cmd = new ArrayList<>();
+        cmd.add("dotnet");
+        cmd.add("exec");
+        cmd.add(dll.toAbsolutePath().toString());
+        cmd.addAll(Arrays.asList(args));
+        return cmd;
+    }
+
+    private List<RefactorCandidate> detectWithRoslynEngine(Path file, String relPath) {
+        if (!isRoslynEngineAvailable()) {
+            return List.of();
+        }
+        try {
+            ProcessBuilder pb = new ProcessBuilder(roslynCommand(
+                    "detect", file.toAbsolutePath().toString()));
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String output;
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                output = reader.lines().collect(Collectors.joining("\n")).trim();
+            }
+            boolean finished = p.waitFor(45, TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                LOG.warn("Roslyn detect timed out for {}", relPath);
+                return List.of();
+            }
+            if (p.exitValue() != 0 || output.isEmpty()) {
+                return List.of();
+            }
+            String json = output;
+            int lastNl = output.lastIndexOf('\n');
+            if (lastNl >= 0) {
+                String last = output.substring(lastNl + 1).trim();
+                if (last.startsWith("[")) {
+                    json = last;
+                }
+            }
+            if (!json.startsWith("[")) {
+                return List.of();
+            }
+            JsonNode arr = JSON.readTree(json);
+            if (!arr.isArray() || arr.isEmpty()) {
+                return List.of();
+            }
+            List<RefactorCandidate> out = new ArrayList<>();
+            for (JsonNode node : arr) {
+                String ruleId = textOr(node, "ruleId", "");
+                if (ruleId.isEmpty()) continue;
+                String ruleName = textOr(node, "ruleName", ruleId);
+                String before = textOr(node, "beforeSnippet", "");
+                String after = textOr(node, "afterSnippet", before);
+                int startLine = node.path("startLine").asInt(1);
+                int endLine = node.path("endLine").asInt(startLine);
+                double confidence = Math.max(0.0, Math.min(1.0, node.path("confidence").asDouble(0.9)));
+                RiskTier risk = parseRisk(textOr(node, "risk", "LOW"));
+                out.add(RefactorCandidate.builder()
+                        .sourceFile(relPath)
+                        .startLine(startLine)
+                        .endLine(endLine)
+                        .ruleId(ruleId)
+                        .ruleName(ruleName)
+                        .ruleCategory("MODERNIZATION")
+                        .beforeSnippet(before)
+                        .proposedAfterSnippet(after)
+                        .confidenceScore(confidence)
+                        .riskTier(risk)
+                        .addSafetyInvariant(new SafetyInvariant(
+                                "cs-roslyn", "Detected via Roslyn CsharpAstEngine",
+                                SafetyInvariant.Category.BEHAVIORAL_EQUIVALENCE,
+                                SafetyInvariant.Status.SATISFIED,
+                                "Roslyn structural match"))
+                        .putAstContext("language", LANGUAGE_ID)
+                        .putAstContext("ruleId", ruleId)
+                        .putAstContext("parseEngine", "roslyn")
+                        .build());
+            }
+            return out;
+        } catch (Exception e) {
+            LOG.debug("Roslyn detect failed for {}: {}", relPath, e.getMessage());
+            return List.of();
+        }
+    }
+
+    private boolean tryApplyWithRoslynEngine(Path file, String ruleId, int startLine) {
+        try {
+            if (resolveRoslynEngineDll() == null) {
+                return false;
+            }
+            ProcessBuilder pb = new ProcessBuilder(roslynCommand(
+                    "apply", file.toAbsolutePath().toString(), ruleId, Integer.toString(startLine)));
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String output;
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                output = reader.lines().collect(Collectors.joining("\n")).trim();
+            }
+            boolean finished = p.waitFor(45, TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                return false;
+            }
+            if (output.isEmpty()) {
+                return false;
+            }
+            String json = output;
+            int lastNl = output.lastIndexOf('\n');
+            if (lastNl >= 0) {
+                String last = output.substring(lastNl + 1).trim();
+                if (last.startsWith("{")) {
+                    json = last;
+                }
+            }
+            JsonNode node = JSON.readTree(json);
+            return node.path("ok").asBoolean(false);
+        } catch (Exception e) {
+            LOG.debug("Roslyn apply failed for {} ({}:{}): {}",
+                    file, ruleId, startLine, e.getMessage());
+            return false;
+        }
+    }
+
+    private static String textOr(JsonNode node, String field, String fallback) {
+        JsonNode v = node.get(field);
+        if (v == null || v.isNull()) {
+            return fallback;
+        }
+        String s = v.asText();
+        return s != null ? s : fallback;
+    }
+
+    private static RiskTier parseRisk(String risk) {
+        if (risk == null) {
+            return RiskTier.LOW;
+        }
+        try {
+            return RiskTier.valueOf(risk.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            return RiskTier.LOW;
         }
     }
 

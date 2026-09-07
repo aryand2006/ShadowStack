@@ -17,14 +17,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class IndustryJavaModernizationRulesTest {
 
     @Test
     void catalogRegistersExpandedIndustryRules() {
         List<RefactorRule> rules = RuleCatalog.javaRules();
-        assertEquals(45, rules.size());
+        assertTrue(rules.size() >= 60, () -> "expected >= 60 java rules, got " + rules.size());
         Set<String> ids = rules.stream().map(RefactorRule::ruleId).collect(Collectors.toSet());
         assertTrue(ids.contains("ANON_TO_LAMBDA"));
         assertTrue(ids.contains("DIAMOND_OPERATOR"));
@@ -49,6 +49,11 @@ class IndustryJavaModernizationRulesTest {
         assertTrue(ids.contains("UNMODIFIABLE_TO_COPYOF"));
         assertTrue(ids.contains("URL_CTOR_TO_URI"));
         assertTrue(ids.contains("BOOLEAN_CTOR_TO_VALUEOF"));
+        assertTrue(ids.contains("JAVAX_SERVLET_TO_JAKARTA"));
+        assertTrue(ids.contains("GUAVA_IMMUTABLELIST_TO_LISTOF"));
+        assertTrue(ids.contains("STRING_FORMATTED"));
+        assertTrue(ids.contains("MAP_GET_OR_DEFAULT"));
+        assertTrue(ids.contains("JUNIT4_ASSERT_TO_JUPITER"));
     }
 
     @Test

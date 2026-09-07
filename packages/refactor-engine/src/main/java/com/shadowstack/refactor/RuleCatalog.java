@@ -17,24 +17,41 @@ import com.shadowstack.refactor.rules.CollectionsSingletonListToListOfRule;
 import com.shadowstack.refactor.rules.CollectionsSingletonMapToMapOfRule;
 import com.shadowstack.refactor.rules.CollectionsSingletonToSetOfRule;
 import com.shadowstack.refactor.rules.CollectionsSortToListSortRule;
+import com.shadowstack.refactor.rules.ComputeIfAbsentDetectRule;
 import com.shadowstack.refactor.rules.DeprecatedThreadApiRule;
 import com.shadowstack.refactor.rules.DiamondOperatorRule;
 import com.shadowstack.refactor.rules.DoubleConstructorRule;
 import com.shadowstack.refactor.rules.FilesReadAllBytesToReadStringRule;
 import com.shadowstack.refactor.rules.FilesWriteToWriteStringRule;
 import com.shadowstack.refactor.rules.FloatConstructorRule;
+import com.shadowstack.refactor.rules.GuavaImmutableListOfRule;
+import com.shadowstack.refactor.rules.GuavaImmutableMapOfRule;
+import com.shadowstack.refactor.rules.GuavaImmutableSetOfRule;
+import com.shadowstack.refactor.rules.HttpUrlConnectionToHttpClientRule;
 import com.shadowstack.refactor.rules.IndexOfToContainsRule;
+import com.shadowstack.refactor.rules.InputStreamReadAllBytesRule;
+import com.shadowstack.refactor.rules.JUnit4AssertToJupiterRule;
+import com.shadowstack.refactor.rules.JavaxToJakartaAnnotationRule;
+import com.shadowstack.refactor.rules.JavaxToJakartaInjectRule;
+import com.shadowstack.refactor.rules.JavaxToJakartaServletRule;
 import com.shadowstack.refactor.rules.LongConstructorRule;
+import com.shadowstack.refactor.rules.MapGetOrDefaultRule;
 import com.shadowstack.refactor.rules.NewDateToInstantRule;
+import com.shadowstack.refactor.rules.ObjectsEqualsNullSafeRule;
+import com.shadowstack.refactor.rules.OptionalIsPresentGetRule;
 import com.shadowstack.refactor.rules.PathsGetToPathOfRule;
 import com.shadowstack.refactor.rules.ReaderWriterCharsetCtorRule;
 import com.shadowstack.refactor.rules.RunFinalizersOnExitRule;
 import com.shadowstack.refactor.rules.RuntimeExecToProcessBuilderRule;
+import com.shadowstack.refactor.rules.SequencedCollectionGetFirstRule;
+import com.shadowstack.refactor.rules.SequencedCollectionGetLastRule;
 import com.shadowstack.refactor.rules.ShortConstructorRule;
 import com.shadowstack.refactor.rules.SimpleDateFormatToDateTimeFormatterRule;
 import com.shadowstack.refactor.rules.SizeZeroToIsEmptyRule;
 import com.shadowstack.refactor.rules.StringEqualsLiteralFirstRule;
+import com.shadowstack.refactor.rules.StringFormattedRule;
 import com.shadowstack.refactor.rules.StringGetBytesCharsetRule;
+import com.shadowstack.refactor.rules.StringIsEmptyRule;
 import com.shadowstack.refactor.rules.StringTrimToStripRule;
 import com.shadowstack.refactor.rules.SystemSetSecurityManagerRule;
 import com.shadowstack.refactor.rules.ThreadYieldRule;
@@ -101,12 +118,30 @@ public final class RuleCatalog {
         rules.add(new UnmodifiableToCopyOfRule());
         rules.add(new UrlConstructorToUriRule());
         rules.add(new UrlEncoderCharsetRule());
+        // OpenRewrite / Sonar high-traffic parity expansions
+        rules.add(new JavaxToJakartaServletRule());
+        rules.add(new JavaxToJakartaInjectRule());
+        rules.add(new JavaxToJakartaAnnotationRule());
+        rules.add(new OptionalIsPresentGetRule());
+        rules.add(new ObjectsEqualsNullSafeRule());
+        rules.add(new StringIsEmptyRule());
+        rules.add(new GuavaImmutableListOfRule());
+        rules.add(new GuavaImmutableSetOfRule());
+        rules.add(new GuavaImmutableMapOfRule());
+        rules.add(new InputStreamReadAllBytesRule());
+        rules.add(new StringFormattedRule());
+        rules.add(new SequencedCollectionGetFirstRule());
+        rules.add(new SequencedCollectionGetLastRule());
+        rules.add(new HttpUrlConnectionToHttpClientRule());
+        rules.add(new JUnit4AssertToJupiterRule());
+        rules.add(new MapGetOrDefaultRule());
+        rules.add(new ComputeIfAbsentDetectRule());
         return rules;
     }
 
     public static String supportSummary() {
         return """
-                Java (45):
+                Java (62):
                   STRINGBUFFER_TO_STRINGBUILDER, VECTOR_TO_ARRAYLIST, HASHTABLE_TO_HASHMAP,
                   STACK_TO_ARRAYDEQUE, ANON_TO_LAMBDA, ARRAYS_ASLIST_TO_LISTOF,
                   BOOLEAN_CTOR_TO_VALUEOF, BOXING_CONSTRUCTOR_TO_VALUEOF, BYTE_CTOR_TO_VALUEOF,
@@ -125,11 +160,16 @@ public final class RuleCatalog {
                   STRING_EQUALS_LITERAL_FIRST, STRING_GETBYTES_CHARSET, STRING_TRIM_TO_STRIP,
                   SYSTEM_SETSECURITYMANAGER_REMOVED, THREAD_YIELD_TO_ONSPINWAIT,
                   TOUPPERLOWER_LOCALE_ROOT, UNMODIFIABLE_TO_COPYOF, URL_CTOR_TO_URI,
-                  URLENCODER_CHARSET
-                Python (lib2to3/modernize classics via PythonAdapter)
-                COBOL (enterprise patterns via CobolAdapter)
-                JavaScript/TypeScript (ES5→modern via JavascriptAdapter)
-                C# (Framework→modern via CsharpAdapter)
+                  URLENCODER_CHARSET, JAVAX_SERVLET_TO_JAKARTA, JAVAX_INJECT_TO_JAKARTA,
+                  JAVAX_ANNOTATION_TO_JAKARTA, OPTIONAL_ISPRESENT_GET, OBJECTS_EQUALS_NULL_SAFE,
+                  STRING_ISEMPTY, GUAVA_IMMUTABLELIST_TO_LISTOF, GUAVA_IMMUTABLESET_TO_SETOF,
+                  GUAVA_IMMUTABLEMAP_TO_MAPOF, INPUTSTREAM_READALLBYTES, STRING_FORMATTED,
+                  SEQUENCED_GET_FIRST, SEQUENCED_GET_LAST, HTTPURLCONNECTION_TO_HTTPCLIENT,
+                  JUNIT4_ASSERT_TO_JUPITER, MAP_GET_OR_DEFAULT, COMPUTE_IF_ABSENT_DETECT
+                Python (full): LibCST AST engine + lib2to3/modernize/pyupgrade catalog
+                COBOL (full preserving / translate adapter): cobc-gated COBOL→COBOL + detect-only stubs
+                JavaScript/TypeScript (full): Acorn AST engine + ESLint/jscodeshift classics
+                C# (full): Roslyn AST engine + .NET Upgrade Assistant / CA classics
                 """;
     }
 }
