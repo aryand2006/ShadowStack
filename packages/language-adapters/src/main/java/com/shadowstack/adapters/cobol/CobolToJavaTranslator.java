@@ -21,6 +21,8 @@ import java.util.regex.Pattern;
  * <p>Phase 1 additions: USAGE COMP/COMP-3, OCCURS, REDEFINES (elementary alias),
  * PERFORM UNTIL/TIMES/VARYING/THRU, SECTION entry points, COPY expansion,
  * and explicit {@link Result#unsupportedGaps()}.</p>
+ *
+ * <p>Phase 6: CALL → {@code TranslatedX.main}, READ AT END, light SELECT/ASSIGN.</p>
  */
 public final class CobolToJavaTranslator {
 
@@ -41,6 +43,12 @@ public final class CobolToJavaTranslator {
             "(?i)^([A-Z][A-Z0-9-]*)\\s+SECTION\\s*\\.\\s*$");
     private static final Pattern SUBSCRIPT = Pattern.compile(
             "(?i)\\b([A-Z][A-Z0-9-]*)\\s*\\(\\s*([A-Z0-9][A-Z0-9-]*|\\d+)\\s*\\)");
+    private static final Pattern SELECT_ASSIGN = Pattern.compile(
+            "(?i)^SELECT\\s+([A-Z0-9-]+)\\s+ASSIGN\\s+(?:TO\\s+)?([A-Z0-9-]+)\\s*\\.?\\s*$");
+    private static final Pattern CALL_LITERAL = Pattern.compile(
+            "(?i)^CALL\\s+(?:'([^']+)'|\"([^\"]+)\"|([A-Z0-9][A-Z0-9-]*))(?:\\s+USING\\s+.+)?$");
+    private static final Pattern READ_AT_END_HEAD = Pattern.compile(
+            "(?i)^READ\\s+([A-Z0-9-]+)(?:\\s+INTO\\s+\\S+)?\\s+AT\\s+END\\b(.*)$");
 
     private static final Pattern PERFORM_VARYING = Pattern.compile(
             "(?i)^PERFORM(?:\\s+([A-Z0-9-]+))?\\s+VARYING\\s+([A-Z0-9-]+)\\s+FROM\\s+(\\S+)\\s+BY\\s+(\\S+)\\s+UNTIL\\s+(.+)$");
@@ -80,7 +88,7 @@ public final class CobolToJavaTranslator {
         String java = emitJava(className, parsed);
         return new Result(className, className + ".java", java, parsed.programId,
                 parsed.fields.size(), parsed.paragraphs.size(),
-                List.copyOf(parsed.gaps));
+                List.copyOf(parsed.gaps), List.copyOf(parsed.resolvedCalls));
     }
 
     /** Outcome of a COBOL→Java translation. */
@@ -91,9 +99,24 @@ public final class CobolToJavaTranslator {
             String programId,
             int fieldCount,
             int paragraphCount,
-            List<String> unsupportedGaps) {
+            List<String> unsupportedGaps,
+            List<String> resolvedCalls) {
         public Result {
             unsupportedGaps = unsupportedGaps == null ? List.of() : List.copyOf(unsupportedGaps);
+            resolvedCalls = resolvedCalls == null ? List.of() : List.copyOf(resolvedCalls);
+        }
+
+        /** Backward-compatible constructor without resolved CALL list. */
+        public Result(
+                String className,
+                String relativeJavaPath,
+                String javaSource,
+                String programId,
+                int fieldCount,
+                int paragraphCount,
+                List<String> unsupportedGaps) {
+            this(className, relativeJavaPath, javaSource, programId,
+                    fieldCount, paragraphCount, unsupportedGaps, List.of());
         }
 
         public boolean isTransformative() {
@@ -153,6 +176,10 @@ public final class CobolToJavaTranslator {
         final Map<String, Field> fields = new LinkedHashMap<>();
         final List<Paragraph> paragraphs = new ArrayList<>();
         final List<String> gaps = new ArrayList<>();
+        /** CALL targets resolved to TranslatedX.main naming. */
+        final List<String> resolvedCalls = new ArrayList<>();
+        /** SELECT logical-file → ASSIGN dd-name. */
+        final Map<String, String> selectAssign = new LinkedHashMap<>();
         boolean needsBigDecimal;
         boolean needsFileFacade;
     }
@@ -165,6 +192,7 @@ public final class CobolToJavaTranslator {
         Paragraph current = null;
         List<String> pendingBlock = null;
         boolean pendingIsEvaluate = false;
+        boolean pendingIsReadAtEnd = false;
         int ifDepth = 0;
 
         for (String raw : lines) {
@@ -188,6 +216,10 @@ public final class CobolToJavaTranslator {
                 division = upper.replace(".", "").trim();
                 continue;
             }
+            if (upper.contains("FILE-CONTROL") || upper.contains("I-O CONTROL")) {
+                division = "ENVIRONMENT DIVISION";
+                continue;
+            }
             if (upper.contains("WORKING-STORAGE SECTION")
                     || upper.contains("LINKAGE SECTION")
                     || upper.contains("LOCAL-STORAGE SECTION")
@@ -200,8 +232,24 @@ public final class CobolToJavaTranslator {
                 continue;
             }
 
+            // Light SELECT / ASSIGN (FILE-CONTROL) — also accept before PROCEDURE.
+            Matcher sel = SELECT_ASSIGN.matcher(trimmed);
+            if (sel.matches()) {
+                String logical = sel.group(1).toUpperCase(Locale.ROOT);
+                String assign = sel.group(2).toUpperCase(Locale.ROOT);
+                out.selectAssign.put(logical, assign);
+                continue;
+            }
+            // Skip FD / SD headers lightly (not data items).
+            if (upper.matches("(?i)^(FD|SD)\\s+[A-Z0-9-]+.*")) {
+                continue;
+            }
+
             if (division != null && division.startsWith("DATA")) {
                 parseDataLine(trimmed, out);
+                continue;
+            }
+            if (division != null && division.startsWith("ENVIRONMENT")) {
                 continue;
             }
 
@@ -209,10 +257,11 @@ public final class CobolToJavaTranslator {
                 Matcher sm = SECTION_HEADER.matcher(trimmed);
                 if (sm.matches()) {
                     if (current != null && pendingBlock != null) {
-                        current.statements.addAll(pendingIsEvaluate
-                                ? flushEvaluateBlock(pendingBlock) : flushIfBlock(pendingBlock));
+                        current.statements.addAll(flushPending(pendingBlock,
+                                pendingIsEvaluate, pendingIsReadAtEnd));
                         pendingBlock = null;
                         pendingIsEvaluate = false;
+                        pendingIsReadAtEnd = false;
                         ifDepth = 0;
                     }
                     // Phase 1: SECTION headers are paragraph entry points.
@@ -228,10 +277,11 @@ public final class CobolToJavaTranslator {
                         // fall through to statement / pending-block handling
                     } else {
                         if (current != null && pendingBlock != null) {
-                            current.statements.addAll(pendingIsEvaluate
-                                    ? flushEvaluateBlock(pendingBlock) : flushIfBlock(pendingBlock));
+                            current.statements.addAll(flushPending(pendingBlock,
+                                    pendingIsEvaluate, pendingIsReadAtEnd));
                             pendingBlock = null;
                             pendingIsEvaluate = false;
+                            pendingIsReadAtEnd = false;
                             ifDepth = 0;
                         }
                         current = new Paragraph(paraName);
@@ -247,7 +297,13 @@ public final class CobolToJavaTranslator {
                 if (pendingBlock != null) {
                     pendingBlock.add(trimmed);
                     String u = trimmed.toUpperCase(Locale.ROOT);
-                    if (pendingIsEvaluate) {
+                    if (pendingIsReadAtEnd) {
+                        if (u.contains("END-READ")) {
+                            current.statements.addAll(flushReadAtEndBlock(pendingBlock));
+                            pendingBlock = null;
+                            pendingIsReadAtEnd = false;
+                        }
+                    } else if (pendingIsEvaluate) {
                         if (u.contains("END-EVALUATE")) {
                             current.statements.addAll(flushEvaluateBlock(pendingBlock));
                             pendingBlock = null;
@@ -271,6 +327,7 @@ public final class CobolToJavaTranslator {
                     pendingBlock = new ArrayList<>();
                     pendingBlock.add(trimmed);
                     pendingIsEvaluate = false;
+                    pendingIsReadAtEnd = false;
                     ifDepth = 1;
                     if (upper.contains("END-IF") || (countWords(upper) > 3 && upper.endsWith(".")
                             && !upper.contains(" ELSE "))) {
@@ -284,6 +341,25 @@ public final class CobolToJavaTranslator {
                     pendingBlock = new ArrayList<>();
                     pendingBlock.add(trimmed);
                     pendingIsEvaluate = true;
+                    pendingIsReadAtEnd = false;
+                    continue;
+                }
+
+                Matcher readAtEnd = READ_AT_END_HEAD.matcher(stripPeriod(trimmed));
+                if (readAtEnd.matches()) {
+                    String after = readAtEnd.group(2) == null ? "" : readAtEnd.group(2).trim();
+                    String afterUpper = after.toUpperCase(Locale.ROOT);
+                    // Single-line: READ x AT END stmt.  or  … END-READ
+                    if (afterUpper.contains("END-READ")
+                            || (trimmed.endsWith(".") && !after.isEmpty())) {
+                        current.statements.add(trimmed);
+                        continue;
+                    }
+                    // Multi-line block until END-READ
+                    pendingBlock = new ArrayList<>();
+                    pendingBlock.add(trimmed);
+                    pendingIsReadAtEnd = true;
+                    pendingIsEvaluate = false;
                     continue;
                 }
 
@@ -291,13 +367,20 @@ public final class CobolToJavaTranslator {
             }
         }
         if (current != null && pendingBlock != null) {
-            current.statements.addAll(pendingIsEvaluate
-                    ? flushEvaluateBlock(pendingBlock) : flushIfBlock(pendingBlock));
+            current.statements.addAll(flushPending(pendingBlock,
+                    pendingIsEvaluate, pendingIsReadAtEnd));
         }
         if (out.paragraphs.isEmpty()) {
             out.paragraphs.add(new Paragraph("MAIN"));
         }
         return out;
+    }
+
+    private static List<String> flushPending(
+            List<String> pendingBlock, boolean evaluate, boolean readAtEnd) {
+        if (readAtEnd) return flushReadAtEndBlock(pendingBlock);
+        if (evaluate) return flushEvaluateBlock(pendingBlock);
+        return flushIfBlock(pendingBlock);
     }
 
     private static void parseDataLine(String trimmed, ParsedProgram out) {
@@ -436,6 +519,10 @@ public final class CobolToJavaTranslator {
         return List.of("@@EVAL@@" + String.join("\n", lines));
     }
 
+    private static List<String> flushReadAtEndBlock(List<String> lines) {
+        return List.of("@@READATEND@@" + String.join("\n", lines));
+    }
+
     // ── Emit ─────────────────────────────────────────────────────────────
 
     private static String emitJava(String className, ParsedProgram parsed) {
@@ -548,6 +635,9 @@ public final class CobolToJavaTranslator {
         if (stmt.startsWith("@@EVAL@@")) {
             return translateEvaluate(stmt.substring(8), parsed);
         }
+        if (stmt.startsWith("@@READATEND@@")) {
+            return translateReadAtEnd(stmt.substring(13), parsed);
+        }
 
         String s = stripPeriod(stmt.trim());
         String upper = s.toUpperCase(Locale.ROOT);
@@ -630,12 +720,17 @@ public final class CobolToJavaTranslator {
             return List.of(translateStringInto(s) + ";");
         }
 
+        // CALL before generic file I/O so CALL is not swallowed.
+        if (upper.startsWith("CALL ")) {
+            return translateCall(s, parsed);
+        }
+
         List<String> fileIo = translateFileIo(s, parsed);
         if (fileIo != null) {
             return fileIo;
         }
 
-        // EXEC CICS / EXEC SQL / CALL → explicit gaps (façades exist for embedders).
+        // EXEC CICS / EXEC SQL → explicit gaps (façades exist for embedders).
         if (upper.startsWith("EXEC CICS") || upper.contains(" EXEC CICS")) {
             String gap = "CICS verb (use CicsFacade): " + s;
             if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
@@ -646,11 +741,6 @@ public final class CobolToJavaTranslator {
             if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
             return List.of("// " + gap);
         }
-        if (upper.startsWith("CALL ")) {
-            String gap = "CALL program (cross-program Phase 6): " + s;
-            if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
-            return List.of("// " + gap);
-        }
 
         // Unsupported — emit comment so class still compiles; record gap.
         String gap = unsupportedGapLabel(upper, s);
@@ -658,6 +748,23 @@ public final class CobolToJavaTranslator {
             parsed.gaps.add(gap);
         }
         return List.of("// COBOL: " + s);
+    }
+
+    private static List<String> translateCall(String s, ParsedProgram parsed) {
+        Matcher cm = CALL_LITERAL.matcher(s);
+        if (cm.find()) {
+            String callee = cm.group(1) != null ? cm.group(1)
+                    : cm.group(2) != null ? cm.group(2) : cm.group(3);
+            callee = callee.toUpperCase(Locale.ROOT);
+            if (!parsed.resolvedCalls.contains(callee)) {
+                parsed.resolvedCalls.add(callee);
+            }
+            String javaClass = "Translated" + callee.replace('-', '_');
+            return List.of(javaClass + ".main(new String[0]);");
+        }
+        String gap = "CALL program (unresolved target): " + s;
+        if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
+        return List.of("// " + gap);
     }
 
     /**
@@ -678,6 +785,12 @@ public final class CobolToJavaTranslator {
             }
             return;
         }
+        if (stmt.startsWith("@@READATEND@@")) {
+            for (String line : stmt.substring(13).split("\n")) {
+                previewFileIoNeed(line, parsed);
+            }
+            return;
+        }
         String s = stripPeriod(stmt.trim());
         String upper = s.toUpperCase(Locale.ROOT);
         if (upper.startsWith("OPEN ") || upper.startsWith("READ ")
@@ -688,18 +801,35 @@ public final class CobolToJavaTranslator {
         }
     }
 
+    private static String resolveAssign(String logicalOrDd, ParsedProgram parsed) {
+        String key = logicalOrDd.toUpperCase(Locale.ROOT);
+        return parsed.selectAssign.getOrDefault(key, key);
+    }
+
     private static List<String> translateFileIo(String s, ParsedProgram parsed) {
         String upper = s.toUpperCase(Locale.ROOT);
+
+        // READ … AT END (single-line form) before plain READ.
+        Matcher readAtEnd = READ_AT_END_HEAD.matcher(s);
+        if (readAtEnd.matches()) {
+            return translateReadAtEnd(s, parsed);
+        }
+
         Matcher open = Pattern.compile(
                 "(?i)^OPEN\\s+(INPUT|OUTPUT|EXTEND|I-O)\\s+([A-Z0-9-]+)(?:\\s+.*)?").matcher(s);
         if (open.matches()) {
             String mode = open.group(1).toUpperCase(Locale.ROOT);
-            String dd = open.group(2).toUpperCase(Locale.ROOT);
+            String logical = open.group(2).toUpperCase(Locale.ROOT);
             if ("I-O".equals(mode)) {
-                String gap = "OPEN I-O not on sequential façade: " + dd;
+                String gap = "OPEN I-O not on sequential façade: " + logical;
                 if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
                 return List.of("// " + gap);
             }
+            if (!parsed.selectAssign.isEmpty() && !parsed.selectAssign.containsKey(logical)) {
+                String gap = "OPEN references unknown SELECT: " + logical;
+                if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
+            }
+            String dd = resolveAssign(logical, parsed);
             parsed.needsFileFacade = true;
             String method = switch (mode) {
                 case "INPUT" -> "__openInput(\"" + dd + "\")";
@@ -712,7 +842,8 @@ public final class CobolToJavaTranslator {
         Matcher read = Pattern.compile("(?i)^READ\\s+([A-Z0-9-]+)(?:\\s+.*)?").matcher(s);
         if (read.matches()) {
             parsed.needsFileFacade = true;
-            String dd = read.group(1).toUpperCase(Locale.ROOT);
+            String logical = read.group(1).toUpperCase(Locale.ROOT);
+            String dd = resolveAssign(logical, parsed);
             String id = toJavaIdent(dd);
             return List.of(
                     "byte[] __rec_" + id + " = new byte[256];",
@@ -723,21 +854,79 @@ public final class CobolToJavaTranslator {
         if (write.matches()) {
             parsed.needsFileFacade = true;
             String rec = write.group(1).toUpperCase(Locale.ROOT);
+            String dd = resolveAssign(rec, parsed);
             String payload = write.group(2) != null
                     ? "String.valueOf(" + exprOperand(write.group(2)) + ").getBytes(java.nio.charset.StandardCharsets.UTF_8)"
                     : "new byte[0]";
-            return List.of("try { __write(\"" + rec + "\", " + payload + "); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
+            return List.of("try { __write(\"" + dd + "\", " + payload + "); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
         }
         Matcher close = Pattern.compile("(?i)^CLOSE\\s+([A-Z0-9-]+)(?:\\s+.*)?").matcher(s);
         if (close.matches()) {
             parsed.needsFileFacade = true;
-            return List.of("try { __close(\"" + close.group(1).toUpperCase(Locale.ROOT)
+            String logical = close.group(1).toUpperCase(Locale.ROOT);
+            String dd = resolveAssign(logical, parsed);
+            return List.of("try { __close(\"" + dd
                     + "\"); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
         }
         if (upper.startsWith("REWRITE ") || upper.startsWith("DELETE ") || upper.startsWith("START ")) {
             return null; // fall through to gap labeling
         }
         return null;
+    }
+
+    /**
+     * Emit READ + {@code if (!__ok_X) { … }} for AT END body.
+     * Accepts a single-line statement or a multi-line block (newline-separated).
+     */
+    private static List<String> translateReadAtEnd(String block, ParsedProgram parsed) {
+        String[] lines = block.split("\n");
+        String head = stripPeriod(lines[0].trim());
+        Matcher m = READ_AT_END_HEAD.matcher(head);
+        if (!m.matches()) {
+            // Fall back: treat as plain READ of first token after READ.
+            Matcher plain = Pattern.compile("(?i)^READ\\s+([A-Z0-9-]+)").matcher(head);
+            if (plain.find()) {
+                return translateFileIo("READ " + plain.group(1), parsed);
+            }
+            return List.of("// COBOL: " + head);
+        }
+        String logical = m.group(1).toUpperCase(Locale.ROOT);
+        String dd = resolveAssign(logical, parsed);
+        String id = toJavaIdent(dd);
+        parsed.needsFileFacade = true;
+
+        List<String> bodyStmts = new ArrayList<>();
+        String inline = m.group(2) == null ? "" : m.group(2).trim();
+        if (!inline.isEmpty()) {
+            String cleaned = inline.replaceAll("(?i)\\s*END-READ\\s*$", "").trim();
+            cleaned = stripPeriod(cleaned);
+            if (!cleaned.isEmpty()) {
+                bodyStmts.addAll(translateStatement(cleaned, parsed));
+            }
+        }
+        for (int i = 1; i < lines.length; i++) {
+            String t = stripPeriod(lines[i].trim());
+            String u = t.toUpperCase(Locale.ROOT);
+            if (u.startsWith("END-READ") || u.isEmpty()) continue;
+            if (u.startsWith("AT END")) {
+                String rest = t.substring(6).trim();
+                if (!rest.isEmpty()) bodyStmts.addAll(translateStatement(rest, parsed));
+                continue;
+            }
+            bodyStmts.addAll(translateStatement(t, parsed));
+        }
+
+        List<String> out = new ArrayList<>();
+        out.add("byte[] __rec_" + id + " = new byte[256];");
+        out.add("boolean __ok_" + id + " = false;");
+        out.add("try { __ok_" + id + " = __read(\"" + dd + "\", __rec_" + id
+                + "); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
+        out.add("if (!__ok_" + id + ") {");
+        for (String line : bodyStmts) {
+            out.add("    " + line);
+        }
+        out.add("}");
+        return out;
     }
 
     private static String unsupportedGapLabel(String upper, String s) {

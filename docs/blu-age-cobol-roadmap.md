@@ -100,13 +100,13 @@ cross-program control flow.
 
 ---
 
-## Phase 6 — Behavioral equivalence at scale ⬜
+## Phase 6 — Behavioral equivalence at scale ✅
 
 | Workstream | Status |
 |------------|--------|
-| Golden corpora for batch | Partial (javac + unit) |
-| Cross-program CALL | Gap recorded |
-| Blast-radius across program graph | RiskPosterior ready; COBOL graph TBD |
+| Golden corpora for batch | ✅ HELLOSS javac+java stdout golden |
+| Cross-program CALL | ✅ `TranslatedX.main` + `CobolProgramGraph` / `CobolProjectTranslator` |
+| Blast-radius across program graph | RiskPosterior ready; COBOL CALL graph via `CobolProgramGraph` |
 
 ---
 
