@@ -226,7 +226,7 @@ You may claim *SOC 2 control readiness / audit-ready controls* — not *SOC 2 ce
 |---------|----------------|
 | **Offline-first** | Demo path avoids external LLM calls; no production telemetry product |
 | **RBAC** | ADMIN, REVIEWER, ANALYST, VIEWER |
-| **Multi-tenancy** | `org_id` on projects/patches/jobs/audit; `X-Org-Id` / JWT `org_id` via `TenantFilter` |
+| **Multi-tenancy** | `org_id` on projects/patches/jobs/audit; `X-Org-Id` / JWT `org_id` via `TenantFilter`; ADMIN org APIs (`/api/v1/orgs`, users in `ss_users`) on `!demo` |
 | **Separation of duties** | REVIEWER cannot accept/reject own patches (`createdBy`); ADMIN may override |
 | **Audit trail** | Durable `audit_log` on `!demo` with append-oriented grants, soft-delete retention, query + CSV export; demo → SLF4J |
 | **Retention** | Daily `RetentionCleanupJob` (`!demo`) enforces `shadowstack.retention.*` |
@@ -235,8 +235,8 @@ You may claim *SOC 2 control readiness / audit-ready controls* — not *SOC 2 ce
 | **CI vulns** | Trivy filesystem HIGH/CRITICAL `security-scan` job |
 | **Review gate** | Explicit accept/reject after fail-closed verification |
 | **Auth** | JWT + HTTP Basic; optional `oidc` profile for IdP JWT resource-server SSO |
-| **Secrets / Vault** | K8s Secret placeholders + External Secrets → Vault template (`infra/k8s/external-secret-vault.yaml`); see `docs/secrets-and-encryption.md` |
-| **Encryption at rest** | AES-GCM for patch artifacts when `ENCRYPTION_KEY_BASE64` set; Postgres TDE/CMEK via cloud storage class (see `docs/secrets-and-encryption.md`) |
+| **Secrets / Vault** | **Shippable manifests:** ESO → Vault (`external-secret-vault.yaml` + values example), Vault Agent patch (`vault-agent-annotations.md`), optional Spring `vault` profile (env-only); see `docs/secrets-and-encryption.md` |
+| **Encryption at rest** | AES-GCM for patch artifacts when `ENCRYPTION_KEY_BASE64` set (`GET /api/v1/meta/security`); **CMEK manifests** in `storageclass-encrypted.yaml` + optional `shadowstack-encrypted` PVC in `postgres.yaml` |
 | **Job isolation** | Worker claims VERIFY with `FOR UPDATE SKIP LOCKED` |
 | **SOC 2** | Control readiness matrix in `docs/soc2-controls.md` — **not certified** |
 | **Threat model** | STRIDE analysis documented as a planning artifact |
@@ -265,6 +265,8 @@ shadowstack/
 │   ├── architecture.md   # Full architecture with Mermaid diagrams
 │   ├── threat-model.md   # STRIDE threat analysis
 │   ├── soc2-controls.md  # SOC 2 control readiness (not certification)
+│   ├── soc2-auditor-pack.md  # Auditor one-pager + sample queries
+│   ├── web-security.md   # Next.js npm residual advisories
 │   ├── converter-parity.md  # Full vs Blu Age claim language
 │   ├── secrets-and-encryption.md  # Vault, rotation, AES-GCM, TDE/CMEK
 │   ├── api-reference.md  # Complete API documentation
@@ -278,6 +280,7 @@ shadowstack/
 ├── scripts/
 │   ├── demo.sh           # Full workflow demo
 │   ├── setup.sh          # Environment setup
+│   ├── export-soc2-evidence.sh  # ADMIN evidence + audit CSV export
 │   └── build.sh          # Build all modules
 ├── docker-compose.yml    # Full local stack
 └── pom.xml               # Parent Maven POM
@@ -308,8 +311,8 @@ Credentials: `admin` / `admin` (HTTP Basic or `POST /api/v1/auth/login`).
 
 What is real today: Java full convert + **full fail-closed AST converters** for Python/JS/C#/COBOL-preserving → analyze → generate → **7-layer Java verify** (optional layers skip cleanly) → review queue → accept/reject (SoD on `createdBy`). COBOL translate remains detect-only.
 Gates: Java 7-layer pipeline (compile/AST/bytecode/API/tests/golden/risk — missing optional inputs skip as PASS), Python `py_compile` (**hard-fail** if `python3` missing), JS `node --check` (**hard-fail** if `node` missing), C# `dotnet build` (**hard-fail** if SDK/.csproj missing), COBOL-preserving `cobc` (**hard-fail** if missing; translate detect-only). Soft/WARN and missing gates fail-closed; only overall PASS promotes.
-What is real for ops: demo in-memory; `prod`/`docker` JPA + Flyway (`ss_organizations` / `ss_users` / `ss_*` + `org_id`), env-required credentials, durable audit query/export, tenant context (`X-Org-Id`), API enqueue-only VERIFY (`shadowstack.jobs.poller-enabled=false`), worker-owned SKIP LOCKED dequeue + 7-layer verify, live analytics, optional `oidc` profile. Single-process: `SHADOWSTACK_JOBS_POLLER_ENABLED=true`.
-What is stubbed / aspirational: rich org admin UI beyond default org, Blu Age–style COBOL→Java *semantic rehost*, and the external SOC 2 auditor engagement (controls are audit-ready).
+What is real for ops: demo in-memory; `prod`/`docker` JPA + Flyway (`ss_organizations` / `ss_users` / `ss_*` + `org_id`), env-required credentials upserted into `ss_users` on boot (`OrgBootstrap`), ADMIN org/user APIs (`GET/POST /api/v1/orgs`, `GET/POST /api/v1/orgs/{id}/users`), JWT `org_id` from the user's org, durable audit query/export, tenant context (`X-Org-Id`), API enqueue-only VERIFY (`shadowstack.jobs.poller-enabled=false`), worker-owned SKIP LOCKED dequeue + 7-layer verify, live analytics, optional `oidc` profile. Single-process: `SHADOWSTACK_JOBS_POLLER_ENABLED=true`. Org admin is API-first (no dedicated `/orgs` web page yet).
+What remains external / incomplete: SOC 2 **auditor contract** + Type I/II report, independent **pen-test vendor**, and full Blu Age–class CICS/IMS COBOL→Java *semantic rehost* (in-repo COBOL translate stays detect-only). Controls, evidence API, auditor pack, and export script are in-repo — see `docs/soc2-auditor-pack.md`.
 
 > **Docker note:** `infra/docker/Dockerfile.api` is JVM-only. For converter tooling in-container, build `infra/docker/Dockerfile.api-enterprise` (python3/pip + nodejs + `native-engines` copy; optional `cobc` when apt provides it; .NET/Roslyn still host-side). See `docker-compose.yml` comments.
 

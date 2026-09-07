@@ -178,11 +178,42 @@ This document maps ShadowStack product and infrastructure controls to SOC 2 Trus
 
 ## Path to certification
 
-Control readiness in this repository is **necessary but not sufficient** for SOC 2.
+Control readiness in this repository is **necessary but not sufficient** for SOC 2.  
+Auditor-facing one-pager: [`docs/soc2-auditor-pack.md`](soc2-auditor-pack.md). Evidence export: `scripts/export-soc2-evidence.sh`.
+
+### Pre-auditor checklist — done in-repo vs customer-owned
+
+**Done in this repository (control readiness artifacts):**
+
+- [x] Control readiness matrix (`docs/soc2-controls.md`) with TSC mapping
+- [x] Auditor pack one-pager (`docs/soc2-auditor-pack.md`) — scope, system description, sample queries
+- [x] Durable `audit_log` + append-oriented grants + soft-delete retention (`V6__soc2_control_readiness.sql`)
+- [x] Daily `RetentionCleanupJob` (`!demo`) with self-auditing `RETENTION_CLEANUP`
+- [x] Separation of duties on review (`ReviewService.enforceSeparationOfDuties`)
+- [x] Control evidence registry + `GET /api/v1/compliance/evidence` (ADMIN)
+- [x] Audit query + CSV export (`GET /api/v1/audit/logs`, `/export`)
+- [x] Evidence export script (`scripts/export-soc2-evidence.sh`)
+- [x] Trivy HIGH/CRITICAL CI job (`security-scan` in `.github/workflows/ci.yml`)
+- [x] Web npm CRITICAL gate + residual HIGH docs (`web-npm-audit`, `docs/web-security.md`)
+- [x] Secrets / AES-GCM encryption docs + optional app encryption (`docs/secrets-and-encryption.md`)
+- [x] Default-deny K8s NetworkPolicy + Vault External Secrets template
+- [x] RBAC + optional OIDC profile; fail-closed review gate; auto-apply off by default
+
+**Still customer-owned (not claimable from this repo alone):**
+
+- [ ] Engage AICPA-aligned CPA firm / auditor contract
+- [ ] Production deploy with non-demo profiles, real secrets, TLS at ingress, TDE/CMEK
+- [ ] Observation-window evidence retention (exports, access reviews, change tickets, incidents)
+- [ ] Independent penetration test (vendor engagement + remediation)
+- [ ] Type I report (design as of a date)
+- [ ] Type II report (operating effectiveness over 3–12 months)
+- [ ] Close auditor exceptions; update marketing only after the issued report
+
+### Engagement sequence
 
 1. **Stabilize production controls** — Deploy with non-demo profiles, apply V6 grants, NetworkPolicies, secrets management, TLS, and retention schedules in the real environment.
-2. **Collect operating evidence** — Retain audit exports, CI scan results, access reviews, change tickets, and incident records for the observation window.
-3. **Engage an independent auditor** — Select an AICPA-aligned CPA firm experienced with SaaS / SOC 2.
+2. **Collect operating evidence** — Retain audit exports (`./scripts/export-soc2-evidence.sh`), CI scan results, access reviews, change tickets, and incident records for the observation window.
+3. **Engage an independent auditor** — Select an AICPA-aligned CPA firm experienced with SaaS / SOC 2; hand them `docs/soc2-auditor-pack.md`.
 4. **Type I report** — Point-in-time design (and implementation) opinion: controls suitably designed as of a date.
 5. **Type II report** — Operating effectiveness over a period (typically 3–12 months) with sample testing of the controls above.
 6. **Remediate exceptions** — Close auditor findings; update this matrix and evidence registry accordingly.
@@ -190,4 +221,4 @@ Control readiness in this repository is **necessary but not sufficient** for SOC
 
 ### API for evidence listing
 
-`GET /api/v1/compliance/evidence` (ADMIN) returns the static control catalog plus rows from `ss_control_evidence`.
+`GET /api/v1/compliance/evidence` (ADMIN) returns the static control catalog plus rows from `ss_control_evidence`. See also `scripts/export-soc2-evidence.sh` and `docs/soc2-auditor-pack.md`.

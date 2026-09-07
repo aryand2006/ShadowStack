@@ -60,7 +60,15 @@ public class ControlEvidenceController {
             new ControlCatalogEntry("CC9.2", "Data retention enforcement", "Implemented",
                     "apps/api/src/main/java/com/shadowstack/api/jobs/RetentionCleanupJob.java"),
             new ControlCatalogEntry("CC9.3", "Dependency vulnerability scanning", "Implemented",
-                    ".github/workflows/ci.yml")
+                    ".github/workflows/ci.yml"),
+            new ControlCatalogEntry("DOC.AUDITOR", "SOC 2 auditor pack (one-pager)", "Implemented",
+                    "docs/soc2-auditor-pack.md"),
+            new ControlCatalogEntry("DOC.EXPORT", "Evidence export script", "Implemented",
+                    "scripts/export-soc2-evidence.sh"),
+            new ControlCatalogEntry("DOC.CRYPTO", "Secrets & encryption at rest", "Implemented",
+                    "docs/secrets-and-encryption.md"),
+            new ControlCatalogEntry("DOC.WEBSEC", "Web UI npm/Next residual advisories", "Partial",
+                    "docs/web-security.md")
     );
 
     private final ObjectProvider<ControlEvidenceRepository> evidenceRepository;
@@ -96,6 +104,8 @@ public class ControlEvidenceController {
         banner.put("claimAllowed", "SOC 2 control readiness / audit-ready controls");
         banner.put("claimForbidden", "SOC 2 certified");
         banner.put("doc", "docs/soc2-controls.md");
+        banner.put("auditorPack", "docs/soc2-auditor-pack.md");
+        banner.put("exportScript", "scripts/export-soc2-evidence.sh");
 
         return ResponseEntity.ok(new EvidenceResponse(banner, CONTROL_CATALOG, registered));
     }

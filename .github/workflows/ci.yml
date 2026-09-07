@@ -67,3 +67,26 @@ jobs:
           format: table
           # Fail-closed on backend/Java deps. apps/web (Next.js) tracked via npm audit / Next advisories.
           skip-dirs: node_modules,.git,target,apps/web,packages/language-adapters/native-engines/js/node_modules,packages/language-adapters/native-engines/csharp/publish
+
+  # Web UI: CRITICAL-only npm audit. HIGH advisories on Next 14.2.x require Next 15+
+  # (breaking); see docs/web-security.md. Does not replace Trivy for Java/backend.
+  web-npm-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: npm audit (critical only)
+        run: npm audit --audit-level=critical
