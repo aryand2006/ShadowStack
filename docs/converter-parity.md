@@ -40,7 +40,7 @@ That enables marketing claims of **full AST-gated converters** and **syntax-gate
 
 ## Roadmap (not claimed yet)
 
-1. Deeper semantic COBOL→Java (file I/O, CICS/IMS/JCL, PERFORM THRU graphs) with behavioral certificates — closer to Blu Age–class rehost, still fail-closed.
+1. Deeper semantic COBOL→Java (file I/O, CICS/IMS/JCL, PERFORM THRU graphs) with behavioral certificates — closer to Blu Age–class rehost, still fail-closed. See **`docs/blu-age-cobol-roadmap.md`**.
 2. Broader AST apply coverage so fewer Meta-listed rules fall back to regex (Py2-only syntax may remain regex when LibCST cannot parse).
 3. Stronger multi-file / project-graph gates beyond single-file syntax checks.
 

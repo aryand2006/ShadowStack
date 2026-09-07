@@ -4,11 +4,13 @@ import com.shadowstack.analysis.RulePriorCalibrator;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 /**
  * Persists accept/reject outcomes and exposes calibrated rule priors.
+ * JDBC is optional so demo / in-memory profiles still boot.
  */
 @Service
 public class RulePriorCalibrationService {
@@ -18,12 +20,16 @@ public class RulePriorCalibrationService {
     private final JdbcTemplate jdbc;
     private final RulePriorCalibrator calibrator = new RulePriorCalibrator();
 
-    public RulePriorCalibrationService(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
+    public RulePriorCalibrationService(ObjectProvider<JdbcTemplate> jdbcProvider) {
+        this.jdbc = jdbcProvider.getIfAvailable();
     }
 
     @PostConstruct
     void load() {
+        if (jdbc == null) {
+            log.info("Rule prior calibration running in-memory only (no JdbcTemplate)");
+            return;
+        }
         try {
             jdbc.query(
                     "SELECT rule_name, accepts, rejects FROM ss_rule_prior_calibration",
@@ -53,13 +59,12 @@ public class RulePriorCalibrationService {
     }
 
     private void persist(String ruleName) {
+        if (jdbc == null) {
+            return;
+        }
         try {
-            long[] counts = calibrator.snapshot().getOrDefault(
-                    ruleName == null ? "unknown" : ruleName.trim().toLowerCase(),
-                    new long[]{0, 0});
-            // snapshot keys are normalized lowercase
             String key = ruleName == null ? "unknown" : ruleName.trim().toLowerCase();
-            long[] live = calibrator.snapshot().getOrDefault(key, counts);
+            long[] live = calibrator.snapshot().getOrDefault(key, new long[]{0, 0});
             jdbc.update("""
                     INSERT INTO ss_rule_prior_calibration(rule_name, accepts, rejects, updated_at)
                     VALUES (?, ?, ?, NOW())

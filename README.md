@@ -269,6 +269,10 @@ shadowstack/
 │   ├── soc2-auditor-pack.md  # Auditor one-pager + sample queries
 │   ├── web-security.md   # Next.js npm residual advisories
 │   ├── converter-parity.md  # Full vs Blu Age claim language
+│   ├── launch-scope-pilot-b.md  # Multi-lang Pilot B launch decision
+│   ├── blu-age-cobol-roadmap.md # Phased Blu Age–class COBOL path
+│   ├── security-assessment.md   # Agent defensive assessment (≠ vendor pen-test)
+│   ├── risk-process.md          # Residual risk / calibration
 │   ├── secrets-and-encryption.md  # Vault, rotation, AES-GCM, TDE/CMEK
 │   ├── api-reference.md  # Complete API documentation
 │   └── deployment-guide.md
