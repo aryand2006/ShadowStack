@@ -236,7 +236,7 @@ public class CobolAdapter implements LanguageAdapter {
             try {
                 String source = Files.readString(file, StandardCharsets.UTF_8);
                 String relPath = sourceRoot.relativize(file).toString();
-                all.addAll(detectCandidatesInFile(source, relPath));
+                all.addAll(detectCandidatesInFile(source, relPath, sourceRoot));
             } catch (IOException e) {
                 LOG.warn("Skipping {}: {}", file, e.getMessage());
             }
@@ -246,7 +246,7 @@ public class CobolAdapter implements LanguageAdapter {
         return Collections.unmodifiableList(all);
     }
 
-    private List<RefactorCandidate> detectCandidatesInFile(String source, String relPath) {
+    private List<RefactorCandidate> detectCandidatesInFile(String source, String relPath, Path sourceRoot) {
         List<RefactorCandidate> out = new ArrayList<>();
         boolean fixed = isFixedFormat(source);
 
@@ -270,7 +270,7 @@ public class CobolAdapter implements LanguageAdapter {
         out.addAll(detectProgramIdIsInitial(source, relPath, fixed));
 
         // ── Translate track (COBOL→Java semantic rehost MVP) ─────────────
-        out.addAll(detectSemanticRehost(source, relPath));
+        out.addAll(detectSemanticRehost(source, relPath, sourceRoot));
         out.addAll(detectDisplayToPrint(source, relPath, fixed));
         out.addAll(detectMoveToAssign(source, relPath, fixed));
         out.addAll(detectComputeToAssign(source, relPath, fixed));
@@ -319,10 +319,13 @@ public class CobolAdapter implements LanguageAdapter {
      * Whole-program semantic rehost candidate: proposed after-snippet is real Java
      * from {@link CobolToJavaTranslator}.
      */
-    private List<RefactorCandidate> detectSemanticRehost(String source, String relPath) {
-        CobolToJavaTranslator.Result translated = CobolToJavaTranslator.translate(source);
+    private List<RefactorCandidate> detectSemanticRehost(String source, String relPath, Path sourceRoot) {
+        CobolToJavaTranslator.Result translated = CobolToJavaTranslator.translate(source, sourceRoot);
         if (!translated.isTransformative()) return List.of();
         int lastLine = Math.max(1, source.split("\n", -1).length);
+        String gapsJoined = translated.unsupportedGaps().isEmpty()
+                ? ""
+                : String.join(",", translated.unsupportedGaps());
         return List.of(RefactorCandidate.builder()
                 .sourceFile(relPath)
                 .startLine(1)
@@ -345,6 +348,7 @@ public class CobolAdapter implements LanguageAdapter {
                 .putAstContext("capability", "cobol-to-java-semantic-rehost")
                 .putAstContext("javaClass", translated.className())
                 .putAstContext("javaFile", translated.relativeJavaPath())
+                .putAstContext("translateGaps", gapsJoined)
                 .build());
     }
 
@@ -1562,7 +1566,8 @@ public class CobolAdapter implements LanguageAdapter {
     private PatchResult applyTranslateRehost(
             RefactorCandidate candidate, Path sourceRoot,
             String originalSource, String beforeHash) throws IOException {
-        CobolToJavaTranslator.Result translated = CobolToJavaTranslator.translate(originalSource);
+        CobolToJavaTranslator.Result translated =
+                CobolToJavaTranslator.translate(originalSource, sourceRoot);
         if (!translated.isTransformative()) {
             return PatchResult.failure(candidate.candidateId(),
                     "Semantic rehost produced non-transformative Java for " + candidate.ruleId());
@@ -1583,6 +1588,10 @@ public class CobolAdapter implements LanguageAdapter {
         String unifiedDiff = generateCrossFileDiff(
                 candidate.sourceFile(), originalSource, javaRelStr, translated.javaSource());
 
+        String gapsJoined = translated.unsupportedGaps().isEmpty()
+                ? ""
+                : String.join(",", translated.unsupportedGaps());
+
         LOG.info("Applied COBOL→Java semantic rehost '{}' → {}. AST hash {} → {}",
                 candidate.ruleId(), javaRelStr, beforeHash, afterHash);
 
@@ -1600,6 +1609,8 @@ public class CobolAdapter implements LanguageAdapter {
                 .putMetadata("javaFile", javaRelStr)
                 .putMetadata("cobolSource", candidate.sourceFile())
                 .putMetadata("linesAffected", candidate.lineSpan())
+                .putMetadata("translateGaps", gapsJoined)
+                .putMetadata("translateGapsList", translated.unsupportedGaps())
                 .build();
     }
 
@@ -1683,10 +1694,18 @@ public class CobolAdapter implements LanguageAdapter {
         boolean nativeGate = false;
 
         if (!preserving) {
+            // Optional fail-closed on Phase-1 unsupported gaps (default off for compat).
+            VerificationResult.LayerResult gapLayer = verifyTranslateGaps(patch);
+            if (gapLayer != null) {
+                layers.add(gapLayer);
+                if (!gapLayer.passed()) {
+                    structuralOk = false;
+                }
+            }
             // Translate track: javac hard gate (never cobc).
             VerificationResult.LayerResult javac = verifyTranslateWithJavac(patch, sourceRoot);
             layers.add(javac);
-            compileOk = javac.passed();
+            compileOk = javac.passed() && (gapLayer == null || gapLayer.passed());
             nativeGate = structuralOk && compileOk;
         } else if (config.runCompilation() && structuralOk && !patch.affectedFiles().isEmpty()) {
             VerificationResult.LayerResult compile = verifyWithCobc(
@@ -1717,6 +1736,25 @@ public class CobolAdapter implements LanguageAdapter {
                 .beforeAstHash(patch.beforeAstHash())
                 .afterAstHash(patch.afterAstHash())
                 .build();
+    }
+
+    /**
+     * When {@code shadowstack.cobol.fail-on-gaps=true}, non-empty {@code translateGaps}
+     * metadata fails the translate verify path. Default is false (compat with existing ITs).
+     */
+    private VerificationResult.LayerResult verifyTranslateGaps(PatchResult patch) {
+        boolean failOnGaps = Boolean.parseBoolean(
+                System.getProperty("shadowstack.cobol.fail-on-gaps", "false"));
+        if (!failOnGaps) return null;
+        Object gapsMeta = patch.metadata() != null ? patch.metadata().get("translateGaps") : null;
+        String gaps = gapsMeta == null ? "" : String.valueOf(gapsMeta).trim();
+        if (gaps.isEmpty()) {
+            return new VerificationResult.LayerResult(
+                    "translate-gaps", true, 1.0, "No unsupported translate gaps", 0);
+        }
+        return new VerificationResult.LayerResult(
+                "translate-gaps", false, 0.0,
+                "shadowstack.cobol.fail-on-gaps=true and gaps present: " + gaps, 0);
     }
 
     /**
