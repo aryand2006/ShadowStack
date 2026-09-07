@@ -8,7 +8,21 @@
 **Date:** 2026-09-07  
 **Target:** local `demo` profile API (`:8080`) + `apps/web` npm audit  
 **Launch scope:** Pilot B — multi-lang syntax-gated converters (`docs/launch-scope-pilot-b.md`)  
-**Raw probe log:** `docs/security-assessment-raw.log`
+
+### Probe matrix (excerpt)
+
+| Check | HTTP |
+|-------|------|
+| unauth `/api/v1/projects` | 401 |
+| unauth reviews / audit / compliance / analytics | 401 |
+| bad Basic password | 401 |
+| good Basic `admin`/`admin` (demo only) | 200 |
+| login bad / good | 401 / 200 |
+| garbage JWT | 401 |
+| unauth actuator prometheus/metrics/info | 401 |
+| hostile CORS `Origin` | no ACAO; preflight 403 |
+| path traversal project id | 404 |
+| swagger-ui unauthenticated | 200 (finding) |
 
 ## Method (what we did / did not do)
 
