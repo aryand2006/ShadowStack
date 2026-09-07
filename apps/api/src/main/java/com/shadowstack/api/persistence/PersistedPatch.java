@@ -70,6 +70,9 @@ public class PersistedPatch {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    @Column(name = "org_id")
+    private UUID orgId;
+
     public UUID getId() {
         return id;
     }
@@ -221,4 +224,13 @@ public class PersistedPatch {
     public void setUpdatedAt(Instant updatedAt) {
         this.updatedAt = updatedAt;
     }
+
+    public UUID getOrgId() {
+        return orgId;
+    }
+
+    public void setOrgId(UUID orgId) {
+        this.orgId = orgId;
+    }
+
 }

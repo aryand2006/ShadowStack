@@ -2,6 +2,7 @@ package com.shadowstack.api.persistence;
 
 import com.shadowstack.api.dto.PatchDetailResponse;
 import com.shadowstack.api.dto.PatchDetailResponse.PatchStatus;
+import com.shadowstack.api.tenant.TenantContext;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +29,9 @@ public class JpaPatchStore implements PatchStore {
         PersistedPatch entity = patchRepository.findById(patch.patchId())
                 .orElseGet(PersistedPatch::new);
         mapper.apply(entity, patch);
+        if (entity.getOrgId() == null) {
+            entity.setOrgId(TenantContext.requireOrgIdOrDefault());
+        }
         patchRepository.save(entity);
     }
 
@@ -48,7 +52,11 @@ public class JpaPatchStore implements PatchStore {
     @Override
     @Transactional(readOnly = true)
     public List<PatchDetailResponse> findByStatus(PatchStatus status) {
-        return patchRepository.findByStatus(status.name()).stream()
+        UUID orgId = TenantContext.getOrgId();
+        List<PersistedPatch> rows = orgId != null
+                ? patchRepository.findByStatusAndOrgId(status.name(), orgId)
+                : patchRepository.findByStatus(status.name());
+        return rows.stream()
                 .map(mapper::toPatchDetailResponse)
                 .toList();
     }

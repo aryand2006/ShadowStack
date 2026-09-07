@@ -1,6 +1,7 @@
 package com.shadowstack.api.persistence;
 
 import com.shadowstack.api.dto.ProjectResponse;
+import com.shadowstack.api.tenant.TenantContext;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
@@ -17,17 +18,25 @@ public class InMemoryProjectStore implements ProjectStore {
 
     private final Map<UUID, ProjectResponse> projects = new ConcurrentHashMap<>();
     private final Map<UUID, Path> roots = new ConcurrentHashMap<>();
+    private final Map<UUID, UUID> orgIds = new ConcurrentHashMap<>();
 
     @Override
     public ProjectResponse save(ProjectResponse p, Path root) {
         projects.put(p.id(), p);
         roots.put(p.id(), root.toAbsolutePath().normalize());
+        orgIds.put(p.id(), TenantContext.requireOrgIdOrDefault());
         return p;
     }
 
     @Override
     public List<ProjectResponse> findAll() {
-        return List.copyOf(projects.values());
+        UUID orgId = TenantContext.getOrgId();
+        if (orgId == null) {
+            return List.copyOf(projects.values());
+        }
+        return projects.values().stream()
+                .filter(p -> orgId.equals(orgIds.get(p.id())))
+                .toList();
     }
 
     @Override
@@ -46,5 +55,6 @@ public class InMemoryProjectStore implements ProjectStore {
             throw new IllegalArgumentException("Unknown project " + p.id());
         }
         projects.put(p.id(), p);
+        orgIds.putIfAbsent(p.id(), TenantContext.requireOrgIdOrDefault());
     }
 }

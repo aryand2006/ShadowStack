@@ -46,6 +46,9 @@ public class PersistedJob {
     @Column(name = "claimed_by", length = 128)
     private String claimedBy;
 
+    @Column(name = "org_id")
+    private UUID orgId;
+
     public UUID getId() {
         return id;
     }
@@ -133,4 +136,13 @@ public class PersistedJob {
     public void setClaimedBy(String claimedBy) {
         this.claimedBy = claimedBy;
     }
+
+    public UUID getOrgId() {
+        return orgId;
+    }
+
+    public void setOrgId(UUID orgId) {
+        this.orgId = orgId;
+    }
+
 }

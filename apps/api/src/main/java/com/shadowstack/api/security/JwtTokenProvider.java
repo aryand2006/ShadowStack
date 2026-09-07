@@ -16,11 +16,14 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.stereotype.Component;
 
+import com.shadowstack.api.tenant.TenantContext;
+
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Date;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -32,6 +35,7 @@ public class JwtTokenProvider {
 
     private static final Logger log = LoggerFactory.getLogger(JwtTokenProvider.class);
     private static final String ROLES_CLAIM = "roles";
+    public static final String ORG_ID_CLAIM = "org_id";
 
     @Value("${shadowstack.security.jwt-secret}")
     private String jwtSecret;
@@ -49,6 +53,7 @@ public class JwtTokenProvider {
 
     /**
      * Generate a JWT token for the given authentication.
+     * Includes {@code org_id} claim (default organization until per-user orgs are wired).
      */
     public String generateToken(Authentication authentication) {
         String username = authentication.getName();
@@ -62,10 +67,32 @@ public class JwtTokenProvider {
         return Jwts.builder()
                 .subject(username)
                 .claim(ROLES_CLAIM, roles)
+                .claim(ORG_ID_CLAIM, TenantContext.DEFAULT_ORG_ID.toString())
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(signingKey)
                 .compact();
+    }
+
+    /**
+     * Extract the {@code org_id} claim from a JWT, or {@code null} if absent/invalid.
+     */
+    public UUID getOrgId(String token) {
+        try {
+            Claims claims = Jwts.parser()
+                    .verifyWith(signingKey)
+                    .build()
+                    .parseSignedClaims(token)
+                    .getPayload();
+            String orgId = claims.get(ORG_ID_CLAIM, String.class);
+            if (orgId == null || orgId.isBlank()) {
+                return null;
+            }
+            return UUID.fromString(orgId);
+        } catch (Exception e) {
+            log.debug("Unable to read org_id claim: {}", e.getMessage());
+            return null;
+        }
     }
 
     /**

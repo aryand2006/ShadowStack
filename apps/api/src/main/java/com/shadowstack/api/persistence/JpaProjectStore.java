@@ -3,6 +3,7 @@ package com.shadowstack.api.persistence;
 import com.shadowstack.api.dto.ProjectResponse;
 import com.shadowstack.api.dto.ProjectResponse.AnalysisSummary;
 import com.shadowstack.api.dto.ProjectResponse.BaselineSummary;
+import com.shadowstack.api.tenant.TenantContext;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +36,9 @@ public class JpaProjectStore implements ProjectStore {
     public ProjectResponse save(ProjectResponse p, Path root) {
         stashOverlays(p);
         PersistedProject entity = mapper.toEntity(p, root);
+        if (entity.getOrgId() == null) {
+            entity.setOrgId(TenantContext.requireOrgIdOrDefault());
+        }
         projectRepository.save(entity);
         return withOverlays(mapper.toProjectResponse(entity));
     }
@@ -42,7 +46,11 @@ public class JpaProjectStore implements ProjectStore {
     @Override
     @Transactional(readOnly = true)
     public List<ProjectResponse> findAll() {
-        return projectRepository.findAll().stream()
+        UUID orgId = TenantContext.getOrgId();
+        List<PersistedProject> rows = orgId != null
+                ? projectRepository.findByOrgId(orgId)
+                : projectRepository.findAll();
+        return rows.stream()
                 .map(mapper::toProjectResponse)
                 .map(this::withOverlays)
                 .toList();

@@ -2,6 +2,7 @@ package com.shadowstack.api.persistence;
 
 import com.shadowstack.api.dto.PatchDetailResponse;
 import com.shadowstack.api.dto.PatchDetailResponse.PatchStatus;
+import com.shadowstack.api.tenant.TenantContext;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
@@ -16,10 +17,12 @@ import java.util.concurrent.ConcurrentHashMap;
 public class InMemoryPatchStore implements PatchStore {
 
     private final Map<UUID, PatchDetailResponse> patches = new ConcurrentHashMap<>();
+    private final Map<UUID, UUID> orgIds = new ConcurrentHashMap<>();
 
     @Override
     public void save(PatchDetailResponse patch) {
         patches.put(patch.patchId(), patch);
+        orgIds.put(patch.patchId(), TenantContext.requireOrgIdOrDefault());
     }
 
     @Override
@@ -36,8 +39,10 @@ public class InMemoryPatchStore implements PatchStore {
 
     @Override
     public List<PatchDetailResponse> findByStatus(PatchStatus status) {
+        UUID orgId = TenantContext.getOrgId();
         return patches.values().stream()
                 .filter(p -> p.status() == status)
+                .filter(p -> orgId == null || orgId.equals(orgIds.get(p.patchId())))
                 .toList();
     }
 
