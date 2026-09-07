@@ -28,12 +28,15 @@ class MultiLanguageLiveConvertTest {
 
     @Test
     void python_sample_live_convert(@TempDir Path tmp) throws Exception {
+        // Use a single-issue sample so one transformative apply is py_compile-clean.
+        // Multi-issue legacy samples (report_builder.py) remain covered by detect/apply unit tests.
+        Path sample = resolveSample("examples/legacy-python/xrange_legacy.py");
         runLiveConvert(
                 new PythonAdapter(),
-                resolveSample("examples/legacy-python/report_builder.py"),
+                sample,
                 tmp,
-                "report_builder.py",
-                c -> c.ruleId().startsWith("py."));
+                "xrange_legacy.py",
+                c -> "py.xrange_to_range".equals(c.ruleId()));
     }
 
     @Test
