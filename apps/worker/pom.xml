@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.3.5</version>
+        <version>3.5.12</version>
         <relativePath/>
     </parent>
 
@@ -24,6 +24,8 @@
     </description>
 
     <properties>
+        <postgresql.version>42.7.11</postgresql.version>
+        <jackson-bom.version>2.18.8</jackson-bom.version>
         <java.version>21</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <pgvector.version>0.1.6</pgvector.version>
@@ -90,6 +92,7 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
+            <version>42.7.11</version>
             <scope>runtime</scope>
         </dependency>
         <dependency>
@@ -114,10 +117,12 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
+            <version>2.18.8</version>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.datatype</groupId>
             <artifactId>jackson-datatype-jsr310</artifactId>
+            <version>2.18.8</version>
         </dependency>
 
         <!-- ══════════════════════════════════════════════════════════════ -->

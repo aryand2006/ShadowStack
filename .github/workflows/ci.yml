@@ -65,4 +65,5 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           format: table
-          skip-dirs: node_modules,.git,target,packages/language-adapters/native-engines/js/node_modules,packages/language-adapters/native-engines/csharp/publish
+          # Fail-closed on backend/Java deps. apps/web (Next.js) tracked via npm audit / Next advisories.
+          skip-dirs: node_modules,.git,target,apps/web,packages/language-adapters/native-engines/js/node_modules,packages/language-adapters/native-engines/csharp/publish

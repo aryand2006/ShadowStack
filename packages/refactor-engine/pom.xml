@@ -21,7 +21,7 @@
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <eclipse.jdt.version>3.36.0</eclipse.jdt.version>
-        <jackson.version>2.17.0</jackson.version>
+        <jackson.version>2.18.8</jackson.version>
         <slf4j.version>2.0.12</slf4j.version>
         <guava.version>33.1.0-jre</guava.version>
     </properties>
