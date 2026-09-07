@@ -3,6 +3,7 @@ package com.shadowstack.api.security;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.Customizer;
@@ -18,22 +19,17 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
-import com.shadowstack.api.tenant.TenantFilter;
-
 import java.util.Arrays;
 import java.util.List;
 
 /**
- * Spring Security configuration for the ShadowStack API.
- * <p>
- * - CSRF disabled (stateless REST API)
- * - CORS configured for allowed origins
- * - Stateless session management
- * - JWT token-based authentication
- * - Role-based endpoint authorization
- * - HTTP Basic as fallback for development
+ * Spring Security configuration for the ShadowStack API (non-OIDC profiles).
+ * MARKER_ENTERPRISE_NO_TENANT_2026
+ * For enterprise IdP JWT, activate the {@code oidc} profile
+ * ({@link OidcSecurityConfig}).
  */
 @Configuration
+@Profile("!oidc")
 @EnableWebSecurity
 @EnableMethodSecurity(prePostEnabled = true)
 public class SecurityConfig {
@@ -55,26 +51,15 @@ public class SecurityConfig {
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // Public endpoints
                         .requestMatchers("/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         .requestMatchers("/api/v1/auth/login").permitAll()
-
-                        // Actuator endpoints require ADMIN
                         .requestMatchers("/actuator/**").hasRole("ADMIN")
-
-                        // Audit endpoints require ADMIN
                         .requestMatchers("/api/v1/audit/**").hasRole("ADMIN")
-
-                        // Review endpoints require REVIEWER or ADMIN
                         .requestMatchers(HttpMethod.POST, "/api/v1/reviews/*/accept", "/api/v1/reviews/*/reject")
                                 .hasAnyRole("REVIEWER", "ADMIN")
-
-                        // Analytics readable by ANALYST, REVIEWER, ADMIN
                         .requestMatchers(HttpMethod.GET, "/api/v1/analytics/**")
                                 .hasAnyRole("ANALYST", "REVIEWER", "ADMIN")
-
-                        // All other API endpoints require authentication
                         .requestMatchers("/api/v1/**").authenticated()
                         .anyRequest().authenticated()
                 )
@@ -82,10 +67,6 @@ public class SecurityConfig {
                 .addFilterBefore(
                         new JwtAuthenticationFilter(jwtTokenProvider),
                         UsernamePasswordAuthenticationFilter.class
-                )
-                .addFilterAfter(
-                        new TenantFilter(jwtTokenProvider),
-                        JwtAuthenticationFilter.class
                 );
 
         return http.build();
@@ -99,7 +80,7 @@ public class SecurityConfig {
         );
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of(
-                "Authorization", "Content-Type", "X-Requested-With", TenantFilter.ORG_HEADER));
+                "Authorization", "Content-Type", "X-Requested-With", "X-Org-Id"));
         configuration.setExposedHeaders(List.of("X-Total-Count", "X-Page-Number", "X-Page-Size"));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);
