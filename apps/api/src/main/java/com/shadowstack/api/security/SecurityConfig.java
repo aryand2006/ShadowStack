@@ -24,7 +24,6 @@ import java.util.List;
 
 /**
  * Spring Security configuration for the ShadowStack API (non-OIDC profiles).
- * MARKER_ENTERPRISE_NO_TENANT_2026
  * For enterprise IdP JWT, activate the {@code oidc} profile
  * ({@link OidcSecurityConfig}).
  */
