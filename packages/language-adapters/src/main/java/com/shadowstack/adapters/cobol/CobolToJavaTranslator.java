@@ -222,9 +222,8 @@ public final class CobolToJavaTranslator {
                 Matcher pm = PARAGRAPH_HEADER.matcher(trimmed);
                 if (pm.matches()) {
                     String paraName = pm.group(1).toUpperCase(Locale.ROOT);
-                    // Scope terminators are not paragraph entry points.
-                    if (paraName.startsWith("END-") || paraName.equals("ELSE")
-                            || paraName.equals("WHEN") || paraName.equals("CONTINUE")) {
+                    // Structured-statement terminators only — not names like END-PARA.
+                    if (isScopeTerminator(paraName)) {
                         // fall through to statement / pending-block handling
                     } else {
                         if (current != null && pendingBlock != null) {
@@ -415,6 +414,17 @@ public final class CobolToJavaTranslator {
 
     private static int countWords(String s) {
         return s.trim().isEmpty() ? 0 : s.trim().split("\\s+").length;
+    }
+
+    private static boolean isScopeTerminator(String name) {
+        return switch (name) {
+            case "END-IF", "END-EVALUATE", "END-PERFORM", "END-SEARCH",
+                 "END-COMPUTE", "END-READ", "END-WRITE", "END-DELETE",
+                 "END-START", "END-RETURN", "END-ACCEPT", "END-STRING",
+                 "END-UNSTRING", "END-CALL", "END-ADD", "END-SUBTRACT",
+                 "END-MULTIPLY", "END-DIVIDE", "ELSE", "WHEN", "CONTINUE" -> true;
+            default -> false;
+        };
     }
 
     private static List<String> flushIfBlock(List<String> lines) {
