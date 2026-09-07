@@ -262,8 +262,9 @@ public class RefactorOrchestrationService {
                         .transformedSource(transformed)
                         .build();
                 VerificationPipeline.PipelineResult pipelineResult = pipeline.execute(unit, context);
-                // Fail-closed on hard FAIL only; layers that cannot run WARN/skip and do not block.
-                passed = pipelineResult.verdict() != Verdict.FAIL;
+                // Fail-closed: only hard PASS promotes to PENDING_REVIEW.
+                // Optional layers skip as PASS when inputs are absent.
+                passed = pipelineResult.verdict() == Verdict.PASS;
                 checks = pipelineResult.layerResults().stream()
                         .map(RefactorOrchestrationService::toCheck)
                         .toList();
@@ -470,7 +471,7 @@ public class RefactorOrchestrationService {
 
     /**
      * Full 7-layer Java verification pipeline (mirrors worker {@code VerificationTask}).
-     * Layers that lack inputs WARN/skip; only hard FAIL blocks promotion.
+     * Optional layers skip as PASS when inputs are absent; only hard FAIL / WARN blocks promotion.
      */
     static VerificationPipeline createJavaVerificationPipeline() {
         VerificationPipeline pipeline = new VerificationPipeline(0.7, false);

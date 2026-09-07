@@ -56,10 +56,10 @@ public class GoldenMasterVerifier implements VerificationLayer {
         if (goldenMasters == null || goldenMasters.isEmpty()) {
             log.info("  No golden master snapshots available — skipping");
             return result
-                    .verdict(Verdict.WARN)
-                    .riskContribution(0.05)
-                    .summary("No golden master snapshots available for comparison")
-                    .addDiagnostic("Consider generating characterization tests for better coverage")
+                    .verdict(Verdict.PASS)
+                    .riskContribution(0.0)
+                    .summary("Skipped: no golden master snapshots configured")
+                    .addDiagnostic("Optional layer — provide characterization snapshots to enable")
                     .executionTime(Duration.between(start, Instant.now()))
                     .build();
         }

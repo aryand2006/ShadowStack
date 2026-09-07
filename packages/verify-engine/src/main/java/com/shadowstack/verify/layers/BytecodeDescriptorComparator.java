@@ -57,21 +57,22 @@ public class BytecodeDescriptorComparator implements VerificationLayer {
         Path transformedClassFile = context.getTransformedClassFile();
 
         if (originalClassFile == null || transformedClassFile == null) {
-            log.warn("Class files not available for bytecode comparison");
+            log.info("Class files not available for bytecode comparison — skipping");
             return result
-                    .verdict(Verdict.WARN)
-                    .riskContribution(0.05)
-                    .summary("Class files not available for bytecode comparison")
+                    .verdict(Verdict.PASS)
+                    .riskContribution(0.0)
+                    .summary("Skipped: class files not provided in verification context")
+                    .addDiagnostic("Optional layer — compile to .class and set VerificationContext class paths to enable")
                     .executionTime(Duration.between(start, Instant.now()))
                     .build();
         }
 
         if (!Files.exists(originalClassFile) || !Files.exists(transformedClassFile)) {
-            log.warn("One or both class files do not exist");
+            log.info("One or both class files do not exist — skipping");
             return result
-                    .verdict(Verdict.WARN)
-                    .riskContribution(0.05)
-                    .summary("Class file(s) not found on disk")
+                    .verdict(Verdict.PASS)
+                    .riskContribution(0.0)
+                    .summary("Skipped: class file(s) not found on disk")
                     .addDiagnostic("original exists: " + Files.exists(originalClassFile))
                     .addDiagnostic("transformed exists: " + Files.exists(transformedClassFile))
                     .executionTime(Duration.between(start, Instant.now()))

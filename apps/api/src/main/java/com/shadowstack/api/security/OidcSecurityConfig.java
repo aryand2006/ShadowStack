@@ -89,6 +89,10 @@ public class OidcSecurityConfig {
                 .addFilterBefore(
                         new JwtAuthenticationFilter(jwtTokenProvider),
                         BearerTokenAuthenticationFilter.class
+                )
+                .addFilterAfter(
+                        new TenantFilter(jwtTokenProvider),
+                        JwtAuthenticationFilter.class
                 );
 
         return http.build();
@@ -157,7 +161,7 @@ public class OidcSecurityConfig {
         configuration.setAllowedOrigins(Arrays.asList(corsAllowedOrigins.split(",")));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of(
-                "Authorization", "Content-Type", "X-Requested-With", "X-Org-Id"));
+                "Authorization", "Content-Type", "X-Requested-With", TenantFilter.ORG_HEADER));
         configuration.setExposedHeaders(List.of("X-Total-Count", "X-Page-Number", "X-Page-Size"));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);

@@ -117,7 +117,7 @@ public class JobClaimPoller {
                 .join();
 
         VerificationPipeline.PipelineResult pipelineResult = result.pipelineResult();
-        boolean passed = pipelineResult.verdict() != Verdict.FAIL;
+        boolean passed = pipelineResult.verdict() == Verdict.PASS;
 
         List<String> verified = new ArrayList<>();
         List<String> failed = new ArrayList<>();

@@ -1,6 +1,6 @@
 # ShadowStack
 
-**Professional modernization workbench**
+**Enterprise modernization workbench**
 
 > Modernize legacy systems with compile- and syntax-gated patches, and attach verification evidence to every item in the review queue.
 
@@ -214,20 +214,21 @@ This corpus is ShadowStack's competitive moat.
 
 ---
 
-## Security posture (target)
+## Security posture (enterprise)
 
-These are design goals and control mappings — **not** claimed production certifications or fully implemented enterprise controls.
+Control mappings are **not** a SOC 2 certification. Implemented product controls:
 
-| Control | Target / current state |
-|---------|------------------------|
+| Control | Current state |
+|---------|----------------|
 | **Offline-first** | Demo path avoids external LLM calls; no production telemetry product |
-| **RBAC** | ADMIN, REVIEWER, ANALYST, VIEWER roles in the API security config |
-| **Separation of duties** | Reviewers cannot accept/reject patches they authored (`createdBy`); ADMIN may override |
-| **Audit trail** | Request audit interceptor + `audit_log` schema; query API still thin |
-| **Review gate** | Patches require explicit accept/reject after verification |
-| **Auth** | JWT + HTTP Basic for demo/dev; optional Spring profile `oidc` for IdP JWT resource-server SSO |
-| **CORS** | Allows `X-Org-Id` for multi-tenant clients (tenant isolation is a separate track) |
-| **SOC 2** | Control *design* mapping only (`docs/soc2-controls.md`) — **not certified** |
+| **RBAC** | ADMIN, REVIEWER, ANALYST, VIEWER |
+| **Multi-tenancy** | `org_id` on projects/patches/jobs/audit; `X-Org-Id` / JWT `org_id` via `TenantFilter` |
+| **Separation of duties** | REVIEWER cannot accept/reject own patches (`createdBy`); ADMIN may override |
+| **Audit trail** | Durable `audit_log` on `!demo` with query + CSV export; demo → SLF4J |
+| **Review gate** | Explicit accept/reject after fail-closed verification |
+| **Auth** | JWT + HTTP Basic; optional `oidc` profile for IdP JWT resource-server SSO |
+| **Job isolation** | Worker claims VERIFY with `FOR UPDATE SKIP LOCKED` |
+| **SOC 2** | Design mapping only (`docs/soc2-controls.md`) — **not certified** |
 | **Threat model** | STRIDE analysis documented as a planning artifact |
 
 ---
@@ -293,10 +294,10 @@ cd apps/web && npm install && npm run dev
 
 Credentials: `admin` / `admin` (HTTP Basic or `POST /api/v1/auth/login`).
 
-What is real today: Java full convert + AST-backed adapters for Python/COBOL/JS/C# → analyze → generate → verify → review queue → accept/reject (with SoD on `createdBy`).
-Gates: Java attempts a multi-layer verify path (`CompileVerifier` + AST/API signature layers; broader 7-layer verify-engine catalog exists for extension), Python `py_compile` (LibCST AST + regex fallback), JS `node --check` (Acorn AST), C# `dotnet build` (Roslyn AST; requires `.csproj`), COBOL-preserving `cobc` (translate track is detect-only).
-What is real for ops: demo uses in-memory stores; `prod`/`docker` use JPA + Flyway (`ss_projects` / `ss_patches` / `ss_jobs`), env-required credentials, API enqueue-only VERIFY jobs (`shadowstack.jobs.poller-enabled=false`), worker-owned dequeue (`JobClaimPoller` + 7-layer `VerificationTask`), live analytics aggregates, optional `oidc` profile for IdP JWT, CORS `X-Org-Id` allowed. Re-enable API polling with `SHADOWSTACK_JOBS_POLLER_ENABLED=true` for single-process deploys.
-What is stubbed / aspirational: full multi-tenant org isolation, Postgres migration-corpus analytics depth, and any SOC2 certification.
+What is real today: Java full convert + AST-backed adapters for Python/COBOL/JS/C# → analyze → generate → **7-layer Java verify** (optional layers skip cleanly) → review queue → accept/reject (SoD on `createdBy`).
+Gates: Java 7-layer pipeline (compile/AST/bytecode/API/tests/golden/risk — missing optional inputs skip as PASS), Python `py_compile`, JS `node --check`, C# `dotnet build`, COBOL-preserving `cobc` (translate detect-only). Soft/WARN still fail-closed for adapters; Java promotes only on overall PASS.
+What is real for ops: demo in-memory; `prod`/`docker` JPA + Flyway (`ss_organizations` / `ss_users` / `ss_*` + `org_id`), env-required credentials, durable audit query/export, tenant context (`X-Org-Id`), API enqueue-only VERIFY (`shadowstack.jobs.poller-enabled=false`), worker-owned SKIP LOCKED dequeue + 7-layer verify, live analytics, optional `oidc` profile. Single-process: `SHADOWSTACK_JOBS_POLLER_ENABLED=true`.
+What is stubbed / aspirational: rich org admin UI/provisioning beyond default org, Postgres migration-corpus depth, Vault/TDE, and any SOC2 certification.
 
 > **Docker note:** `infra/docker/Dockerfile.api` is JVM-only. For converter tooling in-container, build `infra/docker/Dockerfile.api-enterprise` (python3/pip + nodejs + `native-engines` copy; optional `cobc` when apt provides it; .NET/Roslyn still host-side). See `docker-compose.yml` comments.
 
