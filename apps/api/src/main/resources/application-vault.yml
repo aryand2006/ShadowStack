@@ -1,0 +1,37 @@
+# ═══════════════════════════════════════════════════════════════════
+#  Optional Spring profile: vault
+#
+#  Lightweight — does NOT add spring-cloud-starter-vault-config.
+#  Secrets arrive as process environment variables from either:
+#    A) Vault Agent Injector (pod annotations)
+#       → infra/k8s/vault-agent-annotations.md
+#    B) External Secrets Operator → Kubernetes Secret → secretKeyRef
+#       → infra/k8s/external-secret-vault.yaml
+#
+#  Activate with prod (never alone / never with demo), e.g.:
+#    SPRING_PROFILES_ACTIVE=prod,vault
+#
+#  Required env (same names as prod; already wired in api-deployment.yaml):
+#    JWT_SECRET, SECURITY_USER, SECURITY_PASSWORD, DB_USER or DB_USERNAME, DB_PASSWORD
+#  Optional:
+#    ENCRYPTION_KEY_BASE64
+# ═══════════════════════════════════════════════════════════════════
+
+spring:
+  config:
+    activate:
+      on-profile: vault
+  datasource:
+    username: ${DB_USERNAME:${DB_USER}}
+    password: ${DB_PASSWORD}
+
+# Bind security material exclusively from env injected by Vault Agent / ESO.
+# Missing JWT_SECRET fails fast (no weak placeholder fallback on this profile).
+shadowstack:
+  security:
+    jwt-secret: ${JWT_SECRET}
+    encryption-key-base64: ${ENCRYPTION_KEY_BASE64:}
+
+logging:
+  level:
+    com.shadowstack: INFO

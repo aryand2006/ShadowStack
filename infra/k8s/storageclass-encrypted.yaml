@@ -1,0 +1,95 @@
+# ═══════════════════════════════════════════════════════════════════
+#  Encrypted StorageClass — CMEK / customer-managed keys (TEMPLATE)
+#
+#  Cloud-agnostic name used by postgres.yaml:
+#    storageClassName: shadowstack-encrypted
+#
+#  Apply ONE provider-specific StorageClass (uncomment / adapt) so the
+#  name remains shadowstack-encrypted. Changing storageClassName on an
+#  existing PVC usually requires volume migration — set before first
+#  provision.
+#
+#  Status: Implemented (manifests). Demo / local compose unchanged.
+#  See docs/secrets-and-encryption.md (Production checklist).
+# ═══════════════════════════════════════════════════════════════════
+
+# --- Default placeholder (no cloud CSI) — REPLACE before production ---
+# Clusters without a CMEK-capable CSI should not use this class for real data.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: shadowstack-encrypted
+  labels:
+    app.kubernetes.io/name: shadowstack-encrypted
+    app.kubernetes.io/part-of: shadowstack
+    shadowstack.io/encryption: cmek
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: false
+# reclaimPolicy: Retain  # prefer Retain for encrypted DB volumes
+---
+# ═══════════════════════════════════════════════════════════════════
+#  GKE example — pd-balanced + CMEK
+#  REPLACE kms-key-service-account + disk-encryption-kms-key.
+#  Delete or omit the placeholder StorageClass above when using this.
+# ═══════════════════════════════════════════════════════════════════
+# apiVersion: storage.k8s.io/v1
+# kind: StorageClass
+# metadata:
+#   name: shadowstack-encrypted
+#   labels:
+#     app.kubernetes.io/part-of: shadowstack
+#     shadowstack.io/encryption: cmek
+#     shadowstack.io/cloud: gke
+# provisioner: pd.csi.storage.gke.io
+# volumeBindingMode: WaitForFirstConsumer
+# allowVolumeExpansion: true
+# reclaimPolicy: Retain
+# parameters:
+#   type: pd-balanced
+#   # Customer-managed encryption key (Cloud KMS resource name):
+#   disk-encryption-kms-key: projects/PROJECT_ID/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
+# ---
+# ═══════════════════════════════════════════════════════════════════
+#  AWS EKS example — EBS gp3 encrypted with CMK
+# ═══════════════════════════════════════════════════════════════════
+# apiVersion: storage.k8s.io/v1
+# kind: StorageClass
+# metadata:
+#   name: shadowstack-encrypted
+#   labels:
+#     app.kubernetes.io/part-of: shadowstack
+#     shadowstack.io/encryption: cmek
+#     shadowstack.io/cloud: eks
+# provisioner: ebs.csi.aws.com
+# volumeBindingMode: WaitForFirstConsumer
+# allowVolumeExpansion: true
+# reclaimPolicy: Retain
+# parameters:
+#   type: gp3
+#   encrypted: "true"
+#   # Optional CMK — omit kmsKeyId to use the account default EBS key:
+#   kmsKeyId: arn:aws:kms:REGION:ACCOUNT_ID:key/KEY_ID
+# ---
+# ═══════════════════════════════════════════════════════════════════
+#  Azure AKS example — Disk Encryption Set (customer-managed key)
+# ═══════════════════════════════════════════════════════════════════
+# apiVersion: storage.k8s.io/v1
+# kind: StorageClass
+# metadata:
+#   name: shadowstack-encrypted
+#   labels:
+#     app.kubernetes.io/part-of: shadowstack
+#     shadowstack.io/encryption: cmek
+#     shadowstack.io/cloud: aks
+# provisioner: disk.csi.azure.com
+# volumeBindingMode: WaitForFirstConsumer
+# allowVolumeExpansion: true
+# reclaimPolicy: Retain
+# parameters:
+#   skuname: Premium_LRS
+#   # Disk Encryption Set resource ID:
+#   diskEncryptionSetID: /subscriptions/SUB/resourceGroups/RG/providers/Microsoft.Compute/diskEncryptionSets/DES_NAME
+#   # Optional:
+#   # cachingMode: ReadOnly
+#   # fsType: ext4

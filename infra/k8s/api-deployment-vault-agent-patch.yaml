@@ -1,0 +1,50 @@
+# ═══════════════════════════════════════════════════════════════════
+#  Strategic merge patch: Vault Agent Injector annotations for API
+#
+#  NOT applied by default. Requires Vault Agent Injector + auth role.
+#  See vault-agent-annotations.md for prerequisites and verify steps.
+#
+#  Apply:
+#    kubectl -n shadowstack patch deployment api --type strategic \
+#      --patch-file infra/k8s/api-deployment-vault-agent-patch.yaml
+#  Then:
+#    kubectl -n shadowstack set env deployment/api \
+#      SPRING_PROFILES_ACTIVE=prod,vault
+# ═══════════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: shadowstack
+spec:
+  template:
+    metadata:
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "shadowstack"
+        # Init-only: secrets written before app starts; no long-lived sidecar
+        vault.hashicorp.com/agent-pre-populate-only: "true"
+        vault.hashicorp.com/agent-inject-secret-shadowstack: "secret/data/shadowstack/api"
+        vault.hashicorp.com/agent-inject-template-shadowstack: |
+          {{- with secret "secret/data/shadowstack/api" -}}
+          JWT_SECRET={{ .Data.data.JWT_SECRET }}
+          SECURITY_USER={{ .Data.data.SECURITY_USER }}
+          SECURITY_PASSWORD={{ .Data.data.SECURITY_PASSWORD }}
+          DB_USER={{ .Data.data.DB_USER }}
+          DB_PASSWORD={{ .Data.data.DB_PASSWORD }}
+          {{- if .Data.data.ENCRYPTION_KEY_BASE64 }}
+          ENCRYPTION_KEY_BASE64={{ .Data.data.ENCRYPTION_KEY_BASE64 }}
+          {{- end }}
+          {{- end }}
+    spec:
+      # Keep existing secretKeyRef wiring for ESO / secrets.yaml demos.
+      # For pure Agent env injection, add an entrypoint that sources
+      # /vault/secrets/shadowstack (see vault-agent-annotations.md).
+      containers:
+        - name: api
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: prod,vault
+            # Optional: path Agent wrote (for custom entrypoints / sidecars)
+            - name: VAULT_SECRET_FILE
+              value: /vault/secrets/shadowstack

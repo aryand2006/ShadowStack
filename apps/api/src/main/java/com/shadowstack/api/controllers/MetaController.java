@@ -1,13 +1,16 @@
 package com.shadowstack.api.controllers;
 
+import com.shadowstack.api.crypto.EncryptionService;
 import com.shadowstack.refactor.RuleCatalog;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.core.env.Environment;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +19,28 @@ import java.util.Map;
 @RequestMapping("/api/v1/meta")
 @Tag(name = "Meta", description = "Platform capability catalog")
 public class MetaController {
+
+    private final EncryptionService encryptionService;
+    private final Environment environment;
+
+    public MetaController(EncryptionService encryptionService, Environment environment) {
+        this.encryptionService = encryptionService;
+        this.environment = environment;
+    }
+
+    @GetMapping("/security")
+    @Operation(summary = "Security posture flags (encryption, vault profile)")
+    public ResponseEntity<Map<String, Object>> security() {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("encryptionEnabled", encryptionService.isEnabled());
+        body.put("encryptionAlgorithm", encryptionService.isEnabled() ? "AES-256-GCM" : "none");
+        body.put("vaultProfileActive", environment.matchesProfiles("vault"));
+        body.put("activeProfiles", Arrays.asList(environment.getActiveProfiles()));
+        body.put("secretsSource", environment.matchesProfiles("vault")
+                ? "env-from-vault-agent-or-eso"
+                : "env-or-k8s-secret");
+        return ResponseEntity.ok(body);
+    }
 
     @GetMapping("/languages")
     @Operation(summary = "Supported languages and modernization rules")

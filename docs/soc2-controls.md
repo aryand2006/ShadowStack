@@ -167,7 +167,7 @@ This document maps ShadowStack product and infrastructure controls to SOC 2 Trus
 | 9 | Risk assessment automation | Implemented | Risk scoring on candidates/patches |
 | 10 | Data retention policies | Implemented | Config + `RetentionCleanupJob` |
 | 11 | Input validation | Partial | Bean Validation on many DTOs |
-| 12 | Secrets management | Partial | Env/K8s secrets; demo defaults remain |
+| 12 | Secrets management | Implemented (manifests) | ESO/Vault Agent + `vault` profile; demo defaults remain for local only |
 | 13 | Dependency pinning | Partial | Most POMs pin versions |
 | 14 | Container / network security | Implemented | NetworkPolicy + non-root where set |
 | 15 | Separation of duties | Implemented | `createdBy` SoD; ADMIN override |
@@ -197,12 +197,13 @@ Auditor-facing one-pager: [`docs/soc2-auditor-pack.md`](soc2-auditor-pack.md). E
 - [x] Web npm CRITICAL gate + residual HIGH docs (`web-npm-audit`, `docs/web-security.md`)
 - [x] Secrets / AES-GCM encryption docs + optional app encryption (`docs/secrets-and-encryption.md`)
 - [x] Default-deny K8s NetworkPolicy + Vault External Secrets template
+- [x] Vault Agent Injector annotations/patch + CMEK StorageClass manifests (`vault-agent-annotations.md`, `storageclass-encrypted.yaml`)
 - [x] RBAC + optional OIDC profile; fail-closed review gate; auto-apply off by default
 
 **Still customer-owned (not claimable from this repo alone):**
 
 - [ ] Engage AICPA-aligned CPA firm / auditor contract
-- [ ] Production deploy with non-demo profiles, real secrets, TLS at ingress, TDE/CMEK
+- [ ] Production deploy with non-demo profiles, real secrets, TLS at ingress, and apply CMEK StorageClass (manifests are in-repo)
 - [ ] Observation-window evidence retention (exports, access reviews, change tickets, incidents)
 - [ ] Independent penetration test (vendor engagement + remediation)
 - [ ] Type I report (design as of a date)

@@ -113,6 +113,11 @@ spec:
           app.kubernetes.io/part-of: shadowstack
       spec:
         accessModes: ["ReadWriteOnce"]
+        # Default: cluster default StorageClass (fine for demos / non-CMEK labs).
+        # Production CMEK: uncomment after applying a real provider class from
+        # infra/k8s/storageclass-encrypted.yaml (GKE pd-balanced / EKS gp3 /
+        # Azure diskEncryptionSet). Must be set before first PVC provision.
+        # storageClassName: shadowstack-encrypted
         resources:
           requests:
             storage: 20Gi
