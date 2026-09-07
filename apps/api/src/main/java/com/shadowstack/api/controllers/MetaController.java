@@ -332,7 +332,7 @@ public class MetaController {
         body.put("phases", Map.of(
                 "0_baseline", "done",
                 "1_dialect", "done",
-                "2_files", "mvp",
+                "2_files", "mvp_plus",
                 "3_cics", "facade",
                 "4_ims_sql", "facade",
                 "5_jcl", "parser_mvp",
@@ -347,15 +347,16 @@ public class MetaController {
                 "COPY / REPLACING",
                 "SECTION entry points",
                 "CALL USING identifiers → String.valueOf args (BY REFERENCE/CONTENT still gap)",
-                "SELECT … ASSIGN TO (light)",
-                "OPEN/READ/WRITE/CLOSE sequential + READ AT END",
+                "SELECT … ASSIGN TO + FD / 01 record layouts",
+                "OPEN/READ/WRITE/CLOSE sequential + READ AT END + READ INTO",
+                "OPEN I-O + REWRITE (line-oriented sequential MVP)",
                 "stdout goldens (HELLOSS)"
         ));
         body.put("knownGaps", List.of(
                 "Nested programs",
-                "Deep FD / record layouts",
+                "Deep FD group items / OCCURS in records",
                 "VSAM / INDEXED / RELATIVE",
-                "REWRITE / DELETE / START / SORT / MERGE",
+                "DELETE / START / SORT / MERGE",
                 "BMS / screens",
                 "Embedded CICS/IMS/SQL runtime in generated code",
                 "JCL job runner (parser only)",

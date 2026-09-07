@@ -1,6 +1,8 @@
 package com.shadowstack.adapters.cobol.runtime;
 
 import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -11,6 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Reference sequential-file implementation of {@link CobolFileFacade}.
  * INDEXED/RELATIVE open → {@link UnsupportedCobolFeatureException}.
+ * OPEN I-O + REWRITE supported for line-oriented sequential files (MVP).
  */
 public final class SequentialCobolFileFacade implements CobolFileFacade {
 
@@ -34,6 +37,11 @@ public final class SequentialCobolFileFacade implements CobolFileFacade {
     @Override
     public void openExtend(String ddName) {
         open.put(norm(ddName), Handle.output(resolve(ddName), true));
+    }
+
+    /** Sequential OPEN I-O — RandomAccessFile for READ + REWRITE. */
+    public void openIo(String ddName) {
+        open.put(norm(ddName), Handle.io(resolve(ddName)));
     }
 
     @Override
@@ -64,7 +72,12 @@ public final class SequentialCobolFileFacade implements CobolFileFacade {
 
     @Override
     public void rewrite(String ddName, byte[] record) {
-        throw new UnsupportedCobolFeatureException("REWRITE not supported on sequential façade for " + ddName);
+        Handle h = require(ddName);
+        try {
+            h.rewriteLine(record);
+        } catch (IOException e) {
+            throw new UnsupportedCobolFeatureException("REWRITE " + ddName + ": " + e.getMessage(), e);
+        }
     }
 
     @Override
@@ -102,17 +115,21 @@ public final class SequentialCobolFileFacade implements CobolFileFacade {
 
     private static final class Handle implements AutoCloseable {
         private final Path path;
-        private final boolean input;
+        private final Mode mode;
         private java.io.BufferedReader reader;
         private java.io.OutputStream writer;
+        private RandomAccessFile raf;
+        private long lastReadPos = -1;
 
-        private Handle(Path path, boolean input) {
+        enum Mode { INPUT, OUTPUT, IO }
+
+        private Handle(Path path, Mode mode) {
             this.path = path;
-            this.input = input;
+            this.mode = mode;
         }
 
         static Handle input(Path path) {
-            Handle h = new Handle(path, true);
+            Handle h = new Handle(path, Mode.INPUT);
             try {
                 h.reader = Files.newBufferedReader(path);
             } catch (IOException e) {
@@ -122,7 +139,7 @@ public final class SequentialCobolFileFacade implements CobolFileFacade {
         }
 
         static Handle output(Path path, boolean append) {
-            Handle h = new Handle(path, false);
+            Handle h = new Handle(path, Mode.OUTPUT);
             try {
                 Files.createDirectories(path.getParent() != null ? path.getParent() : Path.of("."));
                 h.writer = Files.newOutputStream(path,
@@ -135,16 +152,47 @@ public final class SequentialCobolFileFacade implements CobolFileFacade {
             return h;
         }
 
+        static Handle io(Path path) {
+            Handle h = new Handle(path, Mode.IO);
+            try {
+                Files.createDirectories(path.getParent() != null ? path.getParent() : Path.of("."));
+                if (!Files.exists(path)) {
+                    Files.createFile(path);
+                }
+                h.raf = new RandomAccessFile(path.toFile(), "rw");
+            } catch (IOException e) {
+                throw new UnsupportedCobolFeatureException("OPEN I-O " + path + ": " + e.getMessage(), e);
+            }
+            return h;
+        }
+
         byte[] readLine() throws IOException {
-            if (!input || reader == null) {
+            if (mode == Mode.IO) {
+                if (raf == null) {
+                    throw new UnsupportedCobolFeatureException("Not open for I-O: " + path);
+                }
+                lastReadPos = raf.getFilePointer();
+                String line = raf.readLine();
+                return line == null ? null : line.getBytes(StandardCharsets.UTF_8);
+            }
+            if (mode != Mode.INPUT || reader == null) {
                 throw new UnsupportedCobolFeatureException("Not open for INPUT: " + path);
             }
             String line = reader.readLine();
-            return line == null ? null : line.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            return line == null ? null : line.getBytes(StandardCharsets.UTF_8);
         }
 
         void writeLine(byte[] record) throws IOException {
-            if (input || writer == null) {
+            if (mode == Mode.IO) {
+                if (raf == null) {
+                    throw new UnsupportedCobolFeatureException("Not open for I-O: " + path);
+                }
+                raf.seek(raf.length());
+                raf.write(record);
+                raf.write('\n');
+                return;
+            }
+            if (mode != Mode.OUTPUT || writer == null) {
                 throw new UnsupportedCobolFeatureException("Not open for OUTPUT: " + path);
             }
             writer.write(record);
@@ -152,10 +200,26 @@ public final class SequentialCobolFileFacade implements CobolFileFacade {
             writer.flush();
         }
 
+        void rewriteLine(byte[] record) throws IOException {
+            if (mode != Mode.IO || raf == null) {
+                throw new UnsupportedCobolFeatureException(
+                        "REWRITE requires OPEN I-O sequential façade: " + path);
+            }
+            if (lastReadPos < 0) {
+                throw new UnsupportedCobolFeatureException("REWRITE without prior READ: " + path);
+            }
+            long resume = raf.getFilePointer();
+            raf.seek(lastReadPos);
+            raf.write(record);
+            raf.write('\n');
+            raf.seek(resume);
+        }
+
         @Override
         public void close() throws IOException {
             if (reader != null) reader.close();
             if (writer != null) writer.close();
+            if (raf != null) raf.close();
         }
     }
 }

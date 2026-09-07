@@ -28,7 +28,7 @@ databases, files, JCL, and cross-program control flow.
 |-------|--------|------------|
 | 0 Baseline | ✅ | cobc preserving + javac translate MVP |
 | 1 Dialect | ✅ | PIC/USAGE/OCCURS/REDEFINES/PERFORM/COPY |
-| 2 Files | 🟡 MVP | Sequential I/O helpers, SELECT/AT END; no VSAM |
+| 2 Files | 🟡 MVP+ | SELECT/FD/01, sequential I/O, AT END, OPEN I-O + REWRITE; no VSAM |
 | 3 CICS | 🟡 façade | `CicsFacade` fail-closed; EXEC CICS → gap |
 | 4 IMS/SQL | 🟡 façade | `ImsFacade`; EXEC SQL → gap |
 | 5 JCL | 🟡 parser | `JclJobGraph` + `PAYDEMO.jcl` |

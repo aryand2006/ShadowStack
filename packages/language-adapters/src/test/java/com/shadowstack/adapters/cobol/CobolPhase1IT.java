@@ -133,7 +133,7 @@ class CobolPhase1IT {
         CobolToJavaTranslator.Result r = CobolToJavaTranslator.translate(OPEN_READ_GAPS);
         assertTrue(r.javaSource().contains("__openInput") || r.javaSource().contains("__read"),
                 "Phase 2 OPEN/READ should emit file helpers:\n" + r.javaSource());
-        assertTrue(r.unsupportedGaps().stream().anyMatch(g -> g.contains("REWRITE") || g.contains("SORT")),
+        assertTrue(r.unsupportedGaps().stream().anyMatch(g -> g.contains("SORT") || g.contains("REWRITE record")),
                 () -> String.valueOf(r.unsupportedGaps()));
         assertTrue(r.unsupportedGaps().stream().noneMatch(g -> g.equals("unsupported verb: OPEN")),
                 "OPEN should not remain an unsupported gap");

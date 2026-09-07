@@ -181,6 +181,12 @@ public final class CobolToJavaTranslator {
         final List<String> resolvedCalls = new ArrayList<>();
         /** SELECT logical-file → ASSIGN dd-name. */
         final Map<String, String> selectAssign = new LinkedHashMap<>();
+        /** FD file-name currently being described (parse-time). */
+        String currentFd;
+        /** 01 record-name → FD file-name. */
+        final Map<String, String> recordToFd = new LinkedHashMap<>();
+        /** Record or FD name → byte length hint from PIC. */
+        final Map<String, Integer> recordLength = new LinkedHashMap<>();
         boolean needsBigDecimal;
         boolean needsFileFacade;
     }
@@ -226,6 +232,9 @@ public final class CobolToJavaTranslator {
                     || upper.contains("LOCAL-STORAGE SECTION")
                     || upper.contains("FILE SECTION")) {
                 division = "DATA DIVISION";
+                if (!upper.contains("FILE SECTION")) {
+                    out.currentFd = null;
+                }
                 continue;
             }
             if (upper.startsWith("PROCEDURE DIVISION")) {
@@ -239,10 +248,25 @@ public final class CobolToJavaTranslator {
                 String logical = sel.group(1).toUpperCase(Locale.ROOT);
                 String assign = sel.group(2).toUpperCase(Locale.ROOT);
                 out.selectAssign.put(logical, assign);
+                if (upper.contains("ORGANIZATION") && (upper.contains("INDEXED")
+                        || upper.contains("RELATIVE"))) {
+                    String gap = "SELECT ORGANIZATION INDEXED/RELATIVE (VSAM): " + logical;
+                    if (!out.gaps.contains(gap)) out.gaps.add(gap);
+                }
                 continue;
             }
-            // Skip FD / SD headers lightly (not data items).
-            if (upper.matches("(?i)^(FD|SD)\\s+[A-Z0-9-]+.*")) {
+            // FD / SD headers — bind following 01 records to the file.
+            Matcher fd = Pattern.compile("(?i)^(FD|SD)\\s+([A-Z0-9-]+).*").matcher(trimmed);
+            if (fd.matches()) {
+                String kind = fd.group(1).toUpperCase(Locale.ROOT);
+                String name = fd.group(2).toUpperCase(Locale.ROOT);
+                if ("SD".equals(kind)) {
+                    String gap = "SORT file SD not supported: " + name;
+                    if (!out.gaps.contains(gap)) out.gaps.add(gap);
+                    out.currentFd = null;
+                } else {
+                    out.currentFd = name;
+                }
                 continue;
             }
 
@@ -417,6 +441,16 @@ public final class CobolToJavaTranslator {
         String init = valueToJava(value, javaType, occursN);
         String picComment = buildPicComment(pic, usage, occursN);
 
+        // FILE SECTION: bind 01 record names to the current FD and capture length.
+        if (out.currentFd != null && level == 1) {
+            out.recordToFd.put(name, out.currentFd);
+            int len = picByteLength(pic);
+            if (len > 0) {
+                out.recordLength.put(name, len);
+                out.recordLength.putIfAbsent(out.currentFd, len);
+            }
+        }
+
         String aliasOf = null;
         if (redefines != null) {
             Field target = out.fields.get(redefines.toUpperCase(Locale.ROOT));
@@ -571,9 +605,31 @@ public final class CobolToJavaTranslator {
             sb.append("        java.io.OutputStream o = __OUT.get(dd); if (o == null) return;\n");
             sb.append("        o.write(rec); o.write('\\n'); o.flush();\n");
             sb.append("    }\n");
+            sb.append("    private static final java.util.Map<String, java.io.RandomAccessFile> __IO = new java.util.HashMap<>();\n");
+            sb.append("    private static final java.util.Map<String, Long> __LAST_POS = new java.util.HashMap<>();\n");
+            sb.append("    private static void __openIo(String dd) throws Exception {\n");
+            sb.append("        java.nio.file.Path p = __DATA.resolve(dd + \".dat\");\n");
+            sb.append("        if (!java.nio.file.Files.exists(p)) java.nio.file.Files.createFile(p);\n");
+            sb.append("        __IO.put(dd, new java.io.RandomAccessFile(p.toFile(), \"rw\"));\n");
+            sb.append("    }\n");
+            sb.append("    private static boolean __readIo(String dd, byte[] buf) throws Exception {\n");
+            sb.append("        java.io.RandomAccessFile raf = __IO.get(dd); if (raf == null) return false;\n");
+            sb.append("        long pos = raf.getFilePointer(); String line = raf.readLine(); if (line == null) return false;\n");
+            sb.append("        __LAST_POS.put(dd, pos);\n");
+            sb.append("        byte[] b = line.getBytes(java.nio.charset.StandardCharsets.UTF_8);\n");
+            sb.append("        System.arraycopy(b, 0, buf, 0, Math.min(buf.length, b.length)); return true;\n");
+            sb.append("    }\n");
+            sb.append("    private static void __rewrite(String dd, byte[] rec) throws Exception {\n");
+            sb.append("        java.io.RandomAccessFile raf = __IO.get(dd); if (raf == null) return;\n");
+            sb.append("        Long pos = __LAST_POS.get(dd); if (pos == null) return;\n");
+            sb.append("        long resume = raf.getFilePointer();\n");
+            sb.append("        raf.seek(pos); raf.write(rec); raf.write('\\n'); raf.seek(resume);\n");
+            sb.append("    }\n");
             sb.append("    private static void __close(String dd) throws Exception {\n");
             sb.append("        java.io.BufferedReader r = __IN.remove(dd); if (r != null) r.close();\n");
             sb.append("        java.io.OutputStream o = __OUT.remove(dd); if (o != null) o.close();\n");
+            sb.append("        java.io.RandomAccessFile raf = __IO.remove(dd); if (raf != null) raf.close();\n");
+            sb.append("        __LAST_POS.remove(dd);\n");
             sb.append("    }\n\n");
         }
 
@@ -817,16 +873,40 @@ public final class CobolToJavaTranslator {
         String s = stripPeriod(stmt.trim());
         String upper = s.toUpperCase(Locale.ROOT);
         if (upper.startsWith("OPEN ") || upper.startsWith("READ ")
-                || upper.startsWith("WRITE ") || upper.startsWith("CLOSE ")) {
-            if (!upper.startsWith("OPEN I-O") && !upper.contains(" OPEN I-O ")) {
-                parsed.needsFileFacade = true;
-            }
+                || upper.startsWith("WRITE ") || upper.startsWith("CLOSE ")
+                || upper.startsWith("REWRITE ")) {
+            parsed.needsFileFacade = true;
         }
     }
 
-    private static String resolveAssign(String logicalOrDd, ParsedProgram parsed) {
-        String key = logicalOrDd.toUpperCase(Locale.ROOT);
-        return parsed.selectAssign.getOrDefault(key, key);
+    /**
+     * Resolve a logical file, FD name, or 01 record name to the ASSIGN dd-name.
+     */
+    private static String resolveAssign(String logicalOrRecord, ParsedProgram parsed) {
+        String key = logicalOrRecord.toUpperCase(Locale.ROOT);
+        if (parsed.selectAssign.containsKey(key)) {
+            return parsed.selectAssign.get(key);
+        }
+        String fd = parsed.recordToFd.get(key);
+        if (fd != null) {
+            return parsed.selectAssign.getOrDefault(fd, fd);
+        }
+        // Direct FD open/close without SELECT — use FD name as dd.
+        if (parsed.recordToFd.containsValue(key)) {
+            return parsed.selectAssign.getOrDefault(key, key);
+        }
+        return key;
+    }
+
+    private static int recordBufSize(String logicalOrRecord, ParsedProgram parsed) {
+        String key = logicalOrRecord.toUpperCase(Locale.ROOT);
+        Integer len = parsed.recordLength.get(key);
+        if (len == null) {
+            String fd = parsed.recordToFd.get(key);
+            if (fd != null) len = parsed.recordLength.get(fd);
+        }
+        if (len == null || len <= 0) return 256;
+        return Math.max(len, 1);
     }
 
     private static List<String> translateFileIo(String s, ParsedProgram parsed) {
@@ -843,12 +923,8 @@ public final class CobolToJavaTranslator {
         if (open.matches()) {
             String mode = open.group(1).toUpperCase(Locale.ROOT);
             String logical = open.group(2).toUpperCase(Locale.ROOT);
-            if ("I-O".equals(mode)) {
-                String gap = "OPEN I-O not on sequential façade: " + logical;
-                if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
-                return List.of("// " + gap);
-            }
-            if (!parsed.selectAssign.isEmpty() && !parsed.selectAssign.containsKey(logical)) {
+            if (!parsed.selectAssign.isEmpty() && !parsed.selectAssign.containsKey(logical)
+                    && !parsed.recordToFd.containsValue(logical)) {
                 String gap = "OPEN references unknown SELECT: " + logical;
                 if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
             }
@@ -858,30 +934,70 @@ public final class CobolToJavaTranslator {
                 case "INPUT" -> "__openInput(\"" + dd + "\")";
                 case "OUTPUT" -> "__openOutput(\"" + dd + "\", false)";
                 case "EXTEND" -> "__openOutput(\"" + dd + "\", true)";
+                case "I-O" -> "__openIo(\"" + dd + "\")";
                 default -> "__openInput(\"" + dd + "\")";
             };
             return List.of("try { " + method + "; } catch (Exception __ex) { throw new RuntimeException(__ex); }");
         }
-        Matcher read = Pattern.compile("(?i)^READ\\s+([A-Z0-9-]+)(?:\\s+.*)?").matcher(s);
+        Matcher read = Pattern.compile(
+                "(?i)^READ\\s+([A-Z0-9-]+)(?:\\s+INTO\\s+([A-Z0-9-]+))?(?:\\s+.*)?").matcher(s);
         if (read.matches()) {
             parsed.needsFileFacade = true;
             String logical = read.group(1).toUpperCase(Locale.ROOT);
+            String into = read.group(2);
             String dd = resolveAssign(logical, parsed);
             String id = toJavaIdent(dd);
-            return List.of(
-                    "byte[] __rec_" + id + " = new byte[256];",
-                    "boolean __ok_" + id + " = false;",
-                    "try { __ok_" + id + " = __read(\"" + dd + "\", __rec_" + id + "); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
+            int buf = recordBufSize(logical, parsed);
+            List<String> lines = new ArrayList<>();
+            lines.add("byte[] __rec_" + id + " = new byte[" + buf + "];");
+            lines.add("boolean __ok_" + id + " = false;");
+            // Prefer I-O RandomAccessFile path when both could apply — try __IO first via helper chain.
+            lines.add("try { __ok_" + id + " = __IO.containsKey(\"" + dd + "\")"
+                    + " ? __readIo(\"" + dd + "\", __rec_" + id + ")"
+                    + " : __read(\"" + dd + "\", __rec_" + id + ");"
+                    + " } catch (Exception __ex) { throw new RuntimeException(__ex); }");
+            if (into != null) {
+                String field = lhs(into, parsed);
+                lines.add("if (__ok_" + id + ") { " + field
+                        + " = new String(__rec_" + id + ", java.nio.charset.StandardCharsets.UTF_8).trim(); }");
+            }
+            return lines;
         }
         Matcher write = Pattern.compile("(?i)^WRITE\\s+([A-Z0-9-]+)(?:\\s+FROM\\s+(\\S+))?").matcher(s);
         if (write.matches()) {
             parsed.needsFileFacade = true;
             String rec = write.group(1).toUpperCase(Locale.ROOT);
             String dd = resolveAssign(rec, parsed);
-            String payload = write.group(2) != null
-                    ? "String.valueOf(" + exprOperand(write.group(2)) + ").getBytes(java.nio.charset.StandardCharsets.UTF_8)"
-                    : "new byte[0]";
+            String payload;
+            if (write.group(2) != null) {
+                payload = "String.valueOf(" + exprOperand(write.group(2))
+                        + ").getBytes(java.nio.charset.StandardCharsets.UTF_8)";
+            } else if (parsed.fields.containsKey(rec) || parsed.recordToFd.containsKey(rec)) {
+                payload = "String.valueOf(" + lhs(rec, parsed)
+                        + ").getBytes(java.nio.charset.StandardCharsets.UTF_8)";
+            } else {
+                payload = "new byte[0]";
+            }
             return List.of("try { __write(\"" + dd + "\", " + payload + "); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
+        }
+        Matcher rewrite = Pattern.compile("(?i)^REWRITE\\s+([A-Z0-9-]+)(?:\\s+FROM\\s+(\\S+))?").matcher(s);
+        if (rewrite.matches()) {
+            parsed.needsFileFacade = true;
+            String rec = rewrite.group(1).toUpperCase(Locale.ROOT);
+            String dd = resolveAssign(rec, parsed);
+            String payload;
+            if (rewrite.group(2) != null) {
+                payload = "String.valueOf(" + exprOperand(rewrite.group(2))
+                        + ").getBytes(java.nio.charset.StandardCharsets.UTF_8)";
+            } else if (parsed.fields.containsKey(rec) || parsed.recordToFd.containsKey(rec)) {
+                payload = "String.valueOf(" + lhs(rec, parsed)
+                        + ").getBytes(java.nio.charset.StandardCharsets.UTF_8)";
+            } else {
+                String gap = "REWRITE record not in FD/WS: " + rec;
+                if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
+                payload = "new byte[0]";
+            }
+            return List.of("try { __rewrite(\"" + dd + "\", " + payload + "); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
         }
         Matcher close = Pattern.compile("(?i)^CLOSE\\s+([A-Z0-9-]+)(?:\\s+.*)?").matcher(s);
         if (close.matches()) {
@@ -891,7 +1007,7 @@ public final class CobolToJavaTranslator {
             return List.of("try { __close(\"" + dd
                     + "\"); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
         }
-        if (upper.startsWith("REWRITE ") || upper.startsWith("DELETE ") || upper.startsWith("START ")) {
+        if (upper.startsWith("DELETE ") || upper.startsWith("START ")) {
             return null; // fall through to gap labeling
         }
         return null;
@@ -917,6 +1033,7 @@ public final class CobolToJavaTranslator {
         String dd = resolveAssign(logical, parsed);
         String id = toJavaIdent(dd);
         parsed.needsFileFacade = true;
+        int buf = recordBufSize(logical, parsed);
 
         List<String> bodyStmts = new ArrayList<>();
         String inline = m.group(2) == null ? "" : m.group(2).trim();
@@ -940,10 +1057,12 @@ public final class CobolToJavaTranslator {
         }
 
         List<String> out = new ArrayList<>();
-        out.add("byte[] __rec_" + id + " = new byte[256];");
+        out.add("byte[] __rec_" + id + " = new byte[" + buf + "];");
         out.add("boolean __ok_" + id + " = false;");
-        out.add("try { __ok_" + id + " = __read(\"" + dd + "\", __rec_" + id
-                + "); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
+        out.add("try { __ok_" + id + " = __IO.containsKey(\"" + dd + "\")"
+                + " ? __readIo(\"" + dd + "\", __rec_" + id + ")"
+                + " : __read(\"" + dd + "\", __rec_" + id + ");"
+                + " } catch (Exception __ex) { throw new RuntimeException(__ex); }");
         out.add("if (!__ok_" + id + ") {");
         for (String line : bodyStmts) {
             out.add("    " + line);
@@ -1367,6 +1486,18 @@ public final class CobolToJavaTranslator {
             else count += 1;
         }
         return count;
+    }
+
+    /** Best-effort display length for PIC X/A/9 clauses (record buffer sizing). */
+    static int picByteLength(String pic) {
+        if (pic == null || pic.isBlank()) return 0;
+        String p = pic.toUpperCase(Locale.ROOT).replaceAll("\\s+", "");
+        int len = 0;
+        Matcher m = Pattern.compile("([XA9VN])(?:\\((\\d+)\\))?").matcher(p);
+        while (m.find()) {
+            len += m.group(2) != null ? Integer.parseInt(m.group(2)) : 1;
+        }
+        return len;
     }
 
     private static String valueToJava(String value, String javaType, int occurs) {
