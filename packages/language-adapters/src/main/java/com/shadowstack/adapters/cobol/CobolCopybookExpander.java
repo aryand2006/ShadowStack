@@ -45,48 +45,79 @@ public final class CobolCopybookExpander {
 
     private static String expandRecursive(
             String source, Path sourceRoot, List<String> gaps, Set<String> stack) {
-        Matcher m = COPY_STMT.matcher(source);
+        // Line-oriented so comments mentioning the word COPY are not expanded.
+        String[] lines = source.split("\n", -1);
         StringBuilder out = new StringBuilder();
-        int last = 0;
-        while (m.find()) {
-            out.append(source, last, m.start());
-            String name = m.group(1).toUpperCase(Locale.ROOT);
-            String from = m.group(2);
-            String to = m.group(3);
-            if (!stack.add(name)) {
-                gaps.add("COPY cycle: " + name);
-                out.append("*>> COPY cycle skipped: ").append(name).append('\n');
-                last = m.end();
+        for (int li = 0; li < lines.length; li++) {
+            if (li > 0) out.append('\n');
+            String line = lines[li];
+            if (isCommentLine(line)) {
+                out.append(line);
                 continue;
             }
-            Path found = locateCopybook(sourceRoot, name);
-            if (found == null) {
-                gaps.add("Missing copybook: " + name);
-                out.append("*>> Missing COPY ").append(name).append('\n');
+            Matcher m = COPY_STMT.matcher(line);
+            if (!m.find()) {
+                out.append(line);
+                continue;
+            }
+            StringBuilder lineOut = new StringBuilder();
+            int last = 0;
+            m.reset();
+            while (m.find()) {
+                lineOut.append(line, last, m.start());
+                String name = m.group(1).toUpperCase(Locale.ROOT);
+                String from = m.group(2);
+                String to = m.group(3);
+                if (!stack.add(name)) {
+                    gaps.add("COPY cycle: " + name);
+                    lineOut.append("*>> COPY cycle skipped: ").append(name);
+                    last = m.end();
+                    continue;
+                }
+                Path found = locateCopybook(sourceRoot, name);
+                if (found == null) {
+                    gaps.add("Missing copybook: " + name);
+                    lineOut.append("*>> Missing COPY ").append(name);
+                    stack.remove(name);
+                    last = m.end();
+                    continue;
+                }
+                String body;
+                try {
+                    body = Files.readString(found, StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    gaps.add("Unreadable copybook: " + name + " (" + e.getMessage() + ")");
+                    lineOut.append("*>> Unreadable COPY ").append(name);
+                    stack.remove(name);
+                    last = m.end();
+                    continue;
+                }
+                if (from != null && to != null) {
+                    body = body.replace(from, to);
+                }
+                String expanded = expandRecursive(body, sourceRoot, gaps, stack);
+                lineOut.append('\n').append(expanded);
+                if (!expanded.endsWith("\n")) {
+                    lineOut.append('\n');
+                }
                 stack.remove(name);
                 last = m.end();
-                continue;
             }
-            String body;
-            try {
-                body = Files.readString(found, StandardCharsets.UTF_8);
-            } catch (IOException e) {
-                gaps.add("Unreadable copybook: " + name + " (" + e.getMessage() + ")");
-                out.append("*>> Unreadable COPY ").append(name).append('\n');
-                stack.remove(name);
-                last = m.end();
-                continue;
-            }
-            if (from != null && to != null) {
-                body = body.replace(from, to);
-            }
-            String expanded = expandRecursive(body, sourceRoot, gaps, stack);
-            out.append('\n').append(expanded).append('\n');
-            stack.remove(name);
-            last = m.end();
+            lineOut.append(line, last, line.length());
+            out.append(lineOut);
         }
-        out.append(source, last, source.length());
         return out.toString();
+    }
+
+    private static boolean isCommentLine(String line) {
+        String t = line.trim();
+        if (t.startsWith("*>") || t.startsWith("*>>")) return true;
+        // Fixed-format indicator column 7 (index 6)
+        if (line.length() > 6) {
+            char ind = line.charAt(6);
+            if (ind == '*' || ind == '/') return true;
+        }
+        return t.startsWith("*");
     }
 
     static Path locateCopybook(Path sourceRoot, String name) {
@@ -105,7 +136,6 @@ public final class CobolCopybookExpander {
                 Path lower = dir.resolve(base.toLowerCase(Locale.ROOT) + ext);
                 if (Files.isRegularFile(lower)) return lower;
             }
-            // Bare name match (already includes extension in COPY token — rare)
             Path bare = dir.resolve(base);
             if (Files.isRegularFile(bare)) return bare;
         }

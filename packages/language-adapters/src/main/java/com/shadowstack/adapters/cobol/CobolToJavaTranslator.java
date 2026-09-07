@@ -827,16 +827,15 @@ public final class CobolToJavaTranslator {
         String withSubs = rewriteSubscripts(expr);
         StringBuilder out = new StringBuilder();
         Matcher m = Pattern.compile(
-                "\"[^\"]*\"|'[^']*'|[A-Za-z][A-Za-z0-9_]*|\\d+(?:\\.\\d+)?|[^A-Za-z0-9\"']+")
+                "\"[^\"]*\"|'[^']*'|[A-Za-z][A-Za-z0-9_-]*|\\d+(?:\\.\\d+)?|[^A-Za-z0-9\"']+")
                 .matcher(withSubs);
         while (m.find()) {
             String tok = m.group();
             if ((tok.startsWith("\"") && tok.endsWith("\""))
                     || (tok.startsWith("'") && tok.endsWith("'"))) {
                 out.append('"').append(tok.substring(1, tok.length() - 1)).append('"');
-            } else if (tok.matches("[A-Za-z][A-Za-z0-9_]*")) {
-                // Already may be java ident from subscript rewrite; hyphen → underscore
-                out.append(tok.contains("-") ? toJavaIdent(tok) : tok);
+            } else if (tok.matches("[A-Za-z][A-Za-z0-9_-]*")) {
+                out.append(toJavaIdent(tok));
             } else {
                 out.append(tok);
             }
