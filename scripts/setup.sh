@@ -80,19 +80,17 @@ else
     ERRORS=$((ERRORS + 1))
 fi
 
-# Node.js
+# Node.js (optional for API-only demo; needed for web UI / JS --check)
 if command -v node &> /dev/null; then
     NODE_VERSION=$(node --version | sed 's/v//' | cut -d. -f1)
     if [ "$NODE_VERSION" -ge 20 ] 2>/dev/null; then
-        ok "Node.js v$(node --version | sed 's/v//') (required: 20+)"
+        ok "Node.js v$(node --version | sed 's/v//') (20+ for UI/JS gate)"
     else
-        fail "Node.js v$(node --version | sed 's/v//') found, but 20+ is required"
-        ERRORS=$((ERRORS + 1))
+        warn "Node.js v$(node --version | sed 's/v//') found; 20+ recommended for UI/JS gate"
     fi
 else
-    fail "Node.js not found (required: 20+)"
+    warn "Node.js not found — web UI and JS syntax gate unavailable"
     info "Install: https://nodejs.org/"
-    ERRORS=$((ERRORS + 1))
 fi
 
 # npm
@@ -102,9 +100,51 @@ else
     warn "npm not found (usually installed with Node.js)"
 fi
 
+# Python 3 + LibCST (required for Python AST engine)
+if command -v python3 &> /dev/null; then
+    PY_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
+    ok "python3 ${PY_VERSION}"
+    if python3 -c 'import libcst' 2>/dev/null; then
+        ok "libcst importable"
+    else
+        fail "libcst not importable (required for Python AST engine)"
+        info "Install: pip install -r packages/language-adapters/native-engines/python/requirements.txt"
+        ERRORS=$((ERRORS + 1))
+    fi
+else
+    fail "python3 not found (required for Python AST / py_compile)"
+    info "Install Python 3.10+ from https://www.python.org/downloads/"
+    ERRORS=$((ERRORS + 1))
+fi
+
+# GnuCOBOL (optional — COBOL full gate)
+if command -v cobc &> /dev/null; then
+    ok "cobc $(cobc --version 2>&1 | head -1)"
+else
+    warn "cobc not found — COBOL full syntax gate will be skipped"
+    info "Install: apt install gnucobol / brew install gnu-cobol"
+fi
+
+# .NET SDK (optional — C# full gate)
+if command -v dotnet &> /dev/null; then
+    ok "dotnet $(dotnet --version 2>/dev/null || echo present)"
+else
+    warn "dotnet not found — C# full build gate will be skipped"
+    info "Install: https://dotnet.microsoft.com/download"
+fi
+
+# Roslyn AST engine DLL
+ROSLYN_DLL="$PROJECT_ROOT/packages/language-adapters/native-engines/csharp/publish/CsharpAstEngine.dll"
+if [ -f "$ROSLYN_DLL" ]; then
+    ok "Roslyn CsharpAstEngine.dll present"
+else
+    warn "Roslyn DLL missing at native-engines/csharp/publish/CsharpAstEngine.dll"
+    info "Publish: cd packages/language-adapters/native-engines/csharp && dotnet publish -c Release -o publish"
+fi
+
 # Docker
 if command -v docker &> /dev/null; then
-    DOCKER_VERSION=$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')
+    DOCKER_VERSION=$(docker --version 2>&1 | awk '{print $3}' | tr -d ',')
     ok "Docker ${DOCKER_VERSION}"
 
     if docker info &> /dev/null; then
@@ -139,7 +179,7 @@ if [ "$ERRORS" -gt 0 ]; then
     fail "${ERRORS} prerequisite(s) missing. Please install them and re-run."
     exit 1
 else
-    ok "All prerequisites satisfied!"
+    ok "All required prerequisites satisfied!"
 fi
 
 if [ "$MODE" = "--check" ]; then
@@ -172,12 +212,16 @@ fi
 
 # Build web app
 if [ -f "apps/web/package.json" ]; then
-    info "Building web dashboard..."
-    cd "$PROJECT_ROOT/apps/web"
-    npm install --silent 2>&1 | tail -1
-    npm run build --silent 2>&1 | tail -1 || warn "Web build skipped (may need additional config)"
-    cd "$PROJECT_ROOT"
-    ok "Web dashboard built"
+    if command -v npm &> /dev/null; then
+        info "Building web dashboard..."
+        cd "$PROJECT_ROOT/apps/web"
+        npm install --silent 2>&1 | tail -1
+        npm run build --silent 2>&1 | tail -1 || warn "Web build skipped (may need additional config)"
+        cd "$PROJECT_ROOT"
+        ok "Web dashboard built"
+    else
+        warn "Skipping web dashboard build (npm not found)"
+    fi
 fi
 
 if [ "$MODE" = "--build" ]; then
@@ -256,8 +300,8 @@ echo -e "    curl -X POST http://localhost:8080/api/v1/auth/login \\"
 echo -e "      -H 'Content-Type: application/json' \\"
 echo -e "      -d '{\"username\":\"admin\",\"password\":\"shadowstack\"}'"
 echo ""
-echo -e "    ${DIM}# Run the demo${NC}"
-echo -e "    ./scripts/demo.sh --skip-start"
+echo -e "    ${DIM}# Run the API demo (API must already be running)${NC}"
+echo -e "    ./scripts/demo.sh"
 echo ""
 echo -e "  ${BOLD}Logs:${NC}"
 echo -e "    docker compose logs -f api"

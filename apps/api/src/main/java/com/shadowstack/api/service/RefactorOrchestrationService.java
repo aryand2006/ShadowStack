@@ -208,17 +208,14 @@ public class RefactorOrchestrationService {
                         .toList();
                 summary = pipelineResult.summary();
             } else {
-                // Prefer adapter.applyRefactor on a temp copy; fall back to snippet rewrite.
+                // Prefer adapter.applyRefactor on a full project temp copy so sibling
+                // sources / .csproj / cobc deps exist; fall back to snippet rewrite.
                 Path tempRoot = Files.createTempDirectory("shadowstack-verify-");
                 try {
                     LanguageAdapter adapter = adapterRegistry.require(language);
+                    copyProjectTree(root, tempRoot);
                     Path tempFile = tempRoot.resolve(patch.filePath());
                     Files.createDirectories(tempFile.getParent());
-                    // Seed temp tree with the original file content.
-                    Path originalFile = root.resolve(patch.filePath()).normalize();
-                    Files.writeString(tempFile,
-                            Files.readString(originalFile, StandardCharsets.UTF_8),
-                            StandardCharsets.UTF_8);
 
                     PatchResult applied;
                     RefactorCandidate adapterCandidate = adapterCandidates.get(patch.candidateId());
@@ -269,6 +266,17 @@ public class RefactorOrchestrationService {
                 } finally {
                     deleteRecursively(tempRoot);
                 }
+            }
+
+            // Empty / identity diffs must never enter PENDING_REVIEW even if the
+            // adapter soft-PASSed compilation (e.g. detect-only COBOL rules).
+            if (passed && isIdentityPatch(unit)) {
+                log.warn("Forcing VERIFICATION_FAILED for patch {} ({}): identity/empty diff "
+                                + "(unifiedDiff blank or beforeSnippet==afterSnippet)",
+                        patchId, patch.ruleName());
+                passed = false;
+                summary = (summary != null ? summary + "; " : "")
+                        + "identity-patch-rejected";
             }
 
             Instant completed = Instant.now();
@@ -377,6 +385,12 @@ public class RefactorOrchestrationService {
                 }
                 PatchDetailResponse current = patchStore.get(generated.patchId());
                 if (current != null) {
+                    if (current.status() == PatchStatus.VERIFICATION_FAILED
+                            && isIdentityPatch(current)) {
+                        log.debug("Omitting identity/empty VERIFICATION_FAILED patch {} ({})",
+                                current.patchId(), current.ruleName());
+                        continue;
+                    }
                     out.add(current);
                 }
             } catch (Exception generateError) {
@@ -574,6 +588,60 @@ public class RefactorOrchestrationService {
     }
 
 
+    /**
+     * Copy a project tree into {@code to} for out-of-place verification, skipping
+     * build/VCS/cache directories that are never needed by language adapters.
+     */
+    static void copyProjectTree(Path from, Path to) throws IOException {
+        Objects.requireNonNull(from, "from");
+        Objects.requireNonNull(to, "to");
+        Set<String> skipDirs = Set.of("target", ".git", "bin", "obj", "__pycache__", "node_modules");
+        Files.walkFileTree(from, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs)
+                    throws IOException {
+                String name = dir.getFileName() != null ? dir.getFileName().toString() : "";
+                if (skipDirs.contains(name)) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                Path dest = to.resolve(from.relativize(dir).toString());
+                Files.createDirectories(dest);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Path dest = to.resolve(from.relativize(file).toString());
+                Files.createDirectories(dest.getParent());
+                Files.copy(file, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    /** True when the patch has no meaningful change (blank diff or identical snippets). */
+    static boolean isIdentityPatch(PatchUnit unit) {
+        if (unit == null) {
+            return true;
+        }
+        String diff = unit.getUnifiedDiff();
+        if (diff == null || diff.isBlank()) {
+            return true;
+        }
+        String before = unit.getBeforeSnippet() != null ? unit.getBeforeSnippet() : "";
+        String after = unit.getAfterSnippet() != null ? unit.getAfterSnippet() : "";
+        return Objects.equals(before, after);
+    }
+
+    /** True when the stored patch detail has no meaningful change (blank/null diff). */
+    static boolean isIdentityPatch(PatchDetailResponse patch) {
+        if (patch == null) {
+            return true;
+        }
+        String diff = patch.unifiedDiff();
+        return diff == null || diff.isBlank();
+    }
+
     private static void deleteRecursively(Path root) throws IOException {
         if (root == null || !Files.exists(root)) {
             return;
@@ -632,7 +700,7 @@ public class RefactorOrchestrationService {
         return switch (lang) {
             case "java" -> true;
             case "python", "python3", "py" -> ruleId.startsWith("py.");
-            case "cobol", "cbl", "cob" -> CobolAdapter.isPreservingRule(ruleId);
+            case "cobol", "cbl", "cob" -> CobolAdapter.isAutoApplicablePreserving(ruleId);
             case "javascript", "js", "typescript", "ts" -> Set.of(
                     "js.var_to_let",
                     "js.prefer_const",

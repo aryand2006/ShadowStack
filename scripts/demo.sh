@@ -111,6 +111,17 @@ diff = d.get("unifiedDiff") or ""
 status = d.get("status") or ""
 if not diff.strip():
     raise SystemExit("unifiedDiff empty — refusing fake demo data")
+# Identity / no-op: no real change lines (only headers/context) or identical +/- pairs
+change_lines = [
+    ln for ln in diff.splitlines()
+    if ln.startswith(("+", "-")) and not ln.startswith(("+++", "---"))
+]
+if not change_lines:
+    raise SystemExit("unifiedDiff is identity/no-op — refusing fake demo data")
+added = [ln[1:] for ln in change_lines if ln.startswith("+")]
+removed = [ln[1:] for ln in change_lines if ln.startswith("-")]
+if added and removed and added == removed:
+    raise SystemExit("unifiedDiff is identity (identical +/- content) — refusing fake demo data")
 if "PENDING" not in status.upper():
     raise SystemExit(f"expected PENDING_REVIEW, got {status}")
 path = str(d.get("filePath") or "")
@@ -136,4 +147,4 @@ info "Pending now: ${COUNT2} (was ${QUEUE_COUNT})"
 [[ "$COUNT2" -lt "$QUEUE_COUNT" ]] || die "Accepted patch still in queue"
 ok "Demo passed — every step used the real API"
 
-echo -e "\n${BOLD}${GREEN}Pitch-ready:${NC} UI at http://localhost:3000/queue  |  API :8080 demo profile"
+echo -e "\n${BOLD}${GREEN}API demo passed.${NC} Optional UI: cd apps/web && npm run dev → http://localhost:3000/queue"

@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install LibCST
+        run: pip install -r packages/language-adapters/native-engines/python/requirements.txt
+
+      - name: Set up .NET 8 (optional C# gate)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install GnuCOBOL (optional COBOL gate)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gnucobol || sudo apt-get install -y -qq gnucobol3 || true
+          cobc --version || echo "cobc unavailable — COBOL cobc tests may soft-skip"
+
+      - name: Test language-adapters
+        run: mvn -B -f packages/language-adapters/pom.xml test
+
+      - name: Test refactor-engine
+        run: mvn -B -f packages/refactor-engine/pom.xml test
+
+      - name: Test verify-engine
+        run: mvn -B -f packages/verify-engine/pom.xml test
+
+      - name: Test apps/api (if present)
+        run: mvn -B -f apps/api/pom.xml test

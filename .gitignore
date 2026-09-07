@@ -13,11 +13,19 @@ build/
 .classpath
 .project
 
+# Model artifacts (before node_modules un-ignore so *.bin does not defeat .bin/)
+*.pt
+*.onnx
+*.bin
+checkpoints/
+
 # Node
 node_modules/
 # Keep the JS AST engine deps so Acorn works without a separate npm install
 !packages/language-adapters/native-engines/js/node_modules/
 !packages/language-adapters/native-engines/js/node_modules/**
+!packages/language-adapters/native-engines/js/node_modules/.bin/
+!packages/language-adapters/native-engines/js/node_modules/.bin/**
 .next/
 out/
 dist/
@@ -58,9 +66,5 @@ coverage/
 .nyc_output/
 htmlcov/
 
-# Model artifacts
-*.pt
-*.onnx
-*.bin
-checkpoints/
+# Roslyn publish intermediates (keep published DLLs at publish/)
 packages/language-adapters/native-engines/csharp/publish/*/

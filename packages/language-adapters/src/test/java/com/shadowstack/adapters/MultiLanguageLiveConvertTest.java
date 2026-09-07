@@ -58,15 +58,66 @@ class MultiLanguageLiveConvertTest {
     }
 
     @Test
+    void python_libcst_xrange_live_convert(@TempDir Path tmp) throws Exception {
+        Path sample = resolveSample("examples/legacy-python/xrange_legacy.py");
+        assumeTrue(Files.isRegularFile(sample), "sample missing: " + sample);
+        Files.writeString(tmp.resolve("xrange_legacy.py"),
+                Files.readString(sample, StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+
+        PythonAdapter adapter = new PythonAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        RefactorCandidate chosen = adapter.listRefactorCandidates(
+                        model, LanguageAdapter.RefactorRuleSet.empty()).stream()
+                .filter(c -> "py.xrange_to_range".equals(c.ruleId()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("libcst",
+                chosen.astContext() != null ? chosen.astContext().get("parseEngine") : null,
+                "xrange sample must be detected via LibCST");
+
+        PatchResult patch = adapter.applyRefactor(chosen, tmp);
+        assertTrue(patch.success(), () -> String.valueOf(patch.errorMessage()));
+        assertEquals("libcst", patch.metadata() != null ? patch.metadata().get("parseEngine") : null);
+        VerificationResult verification = adapter.verifyPatch(
+                patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+        assertEquals(VerificationResult.Verdict.PASS, verification.verdict(),
+                () -> String.valueOf(verification.layerResults()));
+    }
+
+    @Test
     void csharp_sample_live_convert(@TempDir Path tmp) throws Exception {
-        runLiveConvert(
-                new CsharpAdapter(),
-                resolveSample("examples/legacy-csharp/Legacy.cs"),
-                tmp,
-                "Legacy.cs",
-                // Prefer a code rewrite over #nullable enable (directive may not change AST hash).
-                c -> c.ruleId().startsWith("cs.")
-                        && !"cs.nullable_enable".equals(c.ruleId()));
+        Path sample = resolveSample("examples/legacy-csharp/Legacy.cs");
+        Path csproj = resolveSample("examples/legacy-csharp/LegacyCsharp.csproj");
+        assumeTrue(Files.isRegularFile(sample), "sample missing: " + sample);
+        assumeTrue(Files.isRegularFile(csproj), "csproj missing: " + csproj);
+        Files.writeString(tmp.resolve("Legacy.cs"),
+                Files.readString(sample, StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+        Files.copy(csproj, tmp.resolve("LegacyCsharp.csproj"));
+
+        CsharpAdapter adapter = new CsharpAdapter();
+        SemanticModel model = adapter.buildSemanticModel(tmp);
+        List<RefactorCandidate> candidates = adapter.listRefactorCandidates(
+                model, LanguageAdapter.RefactorRuleSet.empty());
+        assertFalse(candidates.isEmpty());
+        RefactorCandidate chosen = candidates.stream()
+                .filter(c -> c.ruleId().startsWith("cs.")
+                        && !"cs.nullable_enable".equals(c.ruleId())
+                        && !c.beforeSnippet().equals(c.proposedAfterSnippet()))
+                .sorted(Comparator.comparingDouble(RefactorCandidate::confidenceScore).reversed())
+                .findFirst()
+                .orElseThrow();
+        PatchResult patch = adapter.applyRefactor(chosen, tmp);
+        assertTrue(patch.success(), () -> String.valueOf(patch.errorMessage()));
+        String updated = Files.readString(tmp.resolve("Legacy.cs"), StandardCharsets.UTF_8);
+        assertNotEquals(Files.readString(sample, StandardCharsets.UTF_8), updated);
+        VerificationResult verification = adapter.verifyPatch(
+                patch, tmp, LanguageAdapter.VerificationConfig.defaults());
+        assumeTrue(verification.layerResults().stream().anyMatch(l ->
+                        l.details() != null && l.details().contains("dotnet build succeeded"))
+                        || verification.verdict() == VerificationResult.Verdict.PASS,
+                "dotnet build required for C# full gate");
+        assertEquals(VerificationResult.Verdict.PASS, verification.verdict(),
+                () -> String.valueOf(verification.layerResults()));
     }
 
     private static void runLiveConvert(

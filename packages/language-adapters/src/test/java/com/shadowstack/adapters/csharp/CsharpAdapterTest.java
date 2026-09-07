@@ -94,6 +94,15 @@ class CsharpAdapterTest {
         VerificationResult verification = adapter.verifyPatch(
                 patch, tmp, LanguageAdapter.VerificationConfig.defaults());
         assertNotNull(verification.verdict());
+        // Soft structural PASS removed: without a real `dotnet build` the verdict is FAIL.
+        assertEquals(VerificationResult.Verdict.FAIL, verification.verdict());
+        assertTrue(verification.layerResults().stream()
+                        .anyMatch(l -> "compilation".equals(l.layerName())
+                                && !l.passed()
+                                && l.details() != null
+                                && (l.details().contains("no .csproj")
+                                    || l.details().contains("dotnet not available"))),
+                () -> String.valueOf(verification.layerResults()));
     }
 
 
@@ -117,6 +126,14 @@ class CsharpAdapterTest {
         VerificationResult verification = adapter.verifyPatch(
                 patch, tmp, LanguageAdapter.VerificationConfig.defaults());
         assertNotNull(verification.verdict());
+        assertEquals(VerificationResult.Verdict.FAIL, verification.verdict());
+        assertTrue(verification.layerResults().stream()
+                        .anyMatch(l -> "compilation".equals(l.layerName())
+                                && !l.passed()
+                                && l.details() != null
+                                && (l.details().contains("no .csproj")
+                                    || l.details().contains("dotnet not available"))),
+                () -> String.valueOf(verification.layerResults()));
     }
 
     @Test

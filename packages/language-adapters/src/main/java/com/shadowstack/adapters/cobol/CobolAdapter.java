@@ -68,6 +68,23 @@ public class CobolAdapter implements LanguageAdapter {
             "cobol.program_id_is_initial"
     );
 
+    /**
+     * Transformative preserving rules safe to auto-apply into the demo review queue.
+     * Detect-only / identity preserving rules (continue_to_empty, alter_removed, …)
+     * remain in {@link #PRESERVING_RULE_IDS} for mode tagging but are excluded here.
+     * {@code cobol.free_format_indicator} is omitted — it is an invariant of
+     * {@code cobol.fixed_to_free}, not a standalone transforming candidate.
+     */
+    public static final Set<String> AUTO_APPLICABLE_PRESERVING_RULE_IDS = Set.of(
+            "cobol.fixed_to_free",
+            "cobol.stop_run_to_goback",
+            "cobol.goto_to_perform",
+            "cobol.exit_program_to_goback",
+            "cobol.section_exit_goback",
+            "cobol.next_sentence_to_continue",
+            "cobol.evaluate_true_simplify"
+    );
+
     private static final int SEQ_AREA_END = 6;       // cols 1-6  (1-based: 1..6)
     private static final int INDICATOR_COL = 6;       // col 7    (0-based: 6)
     private static final int PROGRAM_AREA_START = 7;  // col 8    (0-based: 7)
@@ -78,6 +95,14 @@ public class CobolAdapter implements LanguageAdapter {
     /** @return {@code true} when the rule belongs to the COBOL-preserving track */
     public static boolean isPreservingRule(String ruleId) {
         return ruleId != null && PRESERVING_RULE_IDS.contains(ruleId);
+    }
+
+    /**
+     * @return {@code true} when the preserving rule actually rewrites source
+     *         (safe for demo auto-apply / PENDING_REVIEW promotion)
+     */
+    public static boolean isAutoApplicablePreserving(String ruleId) {
+        return ruleId != null && AUTO_APPLICABLE_PRESERVING_RULE_IDS.contains(ruleId);
     }
 
     @Override

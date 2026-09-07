@@ -272,35 +272,41 @@ shadowstack/
 
 ## Company demo (honest path)
 
+**Prerequisites:** Java 21, Maven 3.9+, `python3` with LibCST (`pip install -r packages/language-adapters/native-engines/python/requirements.txt`), Node 20+ (JS gate / UI), and optionally `dotnet` 8+ (C# gate) and `cobc` / GnuCOBOL (COBOL full gate). Run `./scripts/setup.sh --check` to verify.
+
 Do **not** pitch the product until this path works on your machine:
 
 ```bash
-# 1) API without Postgres (seeds examples/legacy-sample into the review queue)
+# 1) API without Postgres (seeds examples/legacy-* into the review queue)
 mvn -pl apps/api -am package -DskipTests
 java -jar apps/api/target/shadowstack-api-*.jar --spring.profiles.active=demo
 
-# 2) Fail-closed API walkthrough (exits non-zero if anything is fake/empty)
+# 2) Fail-closed API walkthrough (API must already be running; exits non-zero if anything is fake/empty)
 ./scripts/demo.sh
 
-# 3) Web UI against the live API
-cd apps/web && cp -n .env.local.example .env.local 2>/dev/null || true
-npm install && npm run dev
+# 3) Optional Web UI against the live API
+cd apps/web && npm install && npm run dev
 # open http://localhost:3000/queue
 ```
 
 Credentials: `admin` / `admin` (HTTP Basic or `POST /api/v1/auth/login`).
 
-What is real today: multi-language live convert (Java/Python/COBOL/JS/C#) → analyze → generate → verify → review queue → accept/reject. Java uses compile verification; other languages use adapter apply + structural/runtime checks when tools are present.
-What is stubbed: Postgres corpus analytics, multi-language UI, and invented dashboard KPIs.
+What is real today: multi-language live convert (Java/Python/COBOL/JS/C#) → analyze → generate → verify → review queue → accept/reject.
+Gates: Java `javac`, Python `py_compile` (LibCST AST + regex fallback), JS `node --check` (Acorn AST), C# `dotnet build` (Roslyn AST; requires `.csproj` in the project tree), COBOL-preserving `cobc` (translate track is detect-only).
+What is stubbed: Postgres corpus analytics and invented dashboard KPIs.
+
+> **Docker note:** `infra/docker/Dockerfile.api` is a JVM-only runtime. Full converter parity (LibCST / Acorn / Roslyn / cobc) is intended for the host demo path above, or an image that also installs those toolchains and copies `packages/language-adapters/native-engines/`.
 
 ## Quick Start
 
 ### Prerequisites
 
 - Java 21 (Eclipse Temurin recommended)
-- Node.js 20+
-- Docker & Docker Compose
 - Maven 3.9+
+- Python 3.10+ with LibCST (`pip install -r packages/language-adapters/native-engines/python/requirements.txt`)
+- Node.js 20+ (web UI and JS `--check` gate)
+- Optionally: .NET 8 SDK (C# gate), GnuCOBOL / `cobc` (COBOL full gate)
+- Docker & Docker Compose (full local stack)
 
 ### Local Development
 
@@ -312,8 +318,11 @@ git clone <repo-url> && cd shadowstack
 # 2. Start the full stack
 docker compose up -d
 
-# 3. Run the demo
+# 3. Run the API demo (API must already be running — see Company demo above)
 ./scripts/demo.sh
+
+# Optional UI
+cd apps/web && npm install && npm run dev
 ```
 
 ### Demo Workflow

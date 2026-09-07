@@ -231,6 +231,31 @@ class CobolAdapterTest {
     }
 
     @Test
+    void autoApplicablePreserving_excludesDetectOnlyIdentityRules() {
+        assertTrue(CobolAdapter.isAutoApplicablePreserving("cobol.fixed_to_free"));
+        assertTrue(CobolAdapter.isAutoApplicablePreserving("cobol.stop_run_to_goback"));
+        assertTrue(CobolAdapter.isAutoApplicablePreserving("cobol.goto_to_perform"));
+        assertTrue(CobolAdapter.isAutoApplicablePreserving("cobol.exit_program_to_goback"));
+        assertTrue(CobolAdapter.isAutoApplicablePreserving("cobol.section_exit_goback"));
+        assertTrue(CobolAdapter.isAutoApplicablePreserving("cobol.next_sentence_to_continue"));
+        assertTrue(CobolAdapter.isAutoApplicablePreserving("cobol.evaluate_true_simplify"));
+
+        // Detect-only / identity — still preserving, but not auto-applicable.
+        assertTrue(CobolAdapter.isPreservingRule("cobol.continue_to_empty"));
+        assertFalse(CobolAdapter.isAutoApplicablePreserving("cobol.continue_to_empty"));
+        assertFalse(CobolAdapter.isAutoApplicablePreserving("cobol.set_true_88"));
+        assertFalse(CobolAdapter.isAutoApplicablePreserving("cobol.program_id_is_initial"));
+        assertFalse(CobolAdapter.isAutoApplicablePreserving("cobol.alter_removed"));
+        assertFalse(CobolAdapter.isAutoApplicablePreserving("cobol.remove_alter"));
+        assertFalse(CobolAdapter.isAutoApplicablePreserving("cobol.inline_perform"));
+        assertFalse(CobolAdapter.isAutoApplicablePreserving("cobol.perform_thru_expand"));
+        assertFalse(CobolAdapter.isAutoApplicablePreserving("cobol.initialize_replacing"));
+        assertFalse(CobolAdapter.isAutoApplicablePreserving("cobol.inspect_converting"));
+        // free_format_indicator is an invariant of fixed_to_free, not a transform rule.
+        assertFalse(CobolAdapter.isAutoApplicablePreserving("cobol.free_format_indicator"));
+    }
+
+    @Test
     void applies_stop_run_and_verifies(@TempDir Path tmp) throws Exception {
         Path file = tmp.resolve("SAMPLE.cob");
         Files.writeString(file, FIXED_FORMAT_PROGRAM, StandardCharsets.UTF_8);

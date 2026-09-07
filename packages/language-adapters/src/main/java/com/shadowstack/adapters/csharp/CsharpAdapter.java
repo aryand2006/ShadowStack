@@ -228,15 +228,9 @@ public class CsharpAdapter implements LanguageAdapter {
                         && l.passed()
                         && l.details() != null
                         && l.details().contains("dotnet build succeeded"));
-        boolean structuralOnly = layers.stream()
-                .anyMatch(l -> "compilation".equals(l.layerName())
-                        && l.details() != null
-                        && (l.details().contains("structural-only")
-                            || l.details().contains("structural verification only")
-                            || l.details().contains("no .csproj")
-                            || l.details().contains("dotnet not available")));
-        // Safe rename rules can clear a structural gate without a full project build.
-        boolean nativeGate = structural.passed() && (runtimeVerified || (compileOk && structuralOnly));
+        // Hard gate: only PASS when a real `dotnet build` succeeded — never soft-pass
+        // on missing SDK / missing .csproj / structural-only probes.
+        boolean nativeGate = structural.passed() && runtimeVerified;
         return VerificationResult.builder()
                 .patchId(patch.patchId())
                 .compileSuccess(compileOk && structural.passed())
@@ -278,9 +272,6 @@ public class CsharpAdapter implements LanguageAdapter {
         if (patch.affectedFiles().isEmpty()) {
             return new VerificationResult.LayerResult("compilation", true, 1.0, "No affected files", 0);
         }
-        // Prefer `dotnet` when present. Snippets are rarely full projects, so we
-        // treat a successful tool probe + structural reparse as the compile layer
-        // and only fail when dotnet is present and rejects a project build.
         try {
             ProcessBuilder probe = new ProcessBuilder("dotnet", "--info");
             probe.redirectErrorStream(true);
@@ -294,16 +285,15 @@ public class CsharpAdapter implements LanguageAdapter {
             }
             if (p.exitValue() != 0) {
                 return new VerificationResult.LayerResult(
-                        "compilation", true, 0.7,
-                        "dotnet present but unusable; structural-only verification", elapsed);
+                        "compilation", false, 0.0,
+                        "dotnet not available", elapsed);
             }
             Path target = sourceRoot.resolve(patch.affectedFiles().get(0));
             Path projectDir = findCsprojDirectory(sourceRoot, target);
             if (projectDir == null) {
                 return new VerificationResult.LayerResult(
-                        "compilation", true, 0.85,
-                        "dotnet available; no .csproj under " + sourceRoot
-                                + " (structural verification only)",
+                        "compilation", false, 0.0,
+                        "no .csproj under " + sourceRoot,
                         elapsed);
             }
             ProcessBuilder build = new ProcessBuilder("dotnet", "build", "--nologo", "-v", "q");
@@ -332,8 +322,8 @@ public class CsharpAdapter implements LanguageAdapter {
         } catch (Exception e) {
             long elapsed = System.currentTimeMillis() - start;
             return new VerificationResult.LayerResult(
-                    "compilation", true, 0.7,
-                    "dotnet not available; structural-only verification", elapsed);
+                    "compilation", false, 0.0,
+                    "dotnet not available", elapsed);
         }
     }
 
@@ -434,16 +424,32 @@ public class CsharpAdapter implements LanguageAdapter {
             if (roslynEngineDll != null && Files.isRegularFile(roslynEngineDll)) {
                 return roslynEngineDll;
             }
-            List<Path> candidates = List.of(
-                    Path.of("packages/language-adapters/native-engines/csharp/publish")
-                            .resolve(ENGINE_DLL_NAME).toAbsolutePath().normalize(),
-                    Path.of("/workspace/packages/language-adapters/native-engines/csharp/publish")
-                            .resolve(ENGINE_DLL_NAME),
-                    Path.of("native-engines/csharp/publish").resolve(ENGINE_DLL_NAME)
-                            .toAbsolutePath().normalize(),
-                    Path.of("../native-engines/csharp/publish").resolve(ENGINE_DLL_NAME)
-                            .toAbsolutePath().normalize()
-            );
+            String rel = "packages/language-adapters/native-engines/csharp/publish/" + ENGINE_DLL_NAME;
+            List<Path> candidates = new ArrayList<>();
+            Path userDir = Path.of(System.getProperty("user.dir", ".")).toAbsolutePath().normalize();
+            candidates.add(userDir.resolve(rel).normalize());
+            candidates.add(userDir.resolve("native-engines/csharp/publish").resolve(ENGINE_DLL_NAME)
+                    .normalize());
+            // Walk up from user.dir looking for the monorepo engine publish dir.
+            Path cursor = userDir;
+            for (int i = 0; i < 8 && cursor != null; i++) {
+                candidates.add(cursor.resolve(rel).normalize());
+                if (Files.isRegularFile(cursor.resolve("pom.xml"))) {
+                    candidates.add(cursor.resolve(rel).normalize());
+                }
+                Path parent = cursor.getParent();
+                if (parent == null || parent.equals(cursor)) {
+                    break;
+                }
+                cursor = parent;
+            }
+            // Last resort (container / cloud agent layout).
+            candidates.add(Path.of("/workspace").resolve(rel));
+            candidates.add(Path.of("native-engines/csharp/publish").resolve(ENGINE_DLL_NAME)
+                    .toAbsolutePath().normalize());
+            candidates.add(Path.of("../native-engines/csharp/publish").resolve(ENGINE_DLL_NAME)
+                    .toAbsolutePath().normalize());
+
             for (Path candidate : candidates) {
                 if (Files.isRegularFile(candidate)) {
                     roslynEngineDll = candidate;

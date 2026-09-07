@@ -1,6 +1,10 @@
 # ═══════════════════════════════════════════════════════════════════
 #  ShadowStack API — Multi-stage Docker Build
 #  Eclipse Temurin JDK 21 · Spring Boot 3.3 · Production-optimized
+#
+#  This image is JVM-only. For LibCST / Acorn / Roslyn / cobc converter
+#  parity, use the host demo profile (see README "Company demo") or
+#  extend this image with those toolchains + native-engines/.
 # ═══════════════════════════════════════════════════════════════════
 
 # ─── Stage 1: Dependency Resolution ──────────────────────────────
