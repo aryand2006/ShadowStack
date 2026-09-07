@@ -221,16 +221,23 @@ public final class CobolToJavaTranslator {
                 }
                 Matcher pm = PARAGRAPH_HEADER.matcher(trimmed);
                 if (pm.matches()) {
-                    if (current != null && pendingBlock != null) {
-                        current.statements.addAll(pendingIsEvaluate
-                                ? flushEvaluateBlock(pendingBlock) : flushIfBlock(pendingBlock));
-                        pendingBlock = null;
-                        pendingIsEvaluate = false;
-                        ifDepth = 0;
+                    String paraName = pm.group(1).toUpperCase(Locale.ROOT);
+                    // Scope terminators are not paragraph entry points.
+                    if (paraName.startsWith("END-") || paraName.equals("ELSE")
+                            || paraName.equals("WHEN") || paraName.equals("CONTINUE")) {
+                        // fall through to statement / pending-block handling
+                    } else {
+                        if (current != null && pendingBlock != null) {
+                            current.statements.addAll(pendingIsEvaluate
+                                    ? flushEvaluateBlock(pendingBlock) : flushIfBlock(pendingBlock));
+                            pendingBlock = null;
+                            pendingIsEvaluate = false;
+                            ifDepth = 0;
+                        }
+                        current = new Paragraph(paraName);
+                        out.paragraphs.add(current);
+                        continue;
                     }
-                    current = new Paragraph(pm.group(1).toUpperCase(Locale.ROOT));
-                    out.paragraphs.add(current);
-                    continue;
                 }
                 if (current == null) {
                     current = new Paragraph("MAIN");
@@ -756,11 +763,18 @@ public final class CobolToJavaTranslator {
         boolean first = true;
         List<String> currentBody = null;
         String currentCond = null;
+        String subject = null;
 
         for (String line : lines) {
             String t = stripPeriod(line.trim());
             String u = t.toUpperCase(Locale.ROOT);
-            if (u.startsWith("EVALUATE ")) continue;
+            if (u.startsWith("EVALUATE ")) {
+                subject = t.substring("EVALUATE".length()).trim();
+                if (subject.equalsIgnoreCase("TRUE") || subject.equalsIgnoreCase("FALSE")) {
+                    subject = null; // WHEN clauses are full conditions
+                }
+                continue;
+            }
             if (u.startsWith("END-EVALUATE")) continue;
             if (u.startsWith("WHEN OTHER")) {
                 if (currentBody != null) {
@@ -776,7 +790,12 @@ public final class CobolToJavaTranslator {
                     flushWhen(out, first, currentCond, currentBody);
                     first = false;
                 }
-                currentCond = rewriteCondition(t.substring(5).trim());
+                String whenExpr = t.substring(5).trim();
+                if (subject != null) {
+                    currentCond = rewriteCondition(subject + " = " + whenExpr);
+                } else {
+                    currentCond = rewriteCondition(whenExpr);
+                }
                 currentBody = new ArrayList<>();
                 continue;
             }
