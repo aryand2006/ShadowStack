@@ -14,11 +14,10 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * ShadowStack Worker — asynchronous task executor for the verified language
  * modernization workbench.
  *
- * <p>Hosts task components (baseline, analysis, patch generation, verification).
- * Durable {@code ss_jobs} claiming currently runs in the API
- * ({@code JobPoller} / {@code JobEnqueueService} on {@code !demo}) until job
- * payloads carry enough context for {@link com.shadowstack.worker.tasks.VerificationTask}
- * to execute here.</p>
+ * <p>Owns durable {@code ss_jobs} VERIFY dequeue in prod/docker via
+ * {@link com.shadowstack.worker.jobs.JobClaimPoller} ({@code FOR UPDATE SKIP LOCKED}).
+ * The API remains enqueue-only when {@code shadowstack.jobs.poller-enabled=false}.
+ * Also hosts baseline, analysis, patch generation, and verification task beans.</p>
  */
 @SpringBootApplication
 @EnableAsync
@@ -47,6 +46,6 @@ public class ShadowStackWorker {
         app.setAdditionalProfiles("worker");
         app.run(args);
 
-        LOG.info("ShadowStack Worker is ready (task beans loaded; ss_jobs poller hosted by API !demo profile)");
+        LOG.info("ShadowStack Worker is ready (owns ss_jobs VERIFY dequeue; 7-layer VerificationTask)");
     }
 }

@@ -30,12 +30,12 @@ import java.util.concurrent.CompletableFuture;
  * <h3>Verification layers (executed in order)</h3>
  * <ol>
  *   <li>{@link CompileVerifier} — Ensures the patched code compiles</li>
- *   <li>{@link TestExecutionVerifier} — Runs existing tests against the patched code</li>
  *   <li>{@link ASTStructuralComparator} — Compares AST structure before/after</li>
  *   <li>{@link BytecodeDescriptorComparator} — Compares bytecode method descriptors</li>
  *   <li>{@link APISignatureDiffVerifier} — Validates API surface compatibility</li>
- *   <li>{@link SemanticRiskScorer} — Computes semantic risk score for the transformation</li>
+ *   <li>{@link TestExecutionVerifier} — Runs existing tests against the patched code</li>
  *   <li>{@link GoldenMasterVerifier} — Validates against golden master outputs</li>
+ *   <li>{@link SemanticRiskScorer} — Computes semantic risk score for the transformation</li>
  * </ol>
  */
 @Component
@@ -227,16 +227,17 @@ public class VerificationTask {
 
     /**
      * Creates and configures the verification pipeline with all layers.
+     * Order matches API {@code RefactorOrchestrationService.createJavaVerificationPipeline()}.
      */
-    private VerificationPipeline createPipeline() {
+    VerificationPipeline createPipeline() {
         VerificationPipeline pipeline = new VerificationPipeline(riskThreshold, failFast);
         pipeline.addLayer(new CompileVerifier());
-        pipeline.addLayer(new TestExecutionVerifier());
         pipeline.addLayer(new ASTStructuralComparator());
         pipeline.addLayer(new BytecodeDescriptorComparator());
         pipeline.addLayer(new APISignatureDiffVerifier());
-        pipeline.addLayer(new SemanticRiskScorer());
+        pipeline.addLayer(new TestExecutionVerifier());
         pipeline.addLayer(new GoldenMasterVerifier());
+        pipeline.addLayer(new SemanticRiskScorer());
 
         LOG.debug("Verification pipeline created with {} layers, riskThreshold={}, failFast={}",
                 pipeline.getLayers().size(), riskThreshold, failFast);

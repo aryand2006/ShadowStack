@@ -88,6 +88,9 @@ shadowstack:
     max-concurrent-analyses: 4
     verification-timeout-seconds: 300
     default-language: java
+  # Default on for local/single-process; prod/docker override to false (worker owns dequeue).
+  jobs:
+    poller-enabled: ${SHADOWSTACK_JOBS_POLLER_ENABLED:true}
 
 springdoc:
   api-docs:
