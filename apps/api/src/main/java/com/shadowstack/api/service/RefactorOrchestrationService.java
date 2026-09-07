@@ -331,7 +331,7 @@ public class RefactorOrchestrationService {
             }
 
             // Empty / identity diffs must never enter PENDING_REVIEW even if an
-            // adapter previously soft-PASSed (e.g. detect-only COBOL translate).
+            // adapter previously soft-PASSed (e.g. pre-javac COBOL translate stubs).
             if (passed && isIdentityPatch(unit)) {
                 log.warn("Forcing VERIFICATION_FAILED for patch {} ({}): identity/empty diff "
                                 + "(unifiedDiff blank or beforeSnippet==afterSnippet)",

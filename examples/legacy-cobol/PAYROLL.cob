@@ -3,8 +3,9 @@
 000300 AUTHOR. SHADOWSTACK-DEMO.
 000400*
 000500* Legacy COBOL-85 payroll calculator used as input for the
-000600* ShadowStack CobolAdapter preserving track (cobc-verified).
-000700*
+000600* ShadowStack CobolAdapter: preserving track (cobc) and
+000700* translate semantic rehost MVP (javac → TranslatedPAYROLL).
+000800*
 000800 ENVIRONMENT DIVISION.
 000900 DATA DIVISION.
 001000 WORKING-STORAGE SECTION.

@@ -17,7 +17,7 @@ ShadowStack is a **professional modernization workbench** for verified code conv
 | JavaScript/TS | **Full** | Acorn | `node --check` (missing → FAIL) |
 | C# | **Full** | Roslyn | `dotnet build` (missing SDK/.csproj → FAIL) |
 | COBOL preserving | **Full** | Structural + GnuCOBOL | `cobc -fsyntax-only` (missing → FAIL) |
-| COBOL translate | Detect-only | Structural stubs | cobc intentionally skipped |
+| COBOL translate | **Full** | CobolToJavaTranslator | `javac` (semantic rehost MVP; missing → FAIL) |
 
 Soft/WARN results and missing native gates do **not** enter the review queue.
 
@@ -25,7 +25,7 @@ The pipeline is:
 
 - **Fail-closed**: Only hard verification PASS promotes a patch to pending review
 - **Human-controlled**: No automatic final conversion — every change requires explicit developer approval
-- **Multi-language full converters**: Java plus syntax-gated full tracks for Python / JavaScript / C# / COBOL-preserving (COBOL translate remains detect-only; not Blu Age semantic rehost)
+- **Multi-language full converters**: Java plus syntax-gated full tracks for Python / JavaScript / C# / COBOL-preserving, plus COBOL translate as a **javac-gated semantic rehost MVP** (toward Blu Age–class; not full Blu Age)
 
 ShadowStack competes on **trust, proof, controlled transformation, and recorded migration intelligence** — not on autocomplete.
 
@@ -57,7 +57,7 @@ ShadowStack is built around a **pluggable language adapter framework**:
 |---------|--------|-------------|
 | **Java** | Full (JDT + javac) | OpenRewrite/Sonar/Jakarta classics (~62): anon→lambda, diamond, Guava→JDK, `javax`→`jakarta`, Optional/Objects/Map idioms, sequenced collections, JUnit4→5, boxing, collections, charset, deprecations |
 | **Python** | Full (LibCST + py_compile hard gate) | lib2to3/modernize/pyupgrade on AST: xrange/iter*/imports/unicode/has_key/reduce/types.* / octal / f-strings / map(None) / filter(None); Py2 print/`<>` via regex fallback when LibCST cannot parse |
-| **COBOL** | Full preserving (cobc hard gate) + translate detect-only | **preserving**: fixed→free, GOBACK, PERFORM, NEXT SENTENCE→CONTINUE, EVALUATE TRUE→IF; **translate**: DISPLAY/MOVE/… stubs (detect-only, never cobc PASS; not Blu Age semantic rehost) |
+| **COBOL** | Full preserving (cobc) + full translate (javac semantic rehost MVP) | **preserving**: fixed→free, GOBACK, PERFORM, NEXT SENTENCE→CONTINUE, EVALUATE TRUE→IF; **translate**: `CobolToJavaTranslator` → `Translated*` Java (`javac` hard gate; not full Blu Age) |
 | **JavaScript/TS** | Full (Acorn + node --check hard gate) | ES5/CommonJS→modern on AST: var/let/const, ===, substr, includes/startsWith, spread, escape, template literals, `__dirname`/`__filename`; CJS→ESM |
 | **C#** | Full (Roslyn + dotnet build hard gate) | Upgrade Assistant / CA classics on Roslyn: ArrayList/Hashtable, string.Format, nameof, nullable, using declarations, file-scoped namespaces, HttpClient migrations |
 
@@ -160,9 +160,9 @@ The `CobolAdapter` exposes two tracks:
 | Track | Status | Verification |
 |-------|--------|--------------|
 | **preserving** | **full** (cobc hard-gated) | `cobc -fsyntax-only` (adds `-free` after fixed→free / `>>SOURCE FREE`); missing `cobc` → FAIL |
-| **translate** | detect-only | Java-ish stubs; cobc intentionally skipped; **not** Blu Age semantic rehost |
+| **translate** | **full** (`cobol-to-java-semantic-rehost`) | `CobolToJavaTranslator` emits `Translated*.java`; **`javac` hard gate** (missing/fail → FAIL); not full Blu Age (CICS/IMS/JCL out of scope) |
 
-It parses fixed-format COBOL-85 (cols 1–6 sequence area, col 7 indicator, cols 8–72 program area, cols 73–80 identification area) and free-format COBOL-2002. Industry alignment: GnuCOBOL and IBM Enterprise COBOL modernization patterns — enabling **full AST-gated converter** claims toward Blu Age / OpenRewrite / Upgrade Assistant *class* tools (honest: full syntax-gated converters; not mainframe Blu Age semantic rehost).
+It parses fixed-format COBOL-85 (cols 1–6 sequence area, col 7 indicator, cols 8–72 program area, cols 73–80 identification area) and free-format COBOL-2002. Industry alignment: GnuCOBOL and IBM Enterprise COBOL modernization patterns — enabling **full AST-gated converter** claims toward Blu Age / OpenRewrite / Upgrade Assistant *class* tools (honest: full syntax-gated preserving + javac-gated translate MVP; not mainframe Blu Age parity).
 
 | Rule ID | Track | Transformation | Risk |
 |---------|-------|----------------|------|
@@ -173,9 +173,10 @@ It parses fixed-format COBOL-85 (cols 1–6 sequence area, col 7 indicator, cols
 | `cobol.next_sentence_to_continue` | preserving | `NEXT SENTENCE` → `CONTINUE` | MODERATE |
 | `cobol.evaluate_true_simplify` | preserving | `EVALUATE TRUE` → `IF` / `ELSE IF` | MODERATE |
 | `cobol.alter_removed` / `cobol.remove_alter` | preserving | Detect-only ALTER flag | HIGH |
-| `cobol.display_to_print` etc. | translate | COBOL→Java-ish migration stubs | varies |
+| `cobol.to_java_semantic_rehost` | translate | Whole-program COBOL→Java class (`Translated*`) | MODERATE |
+| `cobol.display_to_print` etc. | translate | Line hints + apply emits full Java rehost | varies |
 
-A worked example lives at [`examples/legacy-cobol/PAYROLL.cob`](examples/legacy-cobol/PAYROLL.cob) (`cobc -fsyntax-only` clean).
+Worked examples: [`examples/legacy-cobol/PAYROLL.cob`](examples/legacy-cobol/PAYROLL.cob) (preserving / cobc) and [`examples/legacy-cobol/HELLOSS.cob`](examples/legacy-cobol/HELLOSS.cob) (translate / javac).
 
 ---
 
@@ -274,7 +275,7 @@ shadowstack/
 ├── examples/
 │   ├── legacy-sample/    # Example legacy Java project
 │   ├── legacy-python/    # Example Python 2 module (drives PythonAdapter rules)
-│   ├── legacy-cobol/     # Example COBOL-85 program (drives CobolAdapter rules)
+│   ├── legacy-cobol/     # PAYROLL (cobc) + HELLOSS (translate/javac demo)
 │   ├── legacy-javascript/ # Example CommonJS/ES5 module
 │   └── legacy-csharp/    # Example legacy .NET Framework snippet
 ├── scripts/
@@ -309,10 +310,10 @@ cd apps/web && npm install && npm run dev
 
 Credentials: `admin` / `admin` (HTTP Basic or `POST /api/v1/auth/login`).
 
-What is real today: Java full convert + **full fail-closed AST converters** for Python/JS/C#/COBOL-preserving → analyze → generate → **7-layer Java verify** (optional layers skip cleanly) → review queue → accept/reject (SoD on `createdBy`). COBOL translate remains detect-only.
-Gates: Java 7-layer pipeline (compile/AST/bytecode/API/tests/golden/risk — missing optional inputs skip as PASS), Python `py_compile` (**hard-fail** if `python3` missing), JS `node --check` (**hard-fail** if `node` missing), C# `dotnet build` (**hard-fail** if SDK/.csproj missing), COBOL-preserving `cobc` (**hard-fail** if missing; translate detect-only). Soft/WARN and missing gates fail-closed; only overall PASS promotes.
+What is real today: Java full convert + **full fail-closed AST converters** for Python/JS/C#/COBOL-preserving → analyze → generate → **7-layer Java verify** (optional layers skip cleanly) → review queue → accept/reject (SoD on `createdBy`). COBOL translate is a **javac-gated semantic rehost MVP** (`cobol-to-java-semantic-rehost`).
+Gates: Java 7-layer pipeline (compile/AST/bytecode/API/tests/golden/risk — missing optional inputs skip as PASS), Python `py_compile` (**hard-fail** if `python3` missing), JS `node --check` (**hard-fail** if `node` missing), C# `dotnet build` (**hard-fail** if SDK/.csproj missing), COBOL-preserving `cobc` (**hard-fail** if missing), COBOL-translate `javac` (**hard-fail** if missing). Soft/WARN and missing gates fail-closed; only overall PASS promotes.
 What is real for ops: demo in-memory; `prod`/`docker` JPA + Flyway (`ss_organizations` / `ss_users` / `ss_*` + `org_id`), env-required credentials upserted into `ss_users` on boot (`OrgBootstrap`), ADMIN org/user APIs (`GET/POST /api/v1/orgs`, `GET/POST /api/v1/orgs/{id}/users`), JWT `org_id` from the user's org, durable audit query/export, tenant context (`X-Org-Id`), API enqueue-only VERIFY (`shadowstack.jobs.poller-enabled=false`), worker-owned SKIP LOCKED dequeue + 7-layer verify, live analytics, optional `oidc` profile. Single-process: `SHADOWSTACK_JOBS_POLLER_ENABLED=true`. Org admin is API-first (no dedicated `/orgs` web page yet).
-What remains external / incomplete: SOC 2 **auditor contract** + Type I/II report, independent **pen-test vendor**, and full Blu Age–class CICS/IMS COBOL→Java *semantic rehost* (in-repo COBOL translate stays detect-only). Controls, evidence API, auditor pack, and export script are in-repo — see `docs/soc2-auditor-pack.md`. Vault Agent + CMEK are **shippable manifests** (not aspirational): see `docs/secrets-and-encryption.md` Production checklist; cluster deploy still required.
+What remains external / incomplete: SOC 2 **auditor contract** + Type I/II report, independent **pen-test vendor**, and full Blu Age–class CICS/IMS/JCL COBOL→Java *semantic rehost* (in-repo translate is a javac-gated MVP subset — not full Blu Age). Controls, evidence API, auditor pack, and export script are in-repo — see `docs/soc2-auditor-pack.md`. Vault Agent + CMEK are **shippable manifests** (not aspirational): see `docs/secrets-and-encryption.md` Production checklist; cluster deploy still required.
 
 > **Docker note:** `infra/docker/Dockerfile.api` is JVM-only. For converter tooling in-container, build `infra/docker/Dockerfile.api-enterprise` (python3/pip + nodejs + `native-engines` copy; optional `cobc` when apt provides it; .NET/Roslyn still host-side). See `docker-compose.yml` comments.
 
@@ -403,7 +404,7 @@ The platform was built in this order, with each layer depending on the previous:
 9. ✅ Web UI (Next.js dashboard)
 10. ✅ Security docs + hardening
 11. ✅ Python converter — Python 2 → 3 modernization (**full**, py_compile hard gate)
-12. ✅ COBOL converter — preserving (**full**/cobc hard-gated) + translate (detect-only) tracks
+12. ✅ COBOL converter — preserving (**full**/cobc hard-gated) + translate (**full**/javac semantic rehost MVP) tracks
 13. ✅ JavaScript/TypeScript converter — CommonJS/ES5 → modern ESM (**full**, node hard gate)
 14. ✅ C# converter — .NET Framework → modern patterns (**full**, dotnet build hard gate)
 15. ✅ Java industry rule catalog expanded to 45 OpenRewrite/Sonar/JDK rules

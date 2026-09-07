@@ -170,15 +170,17 @@ public class MetaController {
                                         "claim", "full fail-closed AST converter with industry-aligned gates"),
                                 Map.of(
                                         "id", "translate",
-                                        "status", "detect-only",
-                                        "note", "Java-ish stubs; never cobc PASS; not Blu Age semantic rehost")
+                                        "status", "full",
+                                        "gate", "javac",
+                                        "capability", "cobol-to-java-semantic-rehost",
+                                        "note", "javac-gated semantic rehost MVP (DISPLAY/MOVE/COMPUTE/IF/PERFORM/WS→fields); not full Blu Age (CICS/IMS/JCL out of scope)")
                         ),
                         "industryAligned", List.of(
                                 "GnuCOBOL",
                                 "IBM Enterprise COBOL modernization patterns",
-                                "toward Blu Age / OpenRewrite / Upgrade Assistant class tools (syntax-gated; not Blu Age semantic rehost)"
+                                "toward Blu Age / OpenRewrite / Upgrade Assistant class tools (preserving syntax-gated; translate javac-gated semantic rehost MVP — not full Blu Age)"
                         ),
-                        "claim", "full syntax-gated converter on preserving track; translate remains detect-only",
+                        "claim", "full syntax-gated converter on preserving track; translate is javac-gated cobol-to-java-semantic-rehost MVP (not full Blu Age)",
                         "rules", List.of(
                                 "cobol.accept_to_input",
                                 "cobol.add_to_assign",
@@ -236,6 +238,7 @@ public class MetaController {
                                 "cobol.stop_run_to_goback",
                                 "cobol.string_to_concat",
                                 "cobol.subtract_to_assign",
+                                "cobol.to_java_semantic_rehost",
                                 "cobol.unstring_to_split",
                                 "cobol.write_to_write"
                         )

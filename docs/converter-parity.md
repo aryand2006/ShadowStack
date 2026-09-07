@@ -19,12 +19,11 @@ ShadowStack labels language tracks as **full**, **adapter**, or **detect-only** 
 | JavaScript/TS | full | `node --check` |
 | C# | full | `dotnet build` (+ `.csproj`) |
 | COBOL **preserving** | full | `cobc -fsyntax-only` |
-| COBOL **translate** | detect-only | cobc intentionally skipped |
+| COBOL **translate** | full | `javac` (semantic rehost MVP; missing javac → FAIL) |
 
 ## What we do **not** claim
 
-- **Blu Age equivalent** / **Blu Age semantic rehost** for COBOL→Java (or any language). Translate stubs are migration *hints*, not certified behavioral rehost.
-- Mainframe environment parity (CICS/IMS/JCL, data stores, batch schedulers).
+- **Full Blu Age equivalent** for every mainframe surface (CICS/IMS/JCL, data stores, batch schedulers). Translate is a **javac-gated semantic rehost MVP** (`cobol-to-java-semantic-rehost`) — compilable Java for a practical PROCEDURE/WORKING-STORAGE subset — toward Blu Age–class rehost, not certified whole-system Blu Age parity.
 - Bit-identical runtime equivalence across every modernization rule without human review.
 
 ## Industry alignment (toward, not equal)
@@ -35,18 +34,18 @@ We align **toward** the converter *class* of:
 - **lib2to3 / modernize / pyupgrade / LibCST** (Python)
 - **ESLint / jscodeshift** (JavaScript)
 - **.NET Upgrade Assistant / Roslyn analyzers** (C#)
-- **GnuCOBOL-gated COBOL→COBOL** patterns (preserving); roadmap interest in Blu Age–style *semantic* COBOL→Java
+- **GnuCOBOL-gated COBOL→COBOL** (preserving) and **javac-gated COBOL→Java semantic rehost MVP** (translate; toward Blu Age–class, not full Blu Age)
 
-That enables marketing claims of **full AST-gated converters** and **syntax-gated modernization parity with industry converter-class tools**. It does **not** authorize “Blu Age parity” for translate.
+That enables marketing claims of **full AST-gated converters** and **syntax-gated modernization parity with industry converter-class tools**, plus an honest **semantic rehost MVP** claim on COBOL translate — still **not** “full Blu Age”.
 
 ## Roadmap (not claimed yet)
 
-1. Deeper semantic COBOL→Java (data division mapping, PERFORM graphs, file I/O) with behavioral certificates — *toward* Blu Age–class rehost, still fail-closed.
+1. Deeper semantic COBOL→Java (file I/O, CICS/IMS/JCL, PERFORM THRU graphs) with behavioral certificates — closer to Blu Age–class rehost, still fail-closed.
 2. Broader AST apply coverage so fewer Meta-listed rules fall back to regex (Py2-only syntax may remain regex when LibCST cannot parse).
 3. Stronger multi-file / project-graph gates beyond single-file syntax checks.
 
 ## Engineering invariants
 
-1. Hard-fail verify when the native gate binary is missing (mirror C# / `dotnet`).
-2. Transformative AST apply for Meta-listed rules on a `full` track; detect-only tracks stay `detect-only`.
+1. Hard-fail verify when the native gate binary is missing (mirror C# / `dotnet`; COBOL translate uses `javac`).
+2. Transformative apply for Meta-listed rules on a `full` track; detect-only tracks stay `detect-only`.
 3. Fail-closed orchestration: only PASS enters the review queue.

@@ -167,8 +167,8 @@ public final class RuleCatalog {
                   SEQUENCED_GET_FIRST, SEQUENCED_GET_LAST, HTTPURLCONNECTION_TO_HTTPCLIENT,
                   JUNIT4_ASSERT_TO_JUPITER, MAP_GET_OR_DEFAULT, COMPUTE_IF_ABSENT_DETECT
                 Python (full): LibCST AST + py_compile hard gate (missing python3 → FAIL)
-                COBOL (full preserving / translate detect-only): cobc hard-gated COBOL→COBOL;
-                  translate stubs stay detect-only (not Blu Age semantic rehost)
+                COBOL (full preserving / translate semantic rehost MVP): cobc hard-gated COBOL→COBOL;
+                  translate emits javac-gated Translated* Java (toward Blu Age class; not full Blu Age)
                 JavaScript/TypeScript (full): Acorn AST + node --check hard gate (missing node → FAIL)
                 C# (full): Roslyn AST + dotnet build hard gate (missing SDK/.csproj → FAIL)
                 """;

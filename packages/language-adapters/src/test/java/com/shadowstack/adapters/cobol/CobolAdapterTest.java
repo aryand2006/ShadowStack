@@ -317,23 +317,47 @@ class CobolAdapterTest {
     }
 
     @Test
-    void translate_verify_skips_cobc(@TempDir Path tmp) throws Exception {
+    void translate_verify_uses_javac_not_cobc(@TempDir Path tmp) throws Exception {
         Path file = tmp.resolve("SAMPLE.cob");
         Files.writeString(file, FIXED_FORMAT_PROGRAM, StandardCharsets.UTF_8);
         CobolAdapter adapter = new CobolAdapter();
         SemanticModel model = adapter.buildSemanticModel(tmp);
         RefactorCandidate candidate = adapter.listRefactorCandidates(
                         model, LanguageAdapter.RefactorRuleSet.empty()).stream()
-                .filter(c -> "cobol.display_to_print".equals(c.ruleId()))
+                .filter(c -> CobolAdapter.RULE_SEMANTIC_REHOST.equals(c.ruleId())
+                        || "cobol.display_to_print".equals(c.ruleId()))
                 .findFirst()
                 .orElseThrow();
         assertEquals(CobolAdapter.MODE_TRANSLATE, candidate.astContext().get("mode"));
         PatchResult patch = adapter.applyRefactor(candidate, tmp);
         assertTrue(patch.success());
+        assertTrue(patch.affectedFiles().stream().anyMatch(f -> f.endsWith(".java")),
+                "translate apply must emit .java");
         VerificationResult vr = adapter.verifyPatch(
                 patch, tmp, LanguageAdapter.VerificationConfig.defaults());
-        assertFalse(vr.compileSuccess(), "translate must not claim cobc PASS");
+        assertTrue(vr.compileSuccess(), () -> "javac must PASS: " + vr.layerResults());
+        assertEquals(VerificationResult.Verdict.PASS, vr.verdict(),
+                () -> String.valueOf(vr.layerResults()));
         assertTrue(vr.layerResults().stream()
-                .anyMatch(l -> "translate".equals(l.layerName())));
+                        .anyMatch(l -> "compilation".equals(l.layerName())
+                                && l.details() != null
+                                && l.details().contains("javac")),
+                () -> String.valueOf(vr.layerResults()));
+        assertTrue(vr.layerResults().stream()
+                        .noneMatch(l -> l.details() != null && l.details().contains("cobc")),
+                "translate must not use cobc");
+    }
+
+    @Test
+    void detects_semantic_rehost_candidate(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("SAMPLE.cob");
+        Files.writeString(file, FIXED_FORMAT_PROGRAM, StandardCharsets.UTF_8);
+        CobolAdapter adapter = new CobolAdapter();
+        Set<String> ruleIds = adapter.listRefactorCandidates(
+                        adapter.buildSemanticModel(tmp),
+                        LanguageAdapter.RefactorRuleSet.empty()).stream()
+                .map(RefactorCandidate::ruleId)
+                .collect(Collectors.toSet());
+        assertTrue(ruleIds.contains(CobolAdapter.RULE_SEMANTIC_REHOST), ruleIds.toString());
     }
 }

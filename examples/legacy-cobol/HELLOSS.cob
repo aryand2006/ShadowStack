@@ -1,0 +1,22 @@
+>>SOURCE FREE
+IDENTIFICATION DIVISION.
+PROGRAM-ID. HELLOSS.
+*> Compact translate-demo program for CobolToJavaTranslator /
+*> javac-gated semantic rehost MVP (toward Blu Age class; not full Blu Age).
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+01 WS-MSG PIC X(20) VALUE "SHADOWSTACK".
+01 WS-N PIC 9(3) VALUE 2.
+01 WS-TOTAL PIC 9(5) VALUE 0.
+PROCEDURE DIVISION.
+MAIN.
+    MOVE "READY" TO WS-MSG.
+    COMPUTE WS-TOTAL = WS-N * 10.
+    IF WS-TOTAL = 20
+        PERFORM SHOW-MSG
+    ELSE
+        DISPLAY "NO".
+    DISPLAY WS-MSG.
+    STOP RUN.
+SHOW-MSG.
+    DISPLAY WS-MSG.

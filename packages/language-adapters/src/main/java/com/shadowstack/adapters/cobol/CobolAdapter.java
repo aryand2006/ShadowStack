@@ -28,9 +28,11 @@ import java.util.regex.Pattern;
  *       (fixed→free, STOP RUN→GOBACK, terminal GO TO→PERFORM, EXIT PROGRAM→GOBACK,
  *       NEXT SENTENCE→CONTINUE, etc.). Hard-gated with {@code cobc -fsyntax-only}
  *       (missing {@code cobc} → FAIL, never soft structural PASS).</li>
- *   <li><b>translate</b> ({@code mode=translate}) — COBOL→Java-ish migration
- *       stubs (DISPLAY→System.out, MOVE→assignment, …). Detect-only; never
- *       cobc-gated and never Meta status {@code full}.</li>
+ *   <li><b>translate</b> ({@code mode=translate}) — COBOL→Java semantic rehost MVP
+ *       via {@link CobolToJavaTranslator} (DISPLAY/MOVE/COMPUTE/IF/PERFORM/…).
+ *       Apply emits a compilable {@code Translated*} {@code .java} class;
+ *       verify is {@code javac}-gated (missing/fail → FAIL). Toward Blu Age–class
+ *       rehost; not full Blu Age (CICS/IMS/JCL out of scope).</li>
  * </ul>
  */
 public class CobolAdapter implements LanguageAdapter {
@@ -39,9 +41,12 @@ public class CobolAdapter implements LanguageAdapter {
     private static final String LANGUAGE_ID = "cobol";
     private static final String LANGUAGE_VERSION = "85";
 
+    /** Whole-program COBOL→Java semantic rehost rule. */
+    public static final String RULE_SEMANTIC_REHOST = "cobol.to_java_semantic_rehost";
+
     /** COBOL stays COBOL (industry full track; cobc hard-gated). */
     public static final String MODE_PRESERVING = "preserving";
-    /** COBOL→Java-ish stubs (detect-only; never Meta status full). */
+    /** COBOL→Java semantic rehost MVP (javac-gated). */
     public static final String MODE_TRANSLATE = "translate";
 
     /**
@@ -264,7 +269,8 @@ public class CobolAdapter implements LanguageAdapter {
         out.addAll(detectInspectConverting(source, relPath, fixed));
         out.addAll(detectProgramIdIsInitial(source, relPath, fixed));
 
-        // ── Translate track (COBOL→Java-ish stubs) ──────────────────────
+        // ── Translate track (COBOL→Java semantic rehost MVP) ─────────────
+        out.addAll(detectSemanticRehost(source, relPath));
         out.addAll(detectDisplayToPrint(source, relPath, fixed));
         out.addAll(detectMoveToAssign(source, relPath, fixed));
         out.addAll(detectComputeToAssign(source, relPath, fixed));
@@ -307,6 +313,39 @@ public class CobolAdapter implements LanguageAdapter {
         out.addAll(detectAllocate(source, relPath, fixed));
         out.addAll(detectFree(source, relPath, fixed));
         return out;
+    }
+
+    /**
+     * Whole-program semantic rehost candidate: proposed after-snippet is real Java
+     * from {@link CobolToJavaTranslator}.
+     */
+    private List<RefactorCandidate> detectSemanticRehost(String source, String relPath) {
+        CobolToJavaTranslator.Result translated = CobolToJavaTranslator.translate(source);
+        if (!translated.isTransformative()) return List.of();
+        int lastLine = Math.max(1, source.split("\n", -1).length);
+        return List.of(RefactorCandidate.builder()
+                .sourceFile(relPath)
+                .startLine(1)
+                .endLine(lastLine)
+                .ruleId(RULE_SEMANTIC_REHOST)
+                .ruleName("COBOL → Java semantic rehost (MVP)")
+                .ruleCategory("MODERNIZATION")
+                .beforeSnippet(source)
+                .proposedAfterSnippet(translated.javaSource())
+                .confidenceScore(0.82)
+                .riskTier(RiskTier.MODERATE)
+                .addSafetyInvariant(new SafetyInvariant(
+                        "cobol-java-semantic-rehost",
+                        "WORKING-STORAGE fields + PROCEDURE subset → compilable Java class",
+                        SafetyInvariant.Category.BEHAVIORAL_EQUIVALENCE,
+                        SafetyInvariant.Status.SATISFIED,
+                        "javac-gated MVP; CICS/IMS/JCL out of scope"))
+                .putAstContext("language", "cobol")
+                .putAstContext("mode", MODE_TRANSLATE)
+                .putAstContext("capability", "cobol-to-java-semantic-rehost")
+                .putAstContext("javaClass", translated.className())
+                .putAstContext("javaFile", translated.relativeJavaPath())
+                .build());
     }
 
     /**
@@ -1480,6 +1519,10 @@ public class CobolAdapter implements LanguageAdapter {
             String originalSource = Files.readString(targetFile, StandardCharsets.UTF_8);
             String beforeHash = computeAstHash(originalSource);
 
+            if (!isPreservingRule(candidate.ruleId())) {
+                return applyTranslateRehost(candidate, sourceRoot, originalSource, beforeHash);
+            }
+
             String patchedSource;
             if ("cobol.fixed_to_free".equals(candidate.ruleId())) {
                 patchedSource = convertFixedToFree(originalSource);
@@ -1503,14 +1546,75 @@ public class CobolAdapter implements LanguageAdapter {
                     .addAffectedFile(candidate.sourceFile())
                     .success(true)
                     .putMetadata("ruleId", candidate.ruleId())
-                    .putMetadata("mode", isPreservingRule(candidate.ruleId())
-                            ? MODE_PRESERVING : MODE_TRANSLATE)
+                    .putMetadata("mode", MODE_PRESERVING)
                     .putMetadata("linesAffected", candidate.lineSpan())
                     .build();
         } catch (Exception e) {
             LOG.error("Failed to apply COBOL refactoring '{}'", candidate.ruleId(), e);
             return PatchResult.failure(candidate.candidateId(), e.getMessage());
         }
+    }
+
+    /**
+     * Emit a sibling compilable {@code Translated*.java} via
+     * {@link CobolToJavaTranslator}; leave the COBOL source intact.
+     */
+    private PatchResult applyTranslateRehost(
+            RefactorCandidate candidate, Path sourceRoot,
+            String originalSource, String beforeHash) throws IOException {
+        CobolToJavaTranslator.Result translated = CobolToJavaTranslator.translate(originalSource);
+        if (!translated.isTransformative()) {
+            return PatchResult.failure(candidate.candidateId(),
+                    "Semantic rehost produced non-transformative Java for " + candidate.ruleId());
+        }
+
+        Path cobolPath = Path.of(candidate.sourceFile());
+        Path javaRel = cobolPath.getParent() == null
+                ? Path.of(translated.relativeJavaPath())
+                : cobolPath.getParent().resolve(translated.relativeJavaPath());
+        Path javaFile = sourceRoot.resolve(javaRel.toString());
+        if (javaFile.getParent() != null) {
+            Files.createDirectories(javaFile.getParent());
+        }
+        Files.writeString(javaFile, translated.javaSource(), StandardCharsets.UTF_8);
+
+        String afterHash = computeAstHash(translated.javaSource());
+        String javaRelStr = javaRel.toString().replace('\\', '/');
+        String unifiedDiff = generateCrossFileDiff(
+                candidate.sourceFile(), originalSource, javaRelStr, translated.javaSource());
+
+        LOG.info("Applied COBOL→Java semantic rehost '{}' → {}. AST hash {} → {}",
+                candidate.ruleId(), javaRelStr, beforeHash, afterHash);
+
+        return PatchResult.builder()
+                .candidateId(candidate.candidateId())
+                .unifiedDiff(unifiedDiff)
+                .beforeAstHash(beforeHash)
+                .afterAstHash(afterHash)
+                .addAffectedFile(javaRelStr)
+                .success(true)
+                .putMetadata("ruleId", candidate.ruleId())
+                .putMetadata("mode", MODE_TRANSLATE)
+                .putMetadata("capability", "cobol-to-java-semantic-rehost")
+                .putMetadata("javaClass", translated.className())
+                .putMetadata("javaFile", javaRelStr)
+                .putMetadata("cobolSource", candidate.sourceFile())
+                .putMetadata("linesAffected", candidate.lineSpan())
+                .build();
+    }
+
+    private String generateCrossFileDiff(
+            String beforePath, String before, String afterPath, String after) {
+        StringBuilder diff = new StringBuilder();
+        diff.append("--- a/").append(beforePath).append('\n');
+        diff.append("+++ b/").append(afterPath).append('\n');
+        for (String line : before.split("\n", -1)) {
+            diff.append('-').append(line).append('\n');
+        }
+        for (String line : after.split("\n", -1)) {
+            diff.append('+').append(line).append('\n');
+        }
+        return diff.toString();
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1551,18 +1655,20 @@ public class CobolAdapter implements LanguageAdapter {
                     structuralOk = structurallySound;
                     astScore = structurallySound ? 1.0 : 0.5;
                 } else {
-                    // Translate stubs are intentionally not valid COBOL.
-                    boolean hasStub = source.contains("System.out")
+                    boolean transformative = source.contains("public class Translated")
+                            && source.contains("public static void main")
+                            && (source.contains("System.out.println")
                             || source.contains(" = ")
-                            || source.contains("return;")
-                            || source.contains("/* ");
+                            || source.contains("return;"));
                     long elapsed = System.currentTimeMillis() - start;
                     layers.add(new VerificationResult.LayerResult(
-                            "translate-structural", true, hasStub ? 0.8 : 0.5,
-                            "Translate-mode patch; COBOL structural re-parse skipped",
+                            "translate-structural", transformative, transformative ? 1.0 : 0.3,
+                            transformative
+                                    ? "Semantic rehost Java class present"
+                                    : "Expected Translated* Java class with main()",
                             elapsed));
-                    structuralOk = true;
-                    astScore = 0.5;
+                    structuralOk = transformative;
+                    astScore = transformative ? 1.0 : 0.3;
                 }
             } catch (IOException e) {
                 layers.add(new VerificationResult.LayerResult(
@@ -1574,30 +1680,30 @@ public class CobolAdapter implements LanguageAdapter {
         }
 
         boolean compileOk;
-        boolean cobcVerified = false;
+        boolean nativeGate = false;
 
         if (!preserving) {
-            // Never claim cobc PASS for translate-mode Java-ish stubs.
-            layers.add(verifyTranslate(patch));
-            compileOk = false;
+            // Translate track: javac hard gate (never cobc).
+            VerificationResult.LayerResult javac = verifyTranslateWithJavac(patch, sourceRoot);
+            layers.add(javac);
+            compileOk = javac.passed();
+            nativeGate = structuralOk && compileOk;
         } else if (config.runCompilation() && structuralOk && !patch.affectedFiles().isEmpty()) {
             VerificationResult.LayerResult compile = verifyWithCobc(
                     sourceRoot.resolve(patch.affectedFiles().get(0)));
             layers.add(compile);
             compileOk = compile.passed();
-            cobcVerified = compile.passed()
+            nativeGate = structuralOk && compile.passed()
                     && compile.details() != null
                     && compile.details().contains("succeeded");
         } else if (preserving && config.runCompilation()) {
             // No affected files: structural-only cannot claim a cobc hard gate.
             compileOk = structuralOk && patch.affectedFiles().isEmpty();
+            nativeGate = false;
         } else {
             compileOk = structuralOk;
+            nativeGate = false;
         }
-
-        // Hard gate: only PASS when a real `cobc -fsyntax-only` succeeded —
-        // never soft-pass on missing cobc / structural-only probes.
-        boolean nativeGate = preserving && structuralOk && cobcVerified;
 
         return VerificationResult.builder()
                 .patchId(patch.patchId())
@@ -1613,14 +1719,102 @@ public class CobolAdapter implements LanguageAdapter {
                 .build();
     }
 
-    private VerificationResult.LayerResult verifyTranslate(PatchResult patch) {
-        return new VerificationResult.LayerResult(
-                "translate",
-                true,
-                0.6,
-                "Translate-mode rule '" + patch.metadata().getOrDefault("ruleId", "?")
-                        + "' produces Java-ish stubs; cobc verification intentionally skipped",
-                0);
+    /**
+     * Fail-closed {@code javac} gate for translate-track Java output.
+     * Missing {@code javac} → FAIL; compile failure → FAIL.
+     */
+    private VerificationResult.LayerResult verifyTranslateWithJavac(PatchResult patch, Path sourceRoot) {
+        long start = System.currentTimeMillis();
+        String javaRel = patch.metadata() != null && patch.metadata().get("javaFile") != null
+                ? String.valueOf(patch.metadata().get("javaFile"))
+                : (!patch.affectedFiles().isEmpty() ? patch.affectedFiles().get(0) : null);
+        if (javaRel == null || !javaRel.endsWith(".java")) {
+            return new VerificationResult.LayerResult(
+                    "compilation", false, 0.0,
+                    "translate verify requires a .java affected file (javac gate)", 0);
+        }
+        Path javaFile = sourceRoot.resolve(javaRel);
+        if (!Files.isRegularFile(javaFile)) {
+            return new VerificationResult.LayerResult(
+                    "compilation", false, 0.0,
+                    "Java file missing for javac: " + javaRel, 0);
+        }
+
+        String javacBin = System.getProperty("shadowstack.verify.javac", "javac");
+        Path tmpDir = null;
+        try {
+            tmpDir = Files.createTempDirectory("shadowstack-cobol-javac-");
+            Path compileTarget = tmpDir.resolve(javaFile.getFileName().toString());
+            Files.copy(javaFile, compileTarget);
+
+            List<String> cmd = List.of(javacBin, compileTarget.toString());
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            pb.redirectErrorStream(true);
+            pb.directory(tmpDir.toFile());
+            Process p = pb.start();
+            StringBuilder out = new StringBuilder();
+            try (BufferedReader r = new BufferedReader(
+                    new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    out.append(line).append('\n');
+                }
+            }
+            boolean finished = p.waitFor(60, java.util.concurrent.TimeUnit.SECONDS);
+            long elapsed = System.currentTimeMillis() - start;
+            if (!finished) {
+                p.destroyForcibly();
+                return new VerificationResult.LayerResult(
+                        "compilation", false, 0.0, "javac timed out", elapsed);
+            }
+            boolean passed = p.exitValue() == 0;
+            String cmdDesc = String.join(" ", cmd);
+            return new VerificationResult.LayerResult(
+                    "compilation",
+                    passed,
+                    passed ? 1.0 : 0.0,
+                    passed ? cmdDesc + " succeeded on " + javaFile.getFileName()
+                            : "javac failed:\n" + out,
+                    elapsed);
+        } catch (IOException e) {
+            long elapsed = System.currentTimeMillis() - start;
+            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            boolean missing = msg.toLowerCase(Locale.ROOT).contains("error=")
+                    || msg.toLowerCase(Locale.ROOT).contains("no such file")
+                    || msg.toLowerCase(Locale.ROOT).contains("cannot run")
+                    || msg.toLowerCase(Locale.ROOT).contains("not found");
+            return new VerificationResult.LayerResult(
+                    "compilation", false, 0.0,
+                    missing ? "javac not available" : "javac invoke failed: " + msg,
+                    elapsed);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new VerificationResult.LayerResult(
+                    "compilation", false, 0.0, "interrupted",
+                    System.currentTimeMillis() - start);
+        } finally {
+            if (tmpDir != null) {
+                try {
+                    Files.walkFileTree(tmpDir, new SimpleFileVisitor<>() {
+                        @Override
+                        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
+                                throws IOException {
+                            Files.deleteIfExists(file);
+                            return FileVisitResult.CONTINUE;
+                        }
+
+                        @Override
+                        public FileVisitResult postVisitDirectory(Path dir, IOException exc)
+                                throws IOException {
+                            Files.deleteIfExists(dir);
+                            return FileVisitResult.CONTINUE;
+                        }
+                    });
+                } catch (IOException ignored) {
+                    // best-effort cleanup
+                }
+            }
+        }
     }
 
     private VerificationResult.LayerResult verifyWithCobc(Path target) {
