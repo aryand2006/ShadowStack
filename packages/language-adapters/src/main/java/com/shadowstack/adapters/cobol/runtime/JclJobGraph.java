@@ -13,7 +13,8 @@ import java.util.Objects;
 
 /**
  * Parsed JCL job graph (roadmap Phase 5) — JOB/STEP/DD dependencies for batch cutover.
- * INCLUDE MEMBER= is expanded from an optional include root; PROC remains a gap.
+ * INCLUDE MEMBER= and EXEC PROC= are expanded from an optional include root.
+ * Not bit-identical IBM JCL/PROC semantics.
  */
 public final class JclJobGraph {
 
@@ -44,12 +45,13 @@ public final class JclJobGraph {
     }
 
     /**
-     * Parse JCL, expanding {@code // INCLUDE MEMBER=name} from {@code includeRoot}.
+     * Parse JCL, expanding {@code // INCLUDE MEMBER=name} and {@code EXEC PROC=name}
+     * from {@code includeRoot} ({@code name}, {@code name.jcl}, or {@code name.proc}).
      */
     public static JclJobGraph parse(String jclText, Path includeRoot) {
         Objects.requireNonNull(jclText, "jclText");
         List<String> expandGaps = new ArrayList<>();
-        String expanded = expandIncludes(jclText, includeRoot, expandGaps, 0);
+        String expanded = expandIncludesAndProcs(jclText, includeRoot, expandGaps, 0);
         JclJobGraph graph = parseExpanded(expanded);
         if (expandGaps.isEmpty()) {
             return graph;
@@ -59,10 +61,10 @@ public final class JclJobGraph {
         return new JclJobGraph(graph.jobName(), graph.steps(), merged);
     }
 
-    private static String expandIncludes(
+    private static String expandIncludesAndProcs(
             String jclText, Path includeRoot, List<String> gaps, int depth) {
         if (depth > 8) {
-            gaps.add("JCL INCLUDE nesting too deep");
+            gaps.add("JCL INCLUDE/PROC nesting too deep");
             return jclText;
         }
         StringBuilder out = new StringBuilder();
@@ -75,32 +77,95 @@ public final class JclJobGraph {
                     gaps.add("JCL INCLUDE missing MEMBER: " + line.trim());
                     continue;
                 }
-                if (includeRoot == null) {
-                    gaps.add("JCL INCLUDE unresolved (no include root): " + member);
+                String body = loadMember(includeRoot, member, gaps, "INCLUDE");
+                if (body == null) {
                     continue;
                 }
-                Path candidate = includeRoot.resolve(member);
-                Path withJcl = includeRoot.resolve(member + ".jcl");
-                Path file = Files.isRegularFile(candidate) ? candidate
-                        : Files.isRegularFile(withJcl) ? withJcl : null;
-                if (file == null) {
-                    gaps.add("JCL INCLUDE member not found: " + member);
+                appendExpanded(out, expandIncludesAndProcs(body, includeRoot, gaps, depth + 1));
+                continue;
+            }
+            if (line.startsWith("//") && isExecProc(u)) {
+                String procName = extractKv(line, "PROC");
+                if (procName == null || procName.isBlank()) {
+                    gaps.add("JCL PROC missing name: " + line.trim());
                     continue;
                 }
-                try {
-                    String body = Files.readString(file, StandardCharsets.UTF_8);
-                    out.append(expandIncludes(body, includeRoot, gaps, depth + 1));
-                    if (out.length() > 0 && out.charAt(out.length() - 1) != '\n') {
-                        out.append('\n');
-                    }
-                } catch (IOException e) {
-                    gaps.add("JCL INCLUDE read failed: " + member + " (" + e.getMessage() + ")");
+                String body = loadMember(includeRoot, procName, gaps, "PROC");
+                if (body == null) {
+                    continue;
                 }
+                appendExpanded(out, expandIncludesAndProcs(
+                        stripProcHeader(body), includeRoot, gaps, depth + 1));
                 continue;
             }
             out.append(raw).append('\n');
         }
         return out.toString();
+    }
+
+    /** {@code //name EXEC PROC=...} or {@code // EXEC PROC=...}. */
+    private static boolean isExecProc(String upperLine) {
+        return upperLine.contains(" EXEC ") && upperLine.contains("PROC=")
+                && !upperLine.contains("PGM=");
+    }
+
+    /**
+     * Resolve {@code includeRoot/name}, {@code name.jcl}, then {@code name.proc}.
+     * Returns null and records a gap when unresolved.
+     */
+    private static String loadMember(
+            Path includeRoot, String member, List<String> gaps, String kind) {
+        if (includeRoot == null) {
+            gaps.add("JCL " + kind + " unresolved (no include root): " + member);
+            return null;
+        }
+        Path candidate = includeRoot.resolve(member);
+        Path withJcl = includeRoot.resolve(member + ".jcl");
+        Path withProc = includeRoot.resolve(member + ".proc");
+        Path file = Files.isRegularFile(candidate) ? candidate
+                : Files.isRegularFile(withJcl) ? withJcl
+                : Files.isRegularFile(withProc) ? withProc : null;
+        if (file == null) {
+            gaps.add("JCL " + kind + " member not found: " + member);
+            return null;
+        }
+        try {
+            return Files.readString(file, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            gaps.add("JCL " + kind + " read failed: " + member + " (" + e.getMessage() + ")");
+            return null;
+        }
+    }
+
+    /** Drop a leading {@code //name PROC} definition card from an inlined procedure body. */
+    private static String stripProcHeader(String body) {
+        StringBuilder kept = new StringBuilder();
+        boolean skippedHeader = false;
+        for (String raw : body.split("\n", -1)) {
+            String line = raw.stripTrailing();
+            String u = line.toUpperCase();
+            if (!skippedHeader && line.startsWith("//") && isProcDefinitionCard(u)) {
+                skippedHeader = true;
+                continue;
+            }
+            kept.append(raw).append('\n');
+        }
+        return kept.toString();
+    }
+
+    private static boolean isProcDefinitionCard(String upperLine) {
+        // //NAME PROC ... or // PROC ... — not EXEC PROC=
+        if (upperLine.contains("EXEC") || upperLine.contains("PROC=")) {
+            return false;
+        }
+        return upperLine.matches("//\\S*\\s+PROC\\b.*") || upperLine.matches("//\\s*PROC\\b.*");
+    }
+
+    private static void appendExpanded(StringBuilder out, String body) {
+        out.append(body);
+        if (out.length() > 0 && out.charAt(out.length() - 1) != '\n') {
+            out.append('\n');
+        }
     }
 
     private static JclJobGraph parseExpanded(String jclText) {
@@ -117,7 +182,8 @@ public final class JclJobGraph {
             if (line.isBlank()) continue;
             if (line.startsWith("//*") || line.startsWith("/*")) continue;
             String u = line.toUpperCase();
-            if (u.contains(" PROC ")) {
+            if (isExecProc(u) || (line.startsWith("//") && isProcDefinitionCard(u))
+                    || (u.contains(" PROC ") && !u.contains("PGM="))) {
                 gaps.add("JCL PROC: " + line.trim());
                 continue;
             }
