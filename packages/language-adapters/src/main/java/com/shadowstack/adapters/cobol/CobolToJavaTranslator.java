@@ -44,7 +44,11 @@ public final class CobolToJavaTranslator {
     private static final Pattern SUBSCRIPT = Pattern.compile(
             "(?i)\\b([A-Z][A-Z0-9-]*)\\s*\\(\\s*([A-Z0-9][A-Z0-9-]*|\\d+)\\s*\\)");
     private static final Pattern SELECT_ASSIGN = Pattern.compile(
-            "(?i)^SELECT\\s+([A-Z0-9-]+)\\s+ASSIGN\\s+(?:TO\\s+)?([A-Z0-9-]+)\\s*\\.?\\s*$");
+            "(?i)^SELECT\\s+([A-Z0-9-]+)\\s+ASSIGN\\s+(?:TO\\s+)?([A-Z0-9-]+)\\b.*$");
+    private static final Pattern ORGANIZATION_IS = Pattern.compile(
+            "(?i)^(?:ORGANIZATION\\s+IS\\s+|ORGANISATION\\s+IS\\s+)(INDEXED|SEQUENTIAL|RELATIVE)\\s*\\.?\\s*$");
+    private static final Pattern RECORD_KEY_IS = Pattern.compile(
+            "(?i)^RECORD\\s+KEY\\s+IS\\s+([A-Z0-9-]+)\\s*\\.?\\s*$");
     private static final Pattern CALL_LITERAL = Pattern.compile(
             "(?i)^CALL\\s+(?:'([^']+)'|\"([^\"]+)\"|([A-Z0-9][A-Z0-9-]*))"
                     + "(?:\\s+USING\\s+(.+))?$");
@@ -189,6 +193,14 @@ public final class CobolToJavaTranslator {
         final List<String> resolvedCalls = new ArrayList<>();
         /** SELECT logical-file → ASSIGN dd-name. */
         final Map<String, String> selectAssign = new LinkedHashMap<>();
+        /** SELECT logical-file → SEQUENTIAL|INDEXED|RELATIVE. */
+        final Map<String, String> fileOrg = new LinkedHashMap<>();
+        /** SELECT logical-file → RECORD KEY field. */
+        final Map<String, String> recordKeys = new LinkedHashMap<>();
+        /** Last SELECT logical name (for multi-line ORGANIZATION / RECORD KEY). */
+        String lastSelectLogical;
+        /** Nested PROGRAM-ID names found inside outer program. */
+        final List<String> nestedPrograms = new ArrayList<>();
         /** FD file-name currently being described (parse-time). */
         String currentFd;
         /** 01 record-name → FD file-name. */
@@ -197,8 +209,10 @@ public final class CobolToJavaTranslator {
         final Map<String, Integer> recordLength = new LinkedHashMap<>();
         boolean needsBigDecimal;
         boolean needsFileFacade;
+        boolean needsIndexed;
         boolean needsCics;
         boolean needsSql;
+        boolean needsIms;
         boolean needsSort;
         /** Parse-time: WORKING-STORAGE vs LINKAGE. */
         String dataSection = "WORKING-STORAGE";
@@ -228,7 +242,14 @@ public final class CobolToJavaTranslator {
 
             Matcher pid = PROGRAM_ID.matcher(trimmed);
             if (pid.find()) {
-                out.programId = pid.group(1).toUpperCase(Locale.ROOT);
+                String id = pid.group(1).toUpperCase(Locale.ROOT);
+                if (out.programId != null && !out.programId.equals(id)) {
+                    out.nestedPrograms.add(id);
+                    String gap = "Nested PROGRAM-ID (outer continues; nested body not separately emitted): " + id;
+                    if (!out.gaps.contains(gap)) out.gaps.add(gap);
+                    continue;
+                }
+                out.programId = id;
                 continue;
             }
 
@@ -283,11 +304,29 @@ public final class CobolToJavaTranslator {
                 String logical = sel.group(1).toUpperCase(Locale.ROOT);
                 String assign = sel.group(2).toUpperCase(Locale.ROOT);
                 out.selectAssign.put(logical, assign);
-                if (upper.contains("ORGANIZATION") && (upper.contains("INDEXED")
-                        || upper.contains("RELATIVE"))) {
-                    String gap = "SELECT ORGANIZATION INDEXED/RELATIVE (VSAM): " + logical;
-                    if (!out.gaps.contains(gap)) out.gaps.add(gap);
+                out.lastSelectLogical = logical;
+                out.fileOrg.putIfAbsent(logical, "SEQUENTIAL");
+                if (upper.contains("ORGANIZATION") && upper.contains("INDEXED")) {
+                    out.fileOrg.put(logical, "INDEXED");
+                    out.needsIndexed = true;
+                } else if (upper.contains("ORGANIZATION") && upper.contains("RELATIVE")) {
+                    out.fileOrg.put(logical, "RELATIVE");
+                    out.needsIndexed = true; // relative uses same keyed MVP store
                 }
+                continue;
+            }
+            Matcher orgIs = ORGANIZATION_IS.matcher(trimmed);
+            if (orgIs.matches() && out.lastSelectLogical != null) {
+                String org = orgIs.group(1).toUpperCase(Locale.ROOT);
+                out.fileOrg.put(out.lastSelectLogical, org);
+                if ("INDEXED".equals(org) || "RELATIVE".equals(org)) {
+                    out.needsIndexed = true;
+                }
+                continue;
+            }
+            Matcher rk = RECORD_KEY_IS.matcher(trimmed);
+            if (rk.matches() && out.lastSelectLogical != null) {
+                out.recordKeys.put(out.lastSelectLogical, rk.group(1).toUpperCase(Locale.ROOT));
                 continue;
             }
             // FD / SD headers — bind following 01 records to the file.
@@ -681,6 +720,56 @@ public final class CobolToJavaTranslator {
             sb.append("    }\n\n");
         }
 
+        if (parsed.needsIndexed) {
+            sb.append("    /** INDEXED/RELATIVE MVP — key→record map persisted as dd.idxdat. */\n");
+            sb.append("    private static final java.util.Map<String, java.util.LinkedHashMap<String, String>> __IDX = new java.util.HashMap<>();\n");
+            sb.append("    private static final java.util.Map<String, java.util.Iterator<java.util.Map.Entry<String, String>>> __IDX_CUR = new java.util.HashMap<>();\n");
+            sb.append("    private static final java.util.Map<String, String> __IDX_LAST = new java.util.HashMap<>();\n");
+            sb.append("    private static void __idxLoad(String dd) throws Exception {\n");
+            sb.append("        java.util.LinkedHashMap<String, String> m = new java.util.LinkedHashMap<>();\n");
+            sb.append("        java.nio.file.Path p = java.nio.file.Path.of(\".\").resolve(dd + \".idxdat\");\n");
+            sb.append("        if (java.nio.file.Files.isRegularFile(p)) {\n");
+            sb.append("            for (String line : java.nio.file.Files.readAllLines(p)) {\n");
+            sb.append("                int t = line.indexOf('\\t'); if (t <= 0) continue;\n");
+            sb.append("                m.put(line.substring(0, t), line.substring(t + 1));\n");
+            sb.append("            }\n");
+            sb.append("        }\n");
+            sb.append("        __IDX.put(dd, m); __IDX_CUR.put(dd, m.entrySet().iterator());\n");
+            sb.append("    }\n");
+            sb.append("    private static void __idxSave(String dd) throws Exception {\n");
+            sb.append("        java.util.LinkedHashMap<String, String> m = __IDX.get(dd); if (m == null) return;\n");
+            sb.append("        StringBuilder sb = new StringBuilder();\n");
+            sb.append("        for (var e : m.entrySet()) sb.append(e.getKey()).append('\\t').append(e.getValue()).append('\\n');\n");
+            sb.append("        java.nio.file.Files.writeString(java.nio.file.Path.of(\".\").resolve(dd + \".idxdat\"), sb.toString());\n");
+            sb.append("    }\n");
+            sb.append("    private static void __idxOpen(String dd) throws Exception { __idxLoad(dd); }\n");
+            sb.append("    private static void __idxWrite(String dd, String key, String rec) throws Exception {\n");
+            sb.append("        __IDX.computeIfAbsent(dd, k -> new java.util.LinkedHashMap<>()).put(key, rec);\n");
+            sb.append("        __IDX_LAST.put(dd, key);\n");
+            sb.append("        __IDX_CUR.put(dd, __IDX.get(dd).entrySet().iterator());\n");
+            sb.append("    }\n");
+            sb.append("    private static boolean __idxReadKey(String dd, String key, String[] outHolder) {\n");
+            sb.append("        var m = __IDX.get(dd); if (m == null || !m.containsKey(key)) return false;\n");
+            sb.append("        outHolder[0] = m.get(key); __IDX_LAST.put(dd, key); return true;\n");
+            sb.append("    }\n");
+            sb.append("    private static boolean __idxReadNext(String dd, String[] outHolder) {\n");
+            sb.append("        var it = __IDX_CUR.get(dd); if (it == null || !it.hasNext()) return false;\n");
+            sb.append("        var e = it.next(); __IDX_LAST.put(dd, e.getKey()); outHolder[0] = e.getValue(); return true;\n");
+            sb.append("    }\n");
+            sb.append("    private static void __idxDelete(String dd, String key) {\n");
+            sb.append("        var m = __IDX.get(dd); if (m != null) m.remove(key);\n");
+            sb.append("        if (m != null) __IDX_CUR.put(dd, m.entrySet().iterator());\n");
+            sb.append("    }\n");
+            sb.append("    private static void __idxStart(String dd, String key) {\n");
+            sb.append("        var m = __IDX.get(dd); if (m == null) return;\n");
+            sb.append("        var rest = new java.util.LinkedHashMap<String, String>();\n");
+            sb.append("        boolean on = false;\n");
+            sb.append("        for (var e : m.entrySet()) { if (!on && e.getKey().compareTo(key) >= 0) on = true; if (on) rest.put(e.getKey(), e.getValue()); }\n");
+            sb.append("        __IDX_CUR.put(dd, rest.entrySet().iterator());\n");
+            sb.append("    }\n");
+            sb.append("    private static void __idxClose(String dd) throws Exception { __idxSave(dd); __IDX.remove(dd); __IDX_CUR.remove(dd); __IDX_LAST.remove(dd); }\n\n");
+        }
+
         if (parsed.needsSort) {
             sb.append("    private static void __sortLines(String inDd, String outDd) throws Exception {\n");
             sb.append("        java.nio.file.Path in = java.nio.file.Path.of(\".\").resolve(inDd + \".dat\");\n");
@@ -718,6 +807,16 @@ public final class CobolToJavaTranslator {
             sb.append("    private static void __sqlExec(String sql) {\n");
             sb.append("        throw new UnsupportedOperationException(\"EXEC SQL (inject JDBC): \" + sql);\n");
             sb.append("    }\n\n");
+        }
+
+        if (parsed.needsIms) {
+            sb.append("    /** Inline IMS DL/I MVP — PCB→segment map (replace with ImsFacade). */\n");
+            sb.append("    private static final java.util.Map<String, String> __IMS = new java.util.HashMap<>();\n");
+            sb.append("    private static String __imsGu(String pcb) { return __IMS.getOrDefault(pcb, \"\"); }\n");
+            sb.append("    private static String __imsGn(String pcb) { return __imsGu(pcb); }\n");
+            sb.append("    private static void __imsIsrt(String pcb, String seg) { __IMS.put(pcb, seg); }\n");
+            sb.append("    private static void __imsRepl(String pcb, String seg) { __IMS.put(pcb, seg); }\n");
+            sb.append("    private static void __imsDlet(String pcb) { __IMS.remove(pcb); }\n\n");
         }
 
         // Emit unique Java fields (REDEFINES aliases share one declaration).
@@ -905,9 +1004,12 @@ public final class CobolToJavaTranslator {
             return fileIo;
         }
 
-        // EXEC CICS / EXEC SQL → inline MVP façades (javac-friendly).
+        // EXEC CICS / EXEC SQL / EXEC DLI → inline MVP façades (javac-friendly).
         if (upper.startsWith("EXEC CICS") || upper.contains(" EXEC CICS")) {
             return translateExecCics(s, parsed);
+        }
+        if (upper.startsWith("EXEC DLI") || upper.contains(" EXEC DLI")) {
+            return translateExecDli(s, parsed);
         }
         if (upper.startsWith("EXEC SQL") || upper.contains(" EXEC SQL")) {
             return translateExecSql(s, parsed);
@@ -927,16 +1029,13 @@ public final class CobolToJavaTranslator {
     private static List<String> translateCall(String s, ParsedProgram parsed) {
         Matcher cm = CALL_LITERAL.matcher(s);
         if (cm.find()) {
+            boolean literal = cm.group(1) != null || cm.group(2) != null;
             String callee = cm.group(1) != null ? cm.group(1)
                     : cm.group(2) != null ? cm.group(2) : cm.group(3);
             callee = callee.toUpperCase(Locale.ROOT);
-            if (!parsed.resolvedCalls.contains(callee)) {
-                parsed.resolvedCalls.add(callee);
-            }
-            String javaClass = "Translated" + callee.replace('-', '_');
             String usingClause = cm.group(4);
+            List<String> args = new ArrayList<>();
             if (usingClause != null && !usingClause.isBlank()) {
-                List<String> args = new ArrayList<>();
                 for (String tok : usingClause.trim().split("\\s+")) {
                     String t = tok.replace(",", "").trim();
                     if (t.isEmpty()) continue;
@@ -944,14 +1043,26 @@ public final class CobolToJavaTranslator {
                     if (u.equals("BY") || u.equals("REFERENCE") || u.equals("CONTENT") || u.equals("VALUE")) {
                         continue;
                     }
-                    // BY REFERENCE/CONTENT/VALUE all marshal via String for LINKAGE bind MVP.
                     args.add("String.valueOf(" + toJavaIdent(t) + ")");
                 }
-                if (!args.isEmpty()) {
-                    return List.of(javaClass + ".main(new String[]{ " + String.join(", ", args) + " });");
-                }
             }
-            return List.of(javaClass + ".main(new String[0]);");
+            String argsExpr = args.isEmpty() ? "new String[0]" : "new String[]{ " + String.join(", ", args) + " }";
+
+            // Identifier CALL to a WORKING-STORAGE field → dynamic Class.forName target.
+            if (!literal && parsed.fields.containsKey(callee)) {
+                String dyn = toJavaIdent(callee);
+                return List.of(
+                        "{ String __dyn = String.valueOf(" + dyn + ").trim().toUpperCase().replace('-', '_');",
+                        "  try { Class.forName(\"Translated\" + __dyn).getMethod(\"main\", String[].class)"
+                                + ".invoke(null, (Object) " + argsExpr + "); }",
+                        "  catch (ReflectiveOperationException __ex) { throw new RuntimeException(\"dynamic CALL \" + __dyn, __ex); } }");
+            }
+
+            if (!parsed.resolvedCalls.contains(callee)) {
+                parsed.resolvedCalls.add(callee);
+            }
+            String javaClass = "Translated" + callee.replace('-', '_');
+            return List.of(javaClass + ".main(" + argsExpr + ");");
         }
         String gap = "CALL program (unresolved target): " + s;
         if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
@@ -999,6 +1110,17 @@ public final class CobolToJavaTranslator {
         if (upper.startsWith("EXEC SQL") || upper.contains(" EXEC SQL")) {
             parsed.needsSql = true;
         }
+        if (upper.startsWith("EXEC DLI") || upper.contains(" EXEC DLI")
+                || upper.contains("CBLTDLI") || upper.startsWith("CALL 'CBLTDLI'")
+                || upper.startsWith("CALL \"CBLTDLI\"")) {
+            parsed.needsIms = true;
+        }
+        if (!parsed.fileOrg.isEmpty() && parsed.fileOrg.containsValue("INDEXED")) {
+            parsed.needsIndexed = true;
+        }
+        if (!parsed.fileOrg.isEmpty() && parsed.fileOrg.containsValue("RELATIVE")) {
+            parsed.needsIndexed = true;
+        }
     }
 
     /**
@@ -1031,10 +1153,33 @@ public final class CobolToJavaTranslator {
         return Math.max(len, 1);
     }
 
-    private static List<String> translateFileIo(String s, ParsedProgram parsed) {
-        String upper = s.toUpperCase(Locale.ROOT);
+    private static boolean isIndexed(String logicalOrRecord, ParsedProgram parsed) {
+        String key = logicalOrRecord.toUpperCase(Locale.ROOT);
+        String org = parsed.fileOrg.get(key);
+        if (org == null) {
+            String fd = parsed.recordToFd.get(key);
+            if (fd != null) org = parsed.fileOrg.get(fd);
+        }
+        return "INDEXED".equals(org) || "RELATIVE".equals(org);
+    }
 
-        // READ … AT END (single-line form) before plain READ.
+    private static String resolveLogicalFile(String logicalOrRecord, ParsedProgram parsed) {
+        String key = logicalOrRecord.toUpperCase(Locale.ROOT);
+        if (parsed.selectAssign.containsKey(key)) return key;
+        String fd = parsed.recordToFd.get(key);
+        return fd != null ? fd : key;
+    }
+
+    private static String indexedKeyExpr(String logical, ParsedProgram parsed) {
+        String file = resolveLogicalFile(logical, parsed);
+        String keyField = parsed.recordKeys.get(file);
+        if (keyField != null) {
+            return "String.valueOf(" + lhs(keyField, parsed) + ")";
+        }
+        return "\"KEY\"";
+    }
+
+    private static List<String> translateFileIo(String s, ParsedProgram parsed) {
         Matcher readAtEnd = READ_AT_END_HEAD.matcher(s);
         if (readAtEnd.matches()) {
             return translateReadAtEnd(s, parsed);
@@ -1051,6 +1196,10 @@ public final class CobolToJavaTranslator {
                 if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
             }
             String dd = resolveAssign(logical, parsed);
+            if (isIndexed(logical, parsed)) {
+                parsed.needsIndexed = true;
+                return List.of("try { __idxOpen(\"" + dd + "\"); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
+            }
             parsed.needsFileFacade = true;
             String method = switch (mode) {
                 case "INPUT" -> "__openInput(\"" + dd + "\")";
@@ -1061,19 +1210,46 @@ public final class CobolToJavaTranslator {
             };
             return List.of("try { " + method + "; } catch (Exception __ex) { throw new RuntimeException(__ex); }");
         }
+        Matcher readKey = Pattern.compile(
+                "(?i)^READ\\s+([A-Z0-9-]+)\\s+KEY\\s+(?:IS\\s+)?(\\S+)(?:\\s+INTO\\s+([A-Z0-9-]+))?").matcher(s);
+        if (readKey.matches()) {
+            String logical = readKey.group(1).toUpperCase(Locale.ROOT);
+            String keyTok = readKey.group(2);
+            String into = readKey.group(3);
+            String dd = resolveAssign(logical, parsed);
+            parsed.needsIndexed = true;
+            String id = toJavaIdent(dd);
+            List<String> lines = new ArrayList<>();
+            lines.add("String[] __hold_" + id + " = new String[1];");
+            lines.add("boolean __ok_" + id + " = __idxReadKey(\"" + dd + "\", String.valueOf("
+                    + exprOperand(keyTok) + "), __hold_" + id + ");");
+            if (into != null) {
+                lines.add("if (__ok_" + id + ") { " + lhs(into, parsed) + " = __hold_" + id + "[0]; }");
+            }
+            return lines;
+        }
         Matcher read = Pattern.compile(
                 "(?i)^READ\\s+([A-Z0-9-]+)(?:\\s+INTO\\s+([A-Z0-9-]+))?(?:\\s+.*)?").matcher(s);
         if (read.matches()) {
-            parsed.needsFileFacade = true;
             String logical = read.group(1).toUpperCase(Locale.ROOT);
             String into = read.group(2);
             String dd = resolveAssign(logical, parsed);
             String id = toJavaIdent(dd);
+            if (isIndexed(logical, parsed)) {
+                parsed.needsIndexed = true;
+                List<String> lines = new ArrayList<>();
+                lines.add("String[] __hold_" + id + " = new String[1];");
+                lines.add("boolean __ok_" + id + " = __idxReadNext(\"" + dd + "\", __hold_" + id + ");");
+                if (into != null) {
+                    lines.add("if (__ok_" + id + ") { " + lhs(into, parsed) + " = __hold_" + id + "[0]; }");
+                }
+                return lines;
+            }
+            parsed.needsFileFacade = true;
             int buf = recordBufSize(logical, parsed);
             List<String> lines = new ArrayList<>();
             lines.add("byte[] __rec_" + id + " = new byte[" + buf + "];");
             lines.add("boolean __ok_" + id + " = false;");
-            // Prefer I-O RandomAccessFile path when both could apply — try __IO first via helper chain.
             lines.add("try { __ok_" + id + " = __IO.containsKey(\"" + dd + "\")"
                     + " ? __readIo(\"" + dd + "\", __rec_" + id + ")"
                     + " : __read(\"" + dd + "\", __rec_" + id + ");"
@@ -1087,60 +1263,87 @@ public final class CobolToJavaTranslator {
         }
         Matcher write = Pattern.compile("(?i)^WRITE\\s+([A-Z0-9-]+)(?:\\s+FROM\\s+(\\S+))?").matcher(s);
         if (write.matches()) {
-            parsed.needsFileFacade = true;
             String rec = write.group(1).toUpperCase(Locale.ROOT);
             String dd = resolveAssign(rec, parsed);
-            String payload;
+            String payloadStr;
             if (write.group(2) != null) {
-                payload = "String.valueOf(" + exprOperand(write.group(2))
-                        + ").getBytes(java.nio.charset.StandardCharsets.UTF_8)";
+                payloadStr = "String.valueOf(" + exprOperand(write.group(2)) + ")";
             } else if (parsed.fields.containsKey(rec) || parsed.recordToFd.containsKey(rec)) {
-                payload = "String.valueOf(" + lhs(rec, parsed)
-                        + ").getBytes(java.nio.charset.StandardCharsets.UTF_8)";
+                payloadStr = "String.valueOf(" + lhs(rec, parsed) + ")";
             } else {
-                payload = "new byte[0]";
+                payloadStr = "\"\"";
             }
+            if (isIndexed(rec, parsed) || isIndexed(resolveLogicalFile(rec, parsed), parsed)) {
+                parsed.needsIndexed = true;
+                String keyExpr = indexedKeyExpr(rec, parsed);
+                return List.of("try { __idxWrite(\"" + dd + "\", " + keyExpr + ", " + payloadStr
+                        + "); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
+            }
+            parsed.needsFileFacade = true;
+            String payload = payloadStr + ".getBytes(java.nio.charset.StandardCharsets.UTF_8)";
             return List.of("try { __write(\"" + dd + "\", " + payload + "); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
         }
         Matcher rewrite = Pattern.compile("(?i)^REWRITE\\s+([A-Z0-9-]+)(?:\\s+FROM\\s+(\\S+))?").matcher(s);
         if (rewrite.matches()) {
-            parsed.needsFileFacade = true;
             String rec = rewrite.group(1).toUpperCase(Locale.ROOT);
             String dd = resolveAssign(rec, parsed);
-            String payload;
+            String payloadStr;
             if (rewrite.group(2) != null) {
-                payload = "String.valueOf(" + exprOperand(rewrite.group(2))
-                        + ").getBytes(java.nio.charset.StandardCharsets.UTF_8)";
+                payloadStr = "String.valueOf(" + exprOperand(rewrite.group(2)) + ")";
             } else if (parsed.fields.containsKey(rec) || parsed.recordToFd.containsKey(rec)) {
-                payload = "String.valueOf(" + lhs(rec, parsed)
-                        + ").getBytes(java.nio.charset.StandardCharsets.UTF_8)";
+                payloadStr = "String.valueOf(" + lhs(rec, parsed) + ")";
             } else {
                 String gap = "REWRITE record not in FD/WS: " + rec;
                 if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
-                payload = "new byte[0]";
+                payloadStr = "\"\"";
             }
+            if (isIndexed(rec, parsed) || isIndexed(resolveLogicalFile(rec, parsed), parsed)) {
+                parsed.needsIndexed = true;
+                return List.of(
+                        "try { String __lk = __IDX_LAST.get(\"" + dd + "\"); if (__lk != null) __idxWrite(\""
+                                + dd + "\", __lk, " + payloadStr
+                                + "); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
+            }
+            parsed.needsFileFacade = true;
+            String payload = payloadStr + ".getBytes(java.nio.charset.StandardCharsets.UTF_8)";
             return List.of("try { __rewrite(\"" + dd + "\", " + payload + "); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
         }
         Matcher close = Pattern.compile("(?i)^CLOSE\\s+([A-Z0-9-]+)(?:\\s+.*)?").matcher(s);
         if (close.matches()) {
-            parsed.needsFileFacade = true;
             String logical = close.group(1).toUpperCase(Locale.ROOT);
             String dd = resolveAssign(logical, parsed);
+            if (isIndexed(logical, parsed)) {
+                parsed.needsIndexed = true;
+                return List.of("try { __idxClose(\"" + dd + "\"); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
+            }
+            parsed.needsFileFacade = true;
             return List.of("try { __close(\"" + dd
                     + "\"); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
         }
-        Matcher start = Pattern.compile("(?i)^START\\s+([A-Z0-9-]+)(?:\\s+.*)?").matcher(s);
+        Matcher start = Pattern.compile(
+                "(?i)^START\\s+([A-Z0-9-]+)(?:\\s+KEY\\s+(?:IS\\s+)?(\\S+))?(?:\\s+.*)?").matcher(s);
         if (start.matches()) {
-            parsed.needsFileFacade = true;
             String logical = start.group(1).toUpperCase(Locale.ROOT);
             String dd = resolveAssign(logical, parsed);
+            if (isIndexed(logical, parsed)) {
+                parsed.needsIndexed = true;
+                String keyExpr = start.group(2) != null
+                        ? "String.valueOf(" + exprOperand(start.group(2)) + ")"
+                        : indexedKeyExpr(logical, parsed);
+                return List.of("__idxStart(\"" + dd + "\", " + keyExpr + ");");
+            }
+            parsed.needsFileFacade = true;
             return List.of("try { __start(\"" + dd + "\"); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
         }
         Matcher del = Pattern.compile("(?i)^DELETE\\s+([A-Z0-9-]+)(?:\\s+.*)?").matcher(s);
         if (del.matches()) {
-            parsed.needsFileFacade = true;
             String logical = del.group(1).toUpperCase(Locale.ROOT);
             String dd = resolveAssign(logical, parsed);
+            if (isIndexed(logical, parsed)) {
+                parsed.needsIndexed = true;
+                return List.of("__idxDelete(\"" + dd + "\", " + indexedKeyExpr(logical, parsed) + ");");
+            }
+            parsed.needsFileFacade = true;
             return List.of("try { __deleteCurrent(\"" + dd + "\"); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
         }
         return null;
@@ -1248,6 +1451,40 @@ public final class CobolToJavaTranslator {
         if (sql.isEmpty()) sql = s;
         String lit = sql.replace("\\\\", "\\\\\\\\").replace("\"", "\\\\\"");
         return List.of("try { __sqlExec(\"" + lit + "\"); } catch (UnsupportedOperationException __sqlEx) { throw __sqlEx; }");
+    }
+
+    private static List<String> translateExecDli(String s, ParsedProgram parsed) {
+        parsed.needsIms = true;
+        String u = s.toUpperCase(Locale.ROOT);
+        Matcher gu = Pattern.compile("(?i)EXEC\\s+DLI\\s+GU\\s+.*?PCB\\s*\\(\\s*([A-Z0-9-]+)\\s*\\).*INTO\\s*\\(\\s*([A-Z0-9-]+)\\s*\\)").matcher(s);
+        if (gu.find()) {
+            return List.of(toJavaIdent(gu.group(2)) + " = __imsGu(\"" + gu.group(1).toUpperCase(Locale.ROOT) + "\");");
+        }
+        Matcher gn = Pattern.compile("(?i)EXEC\\s+DLI\\s+GN\\s+.*?PCB\\s*\\(\\s*([A-Z0-9-]+)\\s*\\).*INTO\\s*\\(\\s*([A-Z0-9-]+)\\s*\\)").matcher(s);
+        if (gn.find()) {
+            return List.of(toJavaIdent(gn.group(2)) + " = __imsGn(\"" + gn.group(1).toUpperCase(Locale.ROOT) + "\");");
+        }
+        Matcher isrt = Pattern.compile("(?i)EXEC\\s+DLI\\s+ISRT\\s+.*?PCB\\s*\\(\\s*([A-Z0-9-]+)\\s*\\).*FROM\\s*\\(\\s*([A-Z0-9-]+)\\s*\\)").matcher(s);
+        if (isrt.find()) {
+            return List.of("__imsIsrt(\"" + isrt.group(1).toUpperCase(Locale.ROOT) + "\", String.valueOf("
+                    + toJavaIdent(isrt.group(2)) + "));");
+        }
+        if (u.contains(" REPL ")) {
+            Matcher repl = Pattern.compile("(?i)PCB\\s*\\(\\s*([A-Z0-9-]+)\\s*\\).*FROM\\s*\\(\\s*([A-Z0-9-]+)\\s*\\)").matcher(s);
+            if (repl.find()) {
+                return List.of("__imsRepl(\"" + repl.group(1).toUpperCase(Locale.ROOT) + "\", String.valueOf("
+                        + toJavaIdent(repl.group(2)) + "));");
+            }
+        }
+        if (u.contains(" DLET ")) {
+            Matcher dlet = Pattern.compile("(?i)PCB\\s*\\(\\s*([A-Z0-9-]+)\\s*\\)").matcher(s);
+            if (dlet.find()) {
+                return List.of("__imsDlet(\"" + dlet.group(1).toUpperCase(Locale.ROOT) + "\");");
+            }
+        }
+        String gap = "EXEC DLI (unsupported subset): " + s;
+        if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
+        return List.of("// " + gap);
     }
 
     private static List<String> translateSortMerge(String s, ParsedProgram parsed) {

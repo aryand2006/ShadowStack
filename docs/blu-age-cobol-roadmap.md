@@ -1,12 +1,10 @@
 # Roadmap — Blu Age–class COBOL → Java
 
-> **Status on `main`:** Phases **0–7 shipped for supported surfaces** —
-> dialect, COPY, CALL/LINKAGE, sequential files (+ START/DELETE/REWRITE),
-> SORT/MERGE USING/GIVING, embedded CICS/SQL MVP, JCL runner + COND,
-> Meta gap browser + review proofArtifacts.
+> **Status on `main`:** Phases **0–7 Blu Age–class for supported surfaces**, including
+> INDEXED/RELATIVE MVP, dynamic CALL, EXEC DLI IMS helpers, and JCL INCLUDE expand.
 >
 > **Claim:** **Blu Age–class for supported surfaces.**
-> Still **not** bit-identical IBM CICS/IMS/VSAM/BMS or a certified Blu Age product clone.
+> Still **not** bit-identical IBM VSAM/BMS/IDCAMS or a licensed Blu Age product clone.
 
 ## North star
 
@@ -31,12 +29,12 @@ databases (stub), files, JCL, and cross-program control flow.
 |-------|--------|------------|
 | 0 Baseline | ✅ | cobc preserving + javac translate |
 | 1 Dialect | ✅ | PIC/USAGE/OCCURS/REDEFINES/PERFORM/COPY |
-| 2 Files | ✅ MVP+ | SELECT/FD/01, sequential I/O, AT END, I-O REWRITE, START/DELETE |
-| 3 CICS | ✅ MVP | Inline `__cics*` + `InMemoryCicsFacade` (LINK/XCTL/TSQ/SYNCPOINT) |
-| 4 IMS/SQL | 🟡 | `ImsFacade`; EXEC SQL → fail-closed `__sqlExec` (host JDBC) |
-| 5 JCL | ✅ MVP+ | `JclJobGraph` + `JclJobRunner` + COND=(code,op) |
-| 6 CALL/goldens | ✅ | Program graph, CALL USING, LINKAGE bind, HELLOSS golden |
-| 7 Productization | ✅ | Meta `/cobol-rehost` + review proofArtifacts; claim upgraded |
+| 2 Files | ✅ MVP+ | Sequential + INDEXED/RELATIVE in-memory keyed store (`.idxdat`) |
+| 3 CICS | ✅ MVP | Inline `__cics*` + `InMemoryCicsFacade` |
+| 4 IMS/SQL | ✅ MVP | EXEC DLI inline + `InMemoryImsFacade`; EXEC SQL stub |
+| 5 JCL | ✅ MVP+ | Runner + COND + INCLUDE MEMBER expand (PROC still gap) |
+| 6 CALL/goldens | ✅ | Literal + dynamic CALL, LINKAGE, HELLOSS golden |
+| 7 Productization | ✅ | Meta `/cobol-rehost` + review proofArtifacts |
 
 ## Phase 7 exit criteria
 
@@ -56,8 +54,12 @@ databases (stub), files, JCL, and cross-program control flow.
 
 ## Remaining gaps (honest)
 
-- Nested programs; deep FD groups/OCCURS in records
-- VSAM / INDEXED / RELATIVE
+- Nested PROGRAM-ID bodies (detected; not separately emitted)
+- Deep FD groups/OCCURS in records
+- Bit-identical IBM VSAM / IDCAMS
+- BMS / 3270 screens
+- JCL PROC expansion + cataloged datasets
+- True BY REFERENCE shared memory / POINTER
 - BMS / 3270 screens
 - Full IMS DL/I in generated code
 - JCL PROC/INCLUDE + cataloged datasets

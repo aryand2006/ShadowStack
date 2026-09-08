@@ -1,5 +1,9 @@
 package com.shadowstack.adapters.cobol.runtime;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -9,7 +13,7 @@ import java.util.Objects;
 
 /**
  * Parsed JCL job graph (roadmap Phase 5) — JOB/STEP/DD dependencies for batch cutover.
- * Exotic JCL constructs should be recorded as gaps, not silently ignored.
+ * INCLUDE MEMBER= is expanded from an optional include root; PROC remains a gap.
  */
 public final class JclJobGraph {
 
@@ -35,12 +39,71 @@ public final class JclJobGraph {
     public List<Step> steps() { return steps; }
     public List<String> gaps() { return gaps; }
 
-    /**
-     * Minimal parser for classic JCL cards: //JOB, //STEP EXEC PGM=, //DD DSN=, and comments.
-     * PROC/INCLUDE/IF/THEN and complex COND are recorded as gaps.
-     */
     public static JclJobGraph parse(String jclText) {
+        return parse(jclText, null);
+    }
+
+    /**
+     * Parse JCL, expanding {@code // INCLUDE MEMBER=name} from {@code includeRoot}.
+     */
+    public static JclJobGraph parse(String jclText, Path includeRoot) {
         Objects.requireNonNull(jclText, "jclText");
+        List<String> expandGaps = new ArrayList<>();
+        String expanded = expandIncludes(jclText, includeRoot, expandGaps, 0);
+        JclJobGraph graph = parseExpanded(expanded);
+        if (expandGaps.isEmpty()) {
+            return graph;
+        }
+        List<String> merged = new ArrayList<>(expandGaps);
+        merged.addAll(graph.gaps());
+        return new JclJobGraph(graph.jobName(), graph.steps(), merged);
+    }
+
+    private static String expandIncludes(
+            String jclText, Path includeRoot, List<String> gaps, int depth) {
+        if (depth > 8) {
+            gaps.add("JCL INCLUDE nesting too deep");
+            return jclText;
+        }
+        StringBuilder out = new StringBuilder();
+        for (String raw : jclText.split("\n", -1)) {
+            String line = raw.stripTrailing();
+            String u = line.toUpperCase();
+            if (line.startsWith("//") && u.contains(" INCLUDE ") && u.contains("MEMBER=")) {
+                String member = extractKv(line, "MEMBER");
+                if (member == null || member.isBlank()) {
+                    gaps.add("JCL INCLUDE missing MEMBER: " + line.trim());
+                    continue;
+                }
+                if (includeRoot == null) {
+                    gaps.add("JCL INCLUDE unresolved (no include root): " + member);
+                    continue;
+                }
+                Path candidate = includeRoot.resolve(member);
+                Path withJcl = includeRoot.resolve(member + ".jcl");
+                Path file = Files.isRegularFile(candidate) ? candidate
+                        : Files.isRegularFile(withJcl) ? withJcl : null;
+                if (file == null) {
+                    gaps.add("JCL INCLUDE member not found: " + member);
+                    continue;
+                }
+                try {
+                    String body = Files.readString(file, StandardCharsets.UTF_8);
+                    out.append(expandIncludes(body, includeRoot, gaps, depth + 1));
+                    if (out.length() > 0 && out.charAt(out.length() - 1) != '\n') {
+                        out.append('\n');
+                    }
+                } catch (IOException e) {
+                    gaps.add("JCL INCLUDE read failed: " + member + " (" + e.getMessage() + ")");
+                }
+                continue;
+            }
+            out.append(raw).append('\n');
+        }
+        return out.toString();
+    }
+
+    private static JclJobGraph parseExpanded(String jclText) {
         String jobName = "UNKNOWN";
         List<Step> steps = new ArrayList<>();
         List<String> gaps = new ArrayList<>();
@@ -54,8 +117,12 @@ public final class JclJobGraph {
             if (line.isBlank()) continue;
             if (line.startsWith("//*") || line.startsWith("/*")) continue;
             String u = line.toUpperCase();
-            if (u.contains(" PROC ") || u.startsWith("//") && u.contains(" INCLUDE ")) {
-                gaps.add("JCL PROC/INCLUDE: " + line.trim());
+            if (u.contains(" PROC ")) {
+                gaps.add("JCL PROC: " + line.trim());
+                continue;
+            }
+            if (u.contains(" INCLUDE ")) {
+                gaps.add("JCL INCLUDE unresolved: " + line.trim());
                 continue;
             }
             if (u.matches("//\\S+\\s+IF\\s+.*") || u.contains(" THEN ") || u.trim().equals("//ENDIF")) {
@@ -121,21 +188,39 @@ public final class JclJobGraph {
         return name;
     }
 
-    private static String extractKv(String line, String key) {
+    static String extractKv(String line, String key) {
         String u = line.toUpperCase();
-        String k = key.toUpperCase() + "=";
-        int idx = u.indexOf(k);
+        String needle = key.toUpperCase() + "=";
+        int idx = u.indexOf(needle);
         if (idx < 0) return null;
-        int start = idx + k.length();
+        int start = idx + needle.length();
         int end = start;
         while (end < line.length()) {
             char c = line.charAt(end);
-            if (c == ',' || c == ' ' || c == '\'') break;
+            if (c == ',' || c == ' ' || c == '\t') break;
             end++;
         }
         String val = line.substring(start, end).trim();
-        if (val.startsWith("'") && val.endsWith("'") && val.length() >= 2) {
-            val = val.substring(1, val.length() - 1);
+        if (val.startsWith("(") && val.endsWith(")") && val.length() > 2) {
+            // keep DISP=(NEW,CATLG) style as-is when fully parenthesized without nested scan
+        }
+        // Re-scan for parenthesized DISP values
+        if (key.equalsIgnoreCase("DISP") && start < line.length() && line.charAt(start) == '(') {
+            int depth = 0;
+            end = start;
+            while (end < line.length()) {
+                char c = line.charAt(end);
+                if (c == '(') depth++;
+                if (c == ')') {
+                    depth--;
+                    if (depth == 0) {
+                        end++;
+                        break;
+                    }
+                }
+                end++;
+            }
+            val = line.substring(start, end).trim();
         }
         return val.isEmpty() ? null : val;
     }

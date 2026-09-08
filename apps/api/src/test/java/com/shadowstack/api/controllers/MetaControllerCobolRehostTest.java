@@ -41,7 +41,7 @@ class MetaControllerCobolRehostTest {
         @SuppressWarnings("unchecked")
         List<String> gaps = (List<String>) response.getBody().get("knownGaps");
         assertThat(gaps).isNotEmpty();
-        assertThat(gaps).anyMatch(g -> g.contains("VSAM") || g.contains("CICS"));
+        assertThat(gaps).anyMatch(g -> g.contains("BMS") || g.contains("VSAM") || g.contains("Nested"));
 
         @SuppressWarnings("unchecked")
         List<String> keys = (List<String>) response.getBody().get("patchMetadataKeys");

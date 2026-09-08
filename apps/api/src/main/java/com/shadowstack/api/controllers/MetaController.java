@@ -332,10 +332,10 @@ public class MetaController {
         body.put("phases", Map.of(
                 "0_baseline", "done",
                 "1_dialect", "done",
-                "2_files", "mvp_plus",
+                "2_files", "mvp_plus_indexed",
                 "3_cics", "embedded_mvp",
-                "4_ims_sql", "sql_stub_ims_facade",
-                "5_jcl", "mvp_plus_cond",
+                "4_ims_sql", "embedded_mvp",
+                "5_jcl", "mvp_plus_cond_include",
                 "6_call_goldens", "done",
                 "7_productization", "done"
         ));
@@ -347,24 +347,23 @@ public class MetaController {
                 "IF / EVALUATE / PERFORM UNTIL|TIMES|VARYING|THRU",
                 "COPY / REPLACING",
                 "SECTION entry points",
-                "CALL literal → TranslatedX.main (sibling)",
-                "SELECT … ASSIGN TO + FD / 01 record layouts",
-                "OPEN/READ/WRITE/CLOSE/REWRITE/START/DELETE sequential MVP",
+                "CALL literal → TranslatedX.main; dynamic CALL via Class.forName",
+                "SELECT … ASSIGN TO + FD / 01 + ORGANIZATION INDEXED/RELATIVE MVP",
+                "OPEN/READ/WRITE/CLOSE/REWRITE/START/DELETE sequential + indexed",
                 "SORT/MERGE USING … GIVING (line sort MVP)",
                 "EXEC CICS LINK/XCTL/WRITEQ/READQ/SYNCPOINT/RETURN (inline MVP)",
+                "EXEC DLI GU/GN/ISRT/REPL/DLET (inline IMS MVP)",
                 "EXEC SQL → fail-closed __sqlExec stub (host injects JDBC)",
-                "JCL job graph + JclJobRunner + COND=(code,op)",
+                "JCL job graph + JclJobRunner + COND + INCLUDE MEMBER expand",
                 "stdout goldens (HELLOSS)"
         ));
         body.put("knownGaps", List.of(
-                "Nested programs",
+                "Nested PROGRAM-ID bodies (detected; not separately emitted)",
                 "Deep FD group items / OCCURS in records",
-                "VSAM / INDEXED / RELATIVE (organization detected as gap)",
+                "Bit-identical IBM VSAM (KSDS/ESDS/RRDS) / IDCAMS",
                 "BMS / 3270 screens",
-                "Full IMS DL/I in generated code (façade only)",
-                "JCL PROC/INCLUDE and cataloged datasets",
-                "True BY REFERENCE shared memory / POINTER linkage",
-                "dynamic CALL targets (identifier, not literal)"
+                "JCL PROC expansion and cataloged datasets",
+                "True BY REFERENCE shared memory / POINTER linkage"
         ));
         body.put("failOnGapsProperty", "shadowstack.cobol.fail-on-gaps");
         body.put("patchMetadataKeys", List.of(
