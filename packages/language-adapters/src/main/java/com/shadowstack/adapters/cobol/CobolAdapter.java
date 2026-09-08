@@ -28,11 +28,11 @@ import java.util.regex.Pattern;
  *       (fixed→free, STOP RUN→GOBACK, terminal GO TO→PERFORM, EXIT PROGRAM→GOBACK,
  *       NEXT SENTENCE→CONTINUE, etc.). Hard-gated with {@code cobc -fsyntax-only}
  *       (missing {@code cobc} → FAIL, never soft structural PASS).</li>
- *   <li><b>translate</b> ({@code mode=translate}) — COBOL→Java semantic rehost MVP
- *       via {@link CobolToJavaTranslator} (DISPLAY/MOVE/COMPUTE/IF/PERFORM/…).
+ *   <li><b>translate</b> ({@code mode=translate}) — COBOL→Java Blu Age–class
+ *       semantic rehost for supported surfaces via {@link CobolToJavaTranslator}.
  *       Apply emits a compilable {@code Translated*} {@code .java} class;
- *       verify is {@code javac}-gated (missing/fail → FAIL). Toward Blu Age–class
- *       rehost; not full Blu Age (CICS/IMS/JCL out of scope).</li>
+ *       verify is {@code javac}-gated (missing/fail → FAIL). Not bit-identical
+ *       IBM CICS/IMS/VSAM/BMS or a licensed Blu Age product clone.</li>
  * </ul>
  */
 public class CobolAdapter implements LanguageAdapter {
@@ -46,7 +46,7 @@ public class CobolAdapter implements LanguageAdapter {
 
     /** COBOL stays COBOL (industry full track; cobc hard-gated). */
     public static final String MODE_PRESERVING = "preserving";
-    /** COBOL→Java semantic rehost MVP (javac-gated). */
+    /** COBOL→Java Blu Age–class semantic rehost for supported surfaces (javac-gated). */
     public static final String MODE_TRANSLATE = "translate";
 
     /**
@@ -269,7 +269,7 @@ public class CobolAdapter implements LanguageAdapter {
         out.addAll(detectInspectConverting(source, relPath, fixed));
         out.addAll(detectProgramIdIsInitial(source, relPath, fixed));
 
-        // ── Translate track (COBOL→Java semantic rehost MVP) ─────────────
+        // ── Translate track (COBOL→Java Blu Age–class supported surfaces) ─────────────
         out.addAll(detectSemanticRehost(source, relPath, sourceRoot));
         out.addAll(detectDisplayToPrint(source, relPath, fixed));
         out.addAll(detectMoveToAssign(source, relPath, fixed));
@@ -331,7 +331,7 @@ public class CobolAdapter implements LanguageAdapter {
                 .startLine(1)
                 .endLine(lastLine)
                 .ruleId(RULE_SEMANTIC_REHOST)
-                .ruleName("COBOL → Java semantic rehost (MVP)")
+                .ruleName("COBOL → Java Blu Age–class semantic rehost")
                 .ruleCategory("MODERNIZATION")
                 .beforeSnippet(source)
                 .proposedAfterSnippet(translated.javaSource())
@@ -342,7 +342,7 @@ public class CobolAdapter implements LanguageAdapter {
                         "WORKING-STORAGE fields + PROCEDURE subset → compilable Java class",
                         SafetyInvariant.Category.BEHAVIORAL_EQUIVALENCE,
                         SafetyInvariant.Status.SATISFIED,
-                        "javac-gated MVP; CICS/IMS/JCL out of scope"))
+                        "javac-gated Blu Age–class for supported surfaces; not bit-identical IBM"))
                 .putAstContext("language", "cobol")
                 .putAstContext("mode", MODE_TRANSLATE)
                 .putAstContext("capability", "cobol-to-java-semantic-rehost")

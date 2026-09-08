@@ -11,7 +11,7 @@
 | JavaScript / TypeScript | Full syntax-gated converter | `node --check` |
 | C# | Full syntax-gated converter | `dotnet build` |
 | COBOL **preserving** | Full syntax-gated converter | `cobc -fsyntax-only` |
-| COBOL **translate** | Semantic rehost **MVP** | `javac` (`cobol-to-java-semantic-rehost`) |
+| COBOL **translate** | Blu Age–class for **supported surfaces** | `javac` (`cobol-to-java-semantic-rehost`) |
 
 Product loop: detect → generate → verify (fail-closed) → **human review** → accept/reject.  
 Risk: evidence-weighted residual risk + calibration (see `docs/risk-process.md`).
@@ -21,12 +21,12 @@ Risk: evidence-weighted residual risk + calibration (see `docs/risk-process.md`)
 **Say:**
 - “Multi-lang syntax-gated converters with fail-closed verify and human review”
 - “Industry *class* of OpenRewrite / Upgrade Assistant / GnuCOBOL-gated tools”
-- “COBOL→Java semantic rehost MVP (javac-gated)”
+- “COBOL→Java Blu Age–class for supported surfaces (javac-gated)”
 - “SOC 2 control readiness / audit-ready controls” (when using the auditor pack)
 
 **Do not say:**
 - “SOC 2 certified / compliant / Type II” (needs external auditor report)
-- “Full Blu Age” / complete CICS·IMS·JCL rehost
+- “Full Blu Age” / bit-identical IBM CICS·IMS·VSAM·BMS / licensed Blu Age product clone
 - “Vault / CMEK live in production” unless those clusters are actually deployed
 - “Penetration tested by Cursor agent” as a substitute for an independent vendor report
 
@@ -35,7 +35,7 @@ Risk: evidence-weighted residual risk + calibration (see `docs/risk-process.md`)
 1. Merge risk accuracy + this readiness pack to `main`
 2. Production secrets / Postgres / worker dequeue / optional encryption + OIDC (`docs/secrets-and-encryption.md`, `docs/deployment-guide.md`)
 3. Demo gate: `scripts/demo.sh` shows pending patches for **all five** seeded languages
-4. Keep claim language aligned with `docs/converter-parity.md`
+4. Keep claim language aligned with `docs/converter-parity.md` and `docs/blu-age-cobol-roadmap.md`
 
 ## Out of scope for Pilot B (tracked separately)
 
@@ -44,4 +44,4 @@ Risk: evidence-weighted residual risk + calibration (see `docs/risk-process.md`)
 | Independent pen-test vendor | `docs/security-assessment.md` (agent assessment ≠ vendor) |
 | SOC 2 Type I/II | `docs/soc2-auditor-pack.md` |
 | Cluster Vault / CMEK / ESO | `docs/secrets-and-encryption.md` |
-| Full Blu Age–class COBOL | `docs/blu-age-cobol-roadmap.md` |
+| Bit-identical IBM / licensed Blu Age clone | `docs/blu-age-cobol-roadmap.md` |

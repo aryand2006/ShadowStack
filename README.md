@@ -17,7 +17,7 @@ ShadowStack is a **professional modernization workbench** for verified code conv
 | JavaScript/TS | **Full** | Acorn | `node --check` (missing → FAIL) |
 | C# | **Full** | Roslyn | `dotnet build` (missing SDK/.csproj → FAIL) |
 | COBOL preserving | **Full** | Structural + GnuCOBOL | `cobc -fsyntax-only` (missing → FAIL) |
-| COBOL translate | **Full** | CobolToJavaTranslator | `javac` (semantic rehost MVP; missing → FAIL) |
+| COBOL translate | **Full** | CobolToJavaTranslator | `javac` (Blu Age–class supported surfaces; missing → FAIL) |
 
 Soft/WARN results and missing native gates do **not** enter the review queue.
 
@@ -25,12 +25,12 @@ The pipeline is:
 
 - **Fail-closed**: Only hard verification PASS promotes a patch to pending review
 - **Human-controlled**: No automatic final conversion — every change requires explicit developer approval
-- **Multi-language full converters**: Java plus syntax-gated full tracks for Python / JavaScript / C# / COBOL-preserving, plus COBOL translate as a **javac-gated semantic rehost MVP** (toward Blu Age–class; not full Blu Age)
+- **Multi-language full converters**: Java plus syntax-gated full tracks for Python / JavaScript / C# / COBOL-preserving, plus COBOL translate as a **javac-gated Blu Age–class semantic rehost for supported surfaces** (not bit-identical IBM / not a licensed Blu Age clone)
 
 ShadowStack competes on **trust, proof, controlled transformation, and recorded migration intelligence** — not on autocomplete.
 
 See [`docs/converter-parity.md`](docs/converter-parity.md) for claim language vs roadmap.
-Blu Age–class COBOL path: [`docs/blu-age-cobol-roadmap.md`](docs/blu-age-cobol-roadmap.md) (Phase 0–1 ✅, Phase 2 sequential I/O MVP, 3–5 façades).
+Blu Age–class COBOL path: [`docs/blu-age-cobol-roadmap.md`](docs/blu-age-cobol-roadmap.md) (Phases 0–7 for supported surfaces: files, CICS/BMS, IMS/SQL stub, JCL INCLUDE/PROC, CALL BY REFERENCE, nested programs).
 
 ---
 
@@ -58,7 +58,7 @@ ShadowStack is built around a **pluggable language adapter framework**:
 |---------|--------|-------------|
 | **Java** | Full (JDT + javac) | OpenRewrite/Sonar/Jakarta classics (~62): anon→lambda, diamond, Guava→JDK, `javax`→`jakarta`, Optional/Objects/Map idioms, sequenced collections, JUnit4→5, boxing, collections, charset, deprecations |
 | **Python** | Full (LibCST + py_compile hard gate) | lib2to3/modernize/pyupgrade on AST: xrange/iter*/imports/unicode/has_key/reduce/types.* / octal / f-strings / map(None) / filter(None); Py2 print/`<>` via regex fallback when LibCST cannot parse |
-| **COBOL** | Full preserving (cobc) + full translate (javac semantic rehost MVP) | **preserving**: fixed→free, GOBACK, PERFORM, NEXT SENTENCE→CONTINUE, EVALUATE TRUE→IF; **translate**: `CobolToJavaTranslator` → `Translated*` Java (`javac` hard gate; not full Blu Age) |
+| **COBOL** | Full preserving (cobc) + full translate (javac Blu Age–class supported surfaces) | **preserving**: fixed→free, GOBACK, PERFORM, NEXT SENTENCE→CONTINUE, EVALUATE TRUE→IF; **translate**: `CobolToJavaTranslator` → `Translated*` Java (`javac` hard gate; Blu Age–class for supported surfaces) |
 | **JavaScript/TS** | Full (Acorn + node --check hard gate) | ES5/CommonJS→modern on AST: var/let/const, ===, substr, includes/startsWith, spread, escape, template literals, `__dirname`/`__filename`; CJS→ESM |
 | **C#** | Full (Roslyn + dotnet build hard gate) | Upgrade Assistant / CA classics on Roslyn: ArrayList/Hashtable, string.Format, nameof, nullable, using declarations, file-scoped namespaces, HttpClient migrations |
 
@@ -161,9 +161,9 @@ The `CobolAdapter` exposes two tracks:
 | Track | Status | Verification |
 |-------|--------|--------------|
 | **preserving** | **full** (cobc hard-gated) | `cobc -fsyntax-only` (adds `-free` after fixed→free / `>>SOURCE FREE`); missing `cobc` → FAIL |
-| **translate** | **full** (`cobol-to-java-semantic-rehost`) | `CobolToJavaTranslator` emits `Translated*.java`; **`javac` hard gate** (missing/fail → FAIL); not full Blu Age (CICS/IMS/JCL out of scope) |
+| **translate** | **full** (`cobol-to-java-semantic-rehost`) | `CobolToJavaTranslator` emits `Translated*.java`; **`javac` hard gate** (missing/fail → FAIL); Blu Age–class for supported surfaces (not bit-identical IBM CICS/IMS/VSAM/BMS) |
 
-It parses fixed-format COBOL-85 (cols 1–6 sequence area, col 7 indicator, cols 8–72 program area, cols 73–80 identification area) and free-format COBOL-2002. Industry alignment: GnuCOBOL and IBM Enterprise COBOL modernization patterns — enabling **full AST-gated converter** claims toward Blu Age / OpenRewrite / Upgrade Assistant *class* tools (honest: full syntax-gated preserving + javac-gated translate MVP; not mainframe Blu Age parity).
+It parses fixed-format COBOL-85 (cols 1–6 sequence area, col 7 indicator, cols 8–72 program area, cols 73–80 identification area) and free-format COBOL-2002. Industry alignment: GnuCOBOL and IBM Enterprise COBOL modernization patterns — enabling **full AST-gated converter** claims toward Blu Age / OpenRewrite / Upgrade Assistant *class* tools (honest: full syntax-gated preserving + javac-gated Blu Age–class translate for supported surfaces; not bit-identical IBM / not a licensed Blu Age clone).
 
 | Rule ID | Track | Transformation | Risk |
 |---------|-------|----------------|------|
@@ -315,10 +315,10 @@ cd apps/web && npm install && npm run dev
 
 Credentials: `admin` / `admin` (HTTP Basic or `POST /api/v1/auth/login`).
 
-What is real today: Java full convert + **full fail-closed AST converters** for Python/JS/C#/COBOL-preserving → analyze → generate → **7-layer Java verify** (optional layers skip cleanly) → review queue → accept/reject (SoD on `createdBy`). COBOL translate is a **javac-gated semantic rehost MVP** (`cobol-to-java-semantic-rehost`).
+What is real today: Java full convert + **full fail-closed AST converters** for Python/JS/C#/COBOL-preserving → analyze → generate → **7-layer Java verify** (optional layers skip cleanly) → review queue → accept/reject (SoD on `createdBy`). COBOL translate is a **javac-gated Blu Age–class semantic rehost for supported surfaces** (`cobol-to-java-semantic-rehost`).
 Gates: Java 7-layer pipeline (compile/AST/bytecode/API/tests/golden/risk — missing optional inputs skip as PASS), Python `py_compile` (**hard-fail** if `python3` missing), JS `node --check` (**hard-fail** if `node` missing), C# `dotnet build` (**hard-fail** if SDK/.csproj missing), COBOL-preserving `cobc` (**hard-fail** if missing), COBOL-translate `javac` (**hard-fail** if missing). Soft/WARN and missing gates fail-closed; only overall PASS promotes.
 What is real for ops: demo in-memory; `prod`/`docker` JPA + Flyway (`ss_organizations` / `ss_users` / `ss_*` + `org_id`), env-required credentials upserted into `ss_users` on boot (`OrgBootstrap`), ADMIN org/user APIs (`GET/POST /api/v1/orgs`, `GET/POST /api/v1/orgs/{id}/users`), JWT `org_id` from the user's org, durable audit query/export, tenant context (`X-Org-Id`), API enqueue-only VERIFY (`shadowstack.jobs.poller-enabled=false`), worker-owned SKIP LOCKED dequeue + 7-layer verify, live analytics, optional `oidc` profile. Single-process: `SHADOWSTACK_JOBS_POLLER_ENABLED=true`. Org admin is API-first (no dedicated `/orgs` web page yet).
-What remains external / incomplete: SOC 2 **auditor contract** + Type I/II report, independent **pen-test vendor** (agent defensive review in `docs/security-assessment.md` is **not** a vendor pen-test), and full Blu Age–class CICS/IMS/JCL COBOL→Java *semantic rehost* (roadmap: `docs/blu-age-cobol-roadmap.md`; in-repo translate is a javac-gated MVP). **Launch scope = Pilot B** multi-lang syntax-gated converters — `docs/launch-scope-pilot-b.md`. Controls/auditor pack: `docs/soc2-auditor-pack.md`. Vault Agent + CMEK are **shippable manifests**; cluster deploy still required — `docs/secrets-and-encryption.md`.
+What remains external / incomplete: SOC 2 **auditor contract** + Type I/II report, independent **pen-test vendor** (agent defensive review in `docs/security-assessment.md` is **not** a vendor pen-test), and bit-identical IBM CICS/IMS/VSAM/BMS or a licensed Blu Age product clone (roadmap: `docs/blu-age-cobol-roadmap.md`; in-repo translate is Blu Age–class for supported surfaces). **Launch scope = Pilot B** multi-lang syntax-gated converters — `docs/launch-scope-pilot-b.md`. Controls/auditor pack: `docs/soc2-auditor-pack.md`. Vault Agent + CMEK are **shippable manifests**; cluster deploy still required — `docs/secrets-and-encryption.md`.
 
 > **Docker note:** `infra/docker/Dockerfile.api` is JVM-only. For converter tooling in-container, build `infra/docker/Dockerfile.api-enterprise` (python3/pip + nodejs + `native-engines` copy; optional `cobc` when apt provides it; .NET/Roslyn still host-side). See `docker-compose.yml` comments.
 
@@ -409,7 +409,7 @@ The platform was built in this order, with each layer depending on the previous:
 9. ✅ Web UI (Next.js dashboard)
 10. ✅ Security docs + hardening
 11. ✅ Python converter — Python 2 → 3 modernization (**full**, py_compile hard gate)
-12. ✅ COBOL converter — preserving (**full**/cobc hard-gated) + translate (**full**/javac semantic rehost MVP) tracks
+12. ✅ COBOL converter — preserving (**full**/cobc hard-gated) + translate (**full**/javac Blu Age–class supported surfaces) tracks
 13. ✅ JavaScript/TypeScript converter — CommonJS/ES5 → modern ESM (**full**, node hard gate)
 14. ✅ C# converter — .NET Framework → modern patterns (**full**, dotnet build hard gate)
 15. ✅ Java industry rule catalog expanded to 45 OpenRewrite/Sonar/JDK rules

@@ -173,7 +173,7 @@ public class MetaController {
                                         "status", "full",
                                         "gate", "javac",
                                         "capability", "cobol-to-java-semantic-rehost",
-                                        "note", "javac-gated Blu Age–class semantic rehost for supported surfaces (dialect+COPY+CALL/LINKAGE+files+CICS/SQL/SORT MVP+JCL)")
+                                        "note", "javac-gated Blu Age–class for supported surfaces (dialect+INSPECT/UNSTRING/SEARCH+CALL/LINKAGE+files+CICS/BMS+IMS/SQL stub+JCL INCLUDE/PROC/IF)")
                         ),
                         "industryAligned", List.of(
                                 "GnuCOBOL",
@@ -335,7 +335,7 @@ public class MetaController {
                 "2_files", "mvp_plus_indexed_deep_fd",
                 "3_cics", "embedded_mvp_plus_bms",
                 "4_ims_sql", "embedded_mvp",
-                "5_jcl", "mvp_plus_cond_include_proc",
+                "5_jcl", "mvp_plus_cond_include_proc_if_symbolics",
                 "6_call_goldens", "done_plus_by_reference",
                 "7_productization", "done"
         ));
@@ -344,6 +344,8 @@ public class MetaController {
                 "LINKAGE SECTION + PROCEDURE DIVISION USING + CALL USING marshal",
                 "CALL BY REFERENCE shared-heap MVP + BY CONTENT/VALUE",
                 "Nested / multi PROGRAM-ID → sibling Translated* classes",
+                "INSPECT REPLACING/TALLYING/CONVERTING + UNSTRING DELIMITED + SEARCH OCCURS",
+                "MOVE CORRESPONDING + GO TO DEPENDING ON + arithmetic GIVING/REMAINDER",
                 "OCCURS + subscripts",
                 "REDEFINES (elementary alias)",
                 "IF / EVALUATE / PERFORM UNTIL|TIMES|VARYING|THRU",
@@ -351,13 +353,14 @@ public class MetaController {
                 "SECTION entry points",
                 "CALL literal → TranslatedX.main; dynamic CALL via Class.forName",
                 "SELECT … ASSIGN TO + FD / 01 groups + ORGANIZATION INDEXED/RELATIVE MVP",
-                "OPEN/READ/WRITE/CLOSE/REWRITE/START/DELETE sequential + indexed",
+                "OPEN/READ/WRITE/CLOSE/REWRITE/START/DELETE sequential + indexed (multi-file OPEN; indexed AT END)",
+                "SELECT … FILE STATUS IS (recorded)",
                 "SORT/MERGE USING … GIVING (line sort MVP)",
                 "EXEC CICS LINK/XCTL/WRITEQ/READQ/SYNCPOINT/RETURN (inline MVP)",
                 "EXEC CICS SEND/RECEIVE MAP (inline BMS MVP)",
                 "EXEC DLI GU/GN/ISRT/REPL/DLET (inline IMS MVP)",
                 "EXEC SQL → fail-closed __sqlExec stub (host injects JDBC)",
-                "JCL job graph + JclJobRunner + COND + INCLUDE MEMBER + EXEC PROC= expand",
+                "JCL job graph + JclJobRunner + COND + INCLUDE MEMBER + EXEC PROC= + IF/THEN + &symbolics",
                 "stdout goldens (HELLOSS)"
         ));
         body.put("knownGaps", List.of(

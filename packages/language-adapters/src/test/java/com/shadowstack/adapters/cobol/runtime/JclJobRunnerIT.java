@@ -86,5 +86,10 @@ class JclJobRunnerIT {
         assertFalse(JclJobRunner.shouldSkipByCond("(0,EQ)", 4));
         assertTrue(JclJobRunner.shouldSkipByCond("(4,LT)", 0));
         assertFalse(JclJobRunner.shouldSkipByCond("(4,LT)", 8));
+        // IF/THEN annotations: skip when expression is false
+        assertFalse(JclJobRunner.shouldSkipByCond("IF:RC=0", 0));
+        assertTrue(JclJobRunner.shouldSkipByCond("IF:RC=0", 4));
+        assertFalse(JclJobRunner.shouldSkipByCond("IF:RC!=0", 4));
+        assertTrue(JclJobRunner.shouldSkipByCond("IF:RC!=0", 0));
     }
 }

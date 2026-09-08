@@ -4,16 +4,25 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Parsed JCL job graph (roadmap Phase 5) — JOB/STEP/DD dependencies for batch cutover.
  * INCLUDE MEMBER= and EXEC PROC= are expanded from an optional include root.
+ * Simple IF/THEN/ELSE/ENDIF attaches {@code IF:…} cond expressions on steps (MVP).
+ * PROC symbolic {@code &NAME}/{@code &&NAME} substitution is best-effort.
  * Not bit-identical IBM JCL/PROC semantics.
  */
 public final class JclJobGraph {
@@ -25,6 +34,14 @@ public final class JclJobGraph {
             dds = dds == null ? List.of() : List.copyOf(dds);
         }
     }
+
+    private static final Pattern SYMBOLIC_REF = Pattern.compile("&{1,2}([A-Z@#$][A-Z0-9@#$]*)");
+    private static final Pattern IF_THEN = Pattern.compile(
+            "^//\\s*(?:\\S+\\s+)?IF\\b(.*)\\bTHEN\\s*$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ELSE_CARD = Pattern.compile(
+            "^//\\s*(?:\\S+\\s+)?ELSE\\s*$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ENDIF_CARD = Pattern.compile(
+            "^//\\s*(?:\\S+\\s+)?ENDIF\\s*$", Pattern.CASE_INSENSITIVE);
 
     private final String jobName;
     private final List<Step> steps;
@@ -70,7 +87,7 @@ public final class JclJobGraph {
         StringBuilder out = new StringBuilder();
         for (String raw : jclText.split("\n", -1)) {
             String line = raw.stripTrailing();
-            String u = line.toUpperCase();
+            String u = line.toUpperCase(Locale.ROOT);
             if (line.startsWith("//") && u.contains(" INCLUDE ") && u.contains("MEMBER=")) {
                 String member = extractKv(line, "MEMBER");
                 if (member == null || member.isBlank()) {
@@ -94,8 +111,13 @@ public final class JclJobGraph {
                 if (body == null) {
                     continue;
                 }
+                Map<String, String> overrides = extractSymbolicAssignments(line, "PROC");
+                ProcBody stripped = stripProcHeader(body);
+                Map<String, String> symbolics = new LinkedHashMap<>(stripped.defaults());
+                symbolics.putAll(overrides);
+                String substituted = applySymbolics(stripped.body(), symbolics, gaps);
                 appendExpanded(out, expandIncludesAndProcs(
-                        stripProcHeader(body), includeRoot, gaps, depth + 1));
+                        substituted, includeRoot, gaps, depth + 1));
                 continue;
             }
             out.append(raw).append('\n');
@@ -137,20 +159,30 @@ public final class JclJobGraph {
         }
     }
 
-    /** Drop a leading {@code //name PROC} definition card from an inlined procedure body. */
-    private static String stripProcHeader(String body) {
+    private record ProcBody(String body, Map<String, String> defaults) {}
+
+    /**
+     * Drop a leading {@code //name PROC} definition card from an inlined procedure body
+     * and capture default symbolic assignments from that card.
+     */
+    private static ProcBody stripProcHeader(String body) {
         StringBuilder kept = new StringBuilder();
+        Map<String, String> defaults = new LinkedHashMap<>();
         boolean skippedHeader = false;
         for (String raw : body.split("\n", -1)) {
             String line = raw.stripTrailing();
-            String u = line.toUpperCase();
+            String u = line.toUpperCase(Locale.ROOT);
             if (!skippedHeader && line.startsWith("//") && isProcDefinitionCard(u)) {
                 skippedHeader = true;
+                defaults.putAll(extractSymbolicAssignments(line, null));
+                continue;
+            }
+            if (line.startsWith("//") && u.matches("//\\S*\\s+PEND\\b.*")) {
                 continue;
             }
             kept.append(raw).append('\n');
         }
-        return kept.toString();
+        return new ProcBody(kept.toString(), defaults);
     }
 
     private static boolean isProcDefinitionCard(String upperLine) {
@@ -161,10 +193,154 @@ public final class JclJobGraph {
         return upperLine.matches("//\\S*\\s+PROC\\b.*") || upperLine.matches("//\\s*PROC\\b.*");
     }
 
+    /**
+     * Collect {@code KEY=VALUE} pairs from a JCL card, optionally skipping one key
+     * (e.g. {@code PROC} on an EXEC PROC= line).
+     */
+    static Map<String, String> extractSymbolicAssignments(String line, String skipKey) {
+        Map<String, String> out = new LinkedHashMap<>();
+        String u = line.toUpperCase(Locale.ROOT);
+        int i = 0;
+        while (i < line.length()) {
+            int eq = u.indexOf('=', i);
+            if (eq < 0) {
+                break;
+            }
+            int keyStart = eq - 1;
+            while (keyStart >= 0) {
+                char c = u.charAt(keyStart);
+                if (Character.isLetterOrDigit(c) || c == '@' || c == '#' || c == '$') {
+                    keyStart--;
+                } else {
+                    break;
+                }
+            }
+            keyStart++;
+            if (keyStart >= eq) {
+                i = eq + 1;
+                continue;
+            }
+            String key = u.substring(keyStart, eq);
+            if (skipKey != null && key.equalsIgnoreCase(skipKey)) {
+                i = eq + 1;
+                continue;
+            }
+            // Skip accidental matches inside DSN= etc. only when key looks like a JCL keyword
+            // used as a non-symbolic on PROC/EXEC — still allow as symbolic override for MVP.
+            int start = eq + 1;
+            int end = start;
+            if (start < line.length() && line.charAt(start) == '(') {
+                int depth = 0;
+                while (end < line.length()) {
+                    char c = line.charAt(end);
+                    if (c == '(') depth++;
+                    if (c == ')') {
+                        depth--;
+                        if (depth == 0) {
+                            end++;
+                            break;
+                        }
+                    }
+                    end++;
+                }
+            } else {
+                while (end < line.length()) {
+                    char c = line.charAt(end);
+                    if (c == ',' || c == ' ' || c == '\t') break;
+                    end++;
+                }
+            }
+            String val = line.substring(start, end).trim();
+            if (!key.isBlank() && !val.isEmpty()) {
+                out.put(key, val);
+            }
+            i = Math.max(end, eq + 1);
+        }
+        return out;
+    }
+
+    /**
+     * Replace {@code &&NAME} then {@code &NAME} using supplied symbolics (case-insensitive keys).
+     * Remaining {@code &NAME} refs become soft gap notes.
+     */
+    static String applySymbolics(String body, Map<String, String> symbolics, List<String> gaps) {
+        if (body == null || body.isEmpty()) {
+            return body;
+        }
+        Map<String, String> upper = new LinkedHashMap<>();
+        if (symbolics != null) {
+            for (Map.Entry<String, String> e : symbolics.entrySet()) {
+                if (e.getKey() != null && e.getValue() != null) {
+                    upper.put(e.getKey().toUpperCase(Locale.ROOT), e.getValue());
+                }
+            }
+        }
+        String result = body;
+        // Longer keys first so &FOOBAR does not eat &FOO.
+        List<String> keys = new ArrayList<>(upper.keySet());
+        keys.sort((a, b) -> Integer.compare(b.length(), a.length()));
+        for (String key : keys) {
+            String val = upper.get(key);
+            result = replaceIgnoreCase(result, "&&" + key, val);
+            result = replaceIgnoreCase(result, "&" + key, val);
+        }
+        Matcher m = SYMBOLIC_REF.matcher(result.toUpperCase(Locale.ROOT));
+        Set<String> unresolved = new LinkedHashSet<>();
+        while (m.find()) {
+            String name = m.group(1);
+            if (!upper.containsKey(name)) {
+                unresolved.add(name);
+            }
+        }
+        for (String name : unresolved) {
+            gaps.add("JCL unresolved symbolic &" + name);
+        }
+        return result;
+    }
+
+    private static String replaceIgnoreCase(String haystack, String needle, String replacement) {
+        if (haystack == null || needle == null || needle.isEmpty()) {
+            return haystack;
+        }
+        String h = haystack;
+        String n = needle;
+        StringBuilder sb = new StringBuilder();
+        int i = 0;
+        String hu = h.toUpperCase(Locale.ROOT);
+        String nu = n.toUpperCase(Locale.ROOT);
+        while (i < h.length()) {
+            int idx = hu.indexOf(nu, i);
+            if (idx < 0) {
+                sb.append(h, i, h.length());
+                break;
+            }
+            sb.append(h, i, idx);
+            sb.append(replacement);
+            i = idx + n.length();
+        }
+        return sb.toString();
+    }
+
     private static void appendExpanded(StringBuilder out, String body) {
         out.append(body);
         if (out.length() > 0 && out.charAt(out.length() - 1) != '\n') {
             out.append('\n');
+        }
+    }
+
+    private static final class IfFrame {
+        final String thenCond;
+        final String elseCond;
+        boolean inElse;
+
+        IfFrame(String thenCond, String elseCond) {
+            this.thenCond = thenCond;
+            this.elseCond = elseCond;
+            this.inElse = false;
+        }
+
+        String activeCond() {
+            return inElse ? elseCond : thenCond;
         }
     }
 
@@ -176,12 +352,41 @@ public final class JclJobGraph {
         String currentPgm = null;
         String currentCond = null;
         List<DdStatement> dds = new ArrayList<>();
+        Deque<IfFrame> ifStack = new ArrayDeque<>();
 
         for (String raw : jclText.split("\n", -1)) {
             String line = raw.stripTrailing();
             if (line.isBlank()) continue;
             if (line.startsWith("//*") || line.startsWith("/*")) continue;
-            String u = line.toUpperCase();
+            String u = line.toUpperCase(Locale.ROOT);
+
+            if (line.startsWith("//") && isIfThenCard(u)) {
+                String expr = extractIfExpression(line);
+                if (expr == null) {
+                    gaps.add("JCL IF/THEN unparseable: " + line.trim());
+                } else {
+                    String thenCond = "IF:" + expr;
+                    ifStack.push(new IfFrame(thenCond, "IF:" + invertSimpleRc(expr)));
+                }
+                continue;
+            }
+            if (line.startsWith("//") && ELSE_CARD.matcher(u).matches()) {
+                if (ifStack.isEmpty()) {
+                    gaps.add("JCL ELSE without IF: " + line.trim());
+                } else {
+                    ifStack.peek().inElse = true;
+                }
+                continue;
+            }
+            if (line.startsWith("//") && ENDIF_CARD.matcher(u).matches()) {
+                if (ifStack.isEmpty()) {
+                    gaps.add("JCL ENDIF without IF: " + line.trim());
+                } else {
+                    ifStack.pop();
+                }
+                continue;
+            }
+
             if (isExecProc(u) || (line.startsWith("//") && isProcDefinitionCard(u))
                     || (u.contains(" PROC ") && !u.contains("PGM="))) {
                 gaps.add("JCL PROC: " + line.trim());
@@ -189,10 +394,6 @@ public final class JclJobGraph {
             }
             if (u.contains(" INCLUDE ")) {
                 gaps.add("JCL INCLUDE unresolved: " + line.trim());
-                continue;
-            }
-            if (u.matches("//\\S+\\s+IF\\s+.*") || u.contains(" THEN ") || u.trim().equals("//ENDIF")) {
-                gaps.add("JCL IF/THEN: " + line.trim());
                 continue;
             }
             if (u.matches("//\\S+\\s+JOB\\b.*") || u.matches("//\\s+JOB\\b.*")) {
@@ -205,7 +406,9 @@ public final class JclJobGraph {
                 }
                 currentStep = extractName(line, "EXEC");
                 currentPgm = extractKv(line, "PGM");
-                currentCond = extractKv(line, "COND");
+                String execCond = extractKv(line, "COND");
+                String ifCond = activeIfCond(ifStack);
+                currentCond = ifCond != null ? ifCond : execCond;
                 dds = new ArrayList<>();
                 continue;
             }
@@ -221,10 +424,72 @@ public final class JclJobGraph {
         if (currentStep != null) {
             steps.add(new Step(currentStep, currentPgm, dds, currentCond));
         }
+        if (!ifStack.isEmpty()) {
+            gaps.add("JCL IF without ENDIF (" + ifStack.size() + " open)");
+        }
         return new JclJobGraph(jobName, steps, gaps);
     }
 
-    /** Topological order is declaration order for this MVP (no IF/THEN graph yet). */
+    private static boolean isIfThenCard(String upperLine) {
+        return IF_THEN.matcher(upperLine).matches();
+    }
+
+    /** Active IF-branch cond, or null when not inside an IF. */
+    private static String activeIfCond(Deque<IfFrame> ifStack) {
+        if (ifStack.isEmpty()) {
+            return null;
+        }
+        // Nested IFs: innermost frame wins for MVP.
+        return ifStack.peek().activeCond();
+    }
+
+    /**
+     * From {@code // IF (RC = 0) THEN} extract normalized {@code RC=0}.
+     */
+    static String extractIfExpression(String line) {
+        Matcher m = IF_THEN.matcher(line.trim());
+        if (!m.matches()) {
+            return null;
+        }
+        String raw = m.group(1).trim();
+        if (raw.startsWith("(") && raw.endsWith(")")) {
+            raw = raw.substring(1, raw.length() - 1).trim();
+        } else if (raw.startsWith("(") && raw.contains(")")) {
+            raw = raw.substring(1, raw.lastIndexOf(')')).trim();
+        }
+        if (raw.isEmpty()) {
+            return null;
+        }
+        return normalizeIfExpr(raw);
+    }
+
+    private static String normalizeIfExpr(String expr) {
+        return expr.replaceAll("\\s*=\\s*", "=")
+                .replaceAll("\\s*!=\\s*", "!=")
+                .replaceAll("\\s+", "")
+                .toUpperCase(Locale.ROOT);
+    }
+
+    /**
+     * Invert simple {@code RC=n} / {@code RC!=n} forms; otherwise wrap with {@code NOT(…)}.
+     */
+    static String invertSimpleRc(String expr) {
+        if (expr == null || expr.isBlank()) {
+            return "NOT()";
+        }
+        String e = expr.trim();
+        if (e.matches("(?i).+!=.+")) {
+            int idx = e.indexOf("!=");
+            return e.substring(0, idx) + "=" + e.substring(idx + 2);
+        }
+        if (e.matches("(?i).+=.+")) {
+            int idx = e.indexOf('=');
+            return e.substring(0, idx) + "!=" + e.substring(idx + 1);
+        }
+        return "NOT(" + e + ")";
+    }
+
+    /** Declaration order for this MVP (IF conds annotate steps; all steps listed). */
     public List<String> executionOrder() {
         List<String> order = new ArrayList<>();
         for (Step s : steps) {
@@ -255,8 +520,8 @@ public final class JclJobGraph {
     }
 
     static String extractKv(String line, String key) {
-        String u = line.toUpperCase();
-        String needle = key.toUpperCase() + "=";
+        String u = line.toUpperCase(Locale.ROOT);
+        String needle = key.toUpperCase(Locale.ROOT) + "=";
         int idx = u.indexOf(needle);
         if (idx < 0) return null;
         int start = idx + needle.length();

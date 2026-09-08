@@ -37,7 +37,7 @@ class MetaControllerCobolRehostTest {
         assertThat(phases).containsEntry("6_call_goldens", "done_plus_by_reference");
         assertThat(phases).containsEntry("7_productization", "done");
         assertThat(phases).containsEntry("3_cics", "embedded_mvp_plus_bms");
-        assertThat(phases).containsEntry("5_jcl", "mvp_plus_cond_include_proc");
+        assertThat(phases).containsEntry("5_jcl", "mvp_plus_cond_include_proc_if_symbolics");
 
         @SuppressWarnings("unchecked")
         List<String> gaps = (List<String>) response.getBody().get("knownGaps");

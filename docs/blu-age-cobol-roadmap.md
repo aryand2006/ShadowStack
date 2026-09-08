@@ -29,11 +29,11 @@ databases (stub), files, JCL, and cross-program control flow.
 | Phase | Status | Highlights |
 |-------|--------|------------|
 | 0 Baseline | ✅ | cobc preserving + javac translate |
-| 1 Dialect | ✅ | PIC/USAGE/OCCURS/REDEFINES/PERFORM/COPY |
-| 2 Files | ✅ MVP+ | Sequential + INDEXED/RELATIVE + deep FD groups/OCCURS |
+| 1 Dialect | ✅ | PIC/USAGE/OCCURS/REDEFINES/PERFORM/COPY + INSPECT/UNSTRING/SEARCH/CORR/GIVING |
+| 2 Files | ✅ MVP+ | Sequential + INDEXED/RELATIVE + deep FD + multi OPEN + indexed AT END |
 | 3 CICS | ✅ MVP+ | Inline `__cics*` + SEND/RECEIVE MAP (`__bms*`) + façades |
 | 4 IMS/SQL | ✅ MVP | EXEC DLI inline + `InMemoryImsFacade`; EXEC SQL stub |
-| 5 JCL | ✅ MVP+ | Runner + COND + INCLUDE MEMBER + EXEC PROC= expand |
+| 5 JCL | ✅ MVP+ | Runner + COND + INCLUDE + PROC + IF/THEN cond + &symbolics |
 | 6 CALL/goldens | ✅ | Literal + dynamic CALL, LINKAGE, BY REFERENCE heap, HELLOSS golden |
 | 7 Productization | ✅ | Meta `/cobol-rehost` + review proofArtifacts |
 

@@ -98,14 +98,21 @@ public final class JclJobRunner {
     }
 
     /**
-     * Classic JCL COND=(code,operator) — skip step when priorRC operator code is true.
-     * Operators: GT GE LT LE EQ NE. Only the first simple pair is evaluated.
+     * Classic JCL {@code COND=(code,operator)} — skip step when priorRC operator code is true.
+     * Also understands IF-graph annotations {@code IF:RC=n} / {@code IF:RC!=n} from
+     * {@link JclJobGraph} (skip when the IF expression is false).
+     * Operators: GT GE EQ NE LT LE. Only the first simple pair is evaluated for COND=.
      */
     static boolean shouldSkipByCond(String cond, int priorRc) {
         if (cond == null || cond.isBlank()) {
             return false;
         }
         String c = cond.trim().toUpperCase(Locale.ROOT);
+        if (c.startsWith("IF:")) {
+            String expr = c.substring(3).trim();
+            // Skip when IF expression is false (THEN/ELSE branch not taken).
+            return !evalIfRcExpression(expr, priorRc);
+        }
         if (c.startsWith("(") && c.contains(")")) {
             c = c.substring(c.indexOf('(') + 1, c.indexOf(')')).trim();
         }
@@ -128,6 +135,30 @@ public final class JclJobRunner {
         } catch (NumberFormatException e) {
             return false;
         }
+    }
+
+    /** Evaluate simple {@code RC=n} / {@code RC!=n} expressions from IF/THEN expand. */
+    static boolean evalIfRcExpression(String expr, int priorRc) {
+        if (expr == null || expr.isBlank()) {
+            return true;
+        }
+        String e = expr.trim().toUpperCase(Locale.ROOT);
+        if (e.startsWith("RC!=")) {
+            try {
+                return priorRc != Integer.parseInt(e.substring(4).trim());
+            } catch (NumberFormatException ex) {
+                return true;
+            }
+        }
+        if (e.startsWith("RC=")) {
+            try {
+                return priorRc == Integer.parseInt(e.substring(3).trim());
+            } catch (NumberFormatException ex) {
+                return true;
+            }
+        }
+        // Unknown IF expr — do not skip.
+        return true;
     }
 
     private StepResult runStep(JclJobGraph.Step step) throws IOException, InterruptedException {
