@@ -86,14 +86,91 @@ public final class CobolToJavaTranslator {
         Objects.requireNonNull(cobolSource, "cobolSource");
         List<String> gaps = new ArrayList<>();
         String expanded = CobolCopybookExpander.expand(cobolSource, sourceRoot, gaps);
-        ParsedProgram parsed = parse(expanded);
-        parsed.gaps.addAll(0, gaps);
+        List<String> units = splitProgramUnits(expanded);
+        if (units.isEmpty()) {
+            units = List.of(expanded);
+        }
+        Result primary = translateUnit(units.get(0), gaps);
+        if (units.size() == 1) {
+            return primary;
+        }
+        StringBuilder combined = new StringBuilder(primary.javaSource());
+        List<String> allGaps = new ArrayList<>(primary.unsupportedGaps());
+        List<String> allCalls = new ArrayList<>(primary.resolvedCalls());
+        int fields = primary.fieldCount();
+        int paras = primary.paragraphCount();
+        for (int i = 1; i < units.size(); i++) {
+            Result nested = translateUnit(units.get(i), List.of());
+            // Package-private sibling class in the same compilation unit.
+            String nestedSrc = nested.javaSource().replaceFirst("(?m)^public class ", "class ");
+            combined.append("\n").append(nestedSrc);
+            allGaps.addAll(nested.unsupportedGaps());
+            allCalls.addAll(nested.resolvedCalls());
+            fields += nested.fieldCount();
+            paras += nested.paragraphCount();
+            if (nested.programId() != null) {
+                allCalls.add("NESTED:" + nested.programId());
+            }
+        }
+        return new Result(primary.className(), primary.relativeJavaPath(), combined.toString(),
+                primary.programId(), fields, paras, allGaps, allCalls);
+    }
+
+    private static Result translateUnit(String unitSource, List<String> seedGaps) {
+        ParsedProgram parsed = parse(unitSource);
+        if (seedGaps != null && !seedGaps.isEmpty()) {
+            parsed.gaps.addAll(0, seedGaps);
+        }
         String className = "Translated" + (parsed.programId != null
                 ? parsed.programId.replace('-', '_') : "Program");
         String java = emitJava(className, parsed);
         return new Result(className, className + ".java", java, parsed.programId,
                 parsed.fields.size(), parsed.paragraphs.size(),
                 List.copyOf(parsed.gaps), List.copyOf(parsed.resolvedCalls));
+    }
+
+    /**
+     * Split a COBOL source that contains nested or consecutive PROGRAM-ID units.
+     * Each unit starts at IDENTIFICATION/PROGRAM-ID (or PROGRAM-ID alone).
+     */
+    static List<String> splitProgramUnits(String source) {
+        String[] lines = source.split("\n", -1);
+        List<String> units = new ArrayList<>();
+        StringBuilder cur = null;
+        int programCount = 0;
+        for (String raw : lines) {
+            String trimmed = raw.trim();
+            Matcher pid = PROGRAM_ID.matcher(trimmed);
+            boolean newProg = pid.find();
+            if (newProg) {
+                programCount++;
+                if (programCount > 1 && cur != null) {
+                    units.add(cur.toString());
+                    cur = new StringBuilder();
+                }
+                if (cur == null) cur = new StringBuilder();
+            }
+            if (cur == null) cur = new StringBuilder();
+            cur.append(raw).append('\n');
+            String upper = trimmed.toUpperCase(Locale.ROOT);
+            if (upper.startsWith("END PROGRAM")) {
+                // close current nested unit at END PROGRAM
+                units.add(cur.toString());
+                cur = new StringBuilder();
+                // do not increment programCount reset for outer continuation
+            }
+        }
+        if (cur != null && !cur.toString().isBlank()) {
+            units.add(cur.toString());
+        }
+        // Filter empties
+        List<String> out = new ArrayList<>();
+        for (String u : units) {
+            if (u != null && !u.isBlank() && PROGRAM_ID.matcher(u).find()) {
+                out.add(u);
+            }
+        }
+        return out;
     }
 
     /** Outcome of a COBOL→Java translation. */
@@ -213,6 +290,8 @@ public final class CobolToJavaTranslator {
         boolean needsCics;
         boolean needsSql;
         boolean needsIms;
+        boolean needsBms;
+        boolean needsRefHeap;
         boolean needsSort;
         /** Parse-time: WORKING-STORAGE vs LINKAGE. */
         String dataSection = "WORKING-STORAGE";
@@ -244,9 +323,8 @@ public final class CobolToJavaTranslator {
             if (pid.find()) {
                 String id = pid.group(1).toUpperCase(Locale.ROOT);
                 if (out.programId != null && !out.programId.equals(id)) {
+                    // Multi-unit sources should be split before parse; record if not.
                     out.nestedPrograms.add(id);
-                    String gap = "Nested PROGRAM-ID (outer continues; nested body not separately emitted): " + id;
-                    if (!out.gaps.contains(gap)) out.gaps.add(gap);
                     continue;
                 }
                 out.programId = id;
@@ -505,7 +583,12 @@ public final class CobolToJavaTranslator {
         String value = extractValue(rest);
 
         // Group items without PIC / VALUE / OCCURS become containers only.
-        if (pic == null && value == null && occurs == null && redefines == null) return;
+        if (pic == null && value == null && occurs == null && redefines == null) {
+            if (out.currentFd != null && level >= 1) {
+                out.recordToFd.put(name, out.currentFd);
+            }
+            return;
+        }
 
         String javaType = picToJavaType(pic, usage);
         if ("java.math.BigDecimal".equals(javaType)) {
@@ -515,13 +598,20 @@ public final class CobolToJavaTranslator {
         String init = valueToJava(value, javaType, occursN);
         String picComment = buildPicComment(pic, usage, occursN);
 
-        // FILE SECTION: bind 01 record names to the current FD and capture length.
-        if (out.currentFd != null && level == 1) {
+        // FILE SECTION: bind record / subordinate items to the current FD.
+        if (out.currentFd != null && level >= 1) {
             out.recordToFd.put(name, out.currentFd);
             int len = picByteLength(pic);
+            if (len > 0 && occursN > 1) {
+                len = len * occursN;
+            }
             if (len > 0) {
                 out.recordLength.put(name, len);
-                out.recordLength.putIfAbsent(out.currentFd, len);
+                if (level == 1) {
+                    out.recordLength.putIfAbsent(out.currentFd, len);
+                } else {
+                    out.recordLength.merge(out.currentFd, len, Integer::sum);
+                }
             }
         }
 
@@ -819,6 +909,44 @@ public final class CobolToJavaTranslator {
             sb.append("    private static void __imsDlet(String pcb) { __IMS.remove(pcb); }\n\n");
         }
 
+        if (parsed.needsBms) {
+            sb.append("    /** Inline BMS MVP — replace with host BmsFacade for production. */\n");
+            sb.append("    private static final java.util.Map<String, String> __BMS = new java.util.HashMap<>();\n");
+            sb.append("    private static void __bmsSendMap(String map, String data) {\n");
+            sb.append("        if (map != null) __BMS.put(map, data == null ? \"\" : data);\n");
+            sb.append("    }\n");
+            sb.append("    private static String __bmsReceiveMap(String map) {\n");
+            sb.append("        if (map == null) return \"\";\n");
+            sb.append("        String v = __BMS.get(map); return v == null ? \"\" : v;\n");
+            sb.append("    }\n\n");
+        }
+
+        if (parsed.needsRefHeap || !parsed.linkageOrder.isEmpty()) {
+            parsed.needsRefHeap = true;
+            sb.append("    /** CALL BY REFERENCE JVM-global heap MVP (string keys; not POINTER). */\n");
+            sb.append("    @SuppressWarnings(\"unchecked\")\n");
+            sb.append("    private static java.util.Map<String, String> __refHeap() {\n");
+            sb.append("        Object existing = System.getProperties().get(\"shadowstack.cobol.__REF_HEAP\");\n");
+            sb.append("        if (existing instanceof java.util.Map<?, ?> m) {\n");
+            sb.append("            return (java.util.Map<String, String>) m;\n");
+            sb.append("        }\n");
+            sb.append("        java.util.concurrent.ConcurrentHashMap<String, String> created =\n");
+            sb.append("                new java.util.concurrent.ConcurrentHashMap<>();\n");
+            sb.append("        Object prev = System.getProperties().putIfAbsent(\"shadowstack.cobol.__REF_HEAP\", created);\n");
+            sb.append("        if (prev instanceof java.util.Map<?, ?> m2) {\n");
+            sb.append("            return (java.util.Map<String, String>) m2;\n");
+            sb.append("        }\n");
+            sb.append("        return created;\n");
+            sb.append("    }\n");
+            sb.append("    private static void __refPut(String key, String value) {\n");
+            sb.append("        if (key != null) __refHeap().put(key, value == null ? \"\" : value);\n");
+            sb.append("    }\n");
+            sb.append("    private static String __refGet(String key) {\n");
+            sb.append("        if (key == null) return \"\";\n");
+            sb.append("        String v = __refHeap().get(key); return v == null ? \"\" : v;\n");
+            sb.append("    }\n\n");
+        }
+
         // Emit unique Java fields (REDEFINES aliases share one declaration).
         Map<String, Field> emitted = new LinkedHashMap<>();
         for (Field f : parsed.fields.values()) {
@@ -852,6 +980,9 @@ public final class CobolToJavaTranslator {
             sb.append("        __bindLinkage(args);\n");
         }
         sb.append("        ").append(toCamel(entry)).append("();\n");
+        if (!parsed.linkageOrder.isEmpty()) {
+            sb.append("        __writebackLinkage(args);\n");
+        }
         sb.append("    }\n\n");
         if (!parsed.linkageOrder.isEmpty()) {
             sb.append("    private static void __bindLinkage(String[] args) {\n");
@@ -863,19 +994,41 @@ public final class CobolToJavaTranslator {
                 String jn = lf.javaName;
                 String jt = lf.javaType;
                 sb.append("        if (args.length > ").append(li).append(" && args[").append(li).append("] != null) {\n");
+                sb.append("            String __in = args[").append(li).append("];\n");
+                sb.append("            if (__in.startsWith(\"__ref:\")) {\n");
+                sb.append("                __in = __refGet(__in.substring(6));\n");
+                sb.append("            }\n");
                 if ("int".equals(jt)) {
-                    sb.append("            ").append(jn).append(" = Integer.parseInt(args[").append(li).append("]);\n");
+                    sb.append("            ").append(jn).append(" = Integer.parseInt(__in);\n");
                 } else if ("long".equals(jt)) {
-                    sb.append("            ").append(jn).append(" = Long.parseLong(args[").append(li).append("]);\n");
+                    sb.append("            ").append(jn).append(" = Long.parseLong(__in);\n");
                 } else if ("double".equals(jt)) {
-                    sb.append("            ").append(jn).append(" = Double.parseDouble(args[").append(li).append("]);\n");
+                    sb.append("            ").append(jn).append(" = Double.parseDouble(__in);\n");
                 } else if ("java.math.BigDecimal".equals(jt) || "BigDecimal".equals(jt)) {
                     sb.append("            ").append(jn).append(" = new ").append(
                             parsed.needsBigDecimal ? "BigDecimal" : "java.math.BigDecimal")
-                            .append("(args[").append(li).append("]);\n");
+                            .append("(__in);\n");
                 } else {
-                    sb.append("            ").append(jn).append(" = args[").append(li).append("];\n");
+                    sb.append("            ").append(jn).append(" = __in;\n");
                 }
+                sb.append("        }\n");
+                li++;
+            }
+            sb.append("    }\n\n");
+            sb.append("    private static void __writebackLinkage(String[] args) {\n");
+            sb.append("        if (args == null) return;\n");
+            li = 0;
+            for (String linkName : parsed.linkageOrder) {
+                Field lf = parsed.fields.get(linkName);
+                if (lf == null || lf.aliasOfJavaName != null) continue;
+                String jn = lf.javaName;
+                sb.append("        if (args.length > ").append(li).append(" && args[").append(li).append("] != null) {\n");
+                sb.append("            if (args[").append(li).append("].startsWith(\"__ref:\")) {\n");
+                sb.append("                __refPut(args[").append(li).append("].substring(6), String.valueOf(")
+                        .append(jn).append("));\n");
+                sb.append("            } else {\n");
+                sb.append("                args[").append(li).append("] = String.valueOf(").append(jn).append(");\n");
+                sb.append("            }\n");
                 sb.append("        }\n");
                 li++;
             }
@@ -1026,6 +1179,37 @@ public final class CobolToJavaTranslator {
         return List.of("// COBOL: " + s);
     }
 
+    private enum CallMode { BY_REFERENCE, BY_CONTENT, BY_VALUE }
+
+    private static final class CallArg {
+        final CallMode mode;
+        final String cobolName;
+        CallArg(CallMode mode, String cobolName) {
+            this.mode = mode;
+            this.cobolName = cobolName;
+        }
+    }
+
+    /** COBOL CALL USING defaults to BY REFERENCE. */
+    private static List<CallArg> parseCallArgs(String usingClause) {
+        CallMode current = CallMode.BY_REFERENCE;
+        List<CallArg> out = new ArrayList<>();
+        if (usingClause == null || usingClause.isBlank()) {
+            return out;
+        }
+        for (String tok : usingClause.trim().split("\\s+")) {
+            String t = tok.replace(",", "").trim();
+            if (t.isEmpty()) continue;
+            String u = t.toUpperCase(Locale.ROOT);
+            if (u.equals("BY")) continue;
+            if (u.equals("REFERENCE")) { current = CallMode.BY_REFERENCE; continue; }
+            if (u.equals("CONTENT")) { current = CallMode.BY_CONTENT; continue; }
+            if (u.equals("VALUE")) { current = CallMode.BY_VALUE; continue; }
+            out.add(new CallArg(current, t));
+        }
+        return out;
+    }
+
     private static List<String> translateCall(String s, ParsedProgram parsed) {
         Matcher cm = CALL_LITERAL.matcher(s);
         if (cm.find()) {
@@ -1033,40 +1217,91 @@ public final class CobolToJavaTranslator {
             String callee = cm.group(1) != null ? cm.group(1)
                     : cm.group(2) != null ? cm.group(2) : cm.group(3);
             callee = callee.toUpperCase(Locale.ROOT);
-            String usingClause = cm.group(4);
-            List<String> args = new ArrayList<>();
-            if (usingClause != null && !usingClause.isBlank()) {
-                for (String tok : usingClause.trim().split("\\s+")) {
-                    String t = tok.replace(",", "").trim();
-                    if (t.isEmpty()) continue;
-                    String u = t.toUpperCase(Locale.ROOT);
-                    if (u.equals("BY") || u.equals("REFERENCE") || u.equals("CONTENT") || u.equals("VALUE")) {
-                        continue;
-                    }
-                    args.add("String.valueOf(" + toJavaIdent(t) + ")");
+            List<CallArg> callArgs = parseCallArgs(cm.group(4));
+            if (callArgs.stream().anyMatch(a -> a.mode == CallMode.BY_REFERENCE)) {
+                parsed.needsRefHeap = true;
+            }
+
+            List<String> lines = new ArrayList<>();
+            if (callArgs.isEmpty()) {
+                String argsExpr = "new String[0]";
+                if (!literal && parsed.fields.containsKey(callee)) {
+                    String dyn = toJavaIdent(callee);
+                    lines.add("{ String __dyn = String.valueOf(" + dyn + ").trim().toUpperCase().replace('-', '_');");
+                    lines.add("  try { Class.forName(\"Translated\" + __dyn).getMethod(\"main\", String[].class)"
+                            + ".invoke(null, (Object) " + argsExpr + "); }");
+                    lines.add("  catch (ReflectiveOperationException __ex) { throw new RuntimeException(\"dynamic CALL \" + __dyn, __ex); } }");
+                    return lines;
+                }
+                if (!parsed.resolvedCalls.contains(callee)) parsed.resolvedCalls.add(callee);
+                lines.add("Translated" + callee.replace('-', '_') + ".main(" + argsExpr + ");");
+                return lines;
+            }
+
+            lines.add("{");
+            lines.add("  String[] __callArgs = new String[" + callArgs.size() + "];");
+            for (int i = 0; i < callArgs.size(); i++) {
+                CallArg a = callArgs.get(i);
+                String jn = toJavaIdent(a.cobolName);
+                if (a.mode == CallMode.BY_REFERENCE) {
+                    lines.add("  __refPut(\"" + jn + "\", String.valueOf(" + jn + "));");
+                    lines.add("  __callArgs[" + i + "] = \"__ref:" + jn + "\";");
+                } else {
+                    lines.add("  __callArgs[" + i + "] = String.valueOf(" + jn + ");");
                 }
             }
-            String argsExpr = args.isEmpty() ? "new String[0]" : "new String[]{ " + String.join(", ", args) + " }";
 
-            // Identifier CALL to a WORKING-STORAGE field → dynamic Class.forName target.
             if (!literal && parsed.fields.containsKey(callee)) {
                 String dyn = toJavaIdent(callee);
-                return List.of(
-                        "{ String __dyn = String.valueOf(" + dyn + ").trim().toUpperCase().replace('-', '_');",
-                        "  try { Class.forName(\"Translated\" + __dyn).getMethod(\"main\", String[].class)"
-                                + ".invoke(null, (Object) " + argsExpr + "); }",
-                        "  catch (ReflectiveOperationException __ex) { throw new RuntimeException(\"dynamic CALL \" + __dyn, __ex); } }");
+                lines.add("  String __dyn = String.valueOf(" + dyn + ").trim().toUpperCase().replace('-', '_');");
+                lines.add("  try { Class.forName(\"Translated\" + __dyn).getMethod(\"main\", String[].class)"
+                        + ".invoke(null, (Object) __callArgs); }");
+                lines.add("  catch (ReflectiveOperationException __ex) { throw new RuntimeException(\"dynamic CALL \" + __dyn, __ex); }");
+            } else {
+                if (!parsed.resolvedCalls.contains(callee)) parsed.resolvedCalls.add(callee);
+                String javaClass = "Translated" + callee.replace('-', '_');
+                lines.add("  " + javaClass + ".main(__callArgs);");
             }
 
-            if (!parsed.resolvedCalls.contains(callee)) {
-                parsed.resolvedCalls.add(callee);
+            for (int i = 0; i < callArgs.size(); i++) {
+                CallArg a = callArgs.get(i);
+                String jn = toJavaIdent(a.cobolName);
+                Field f = lookupField(a.cobolName, parsed);
+                if (a.mode == CallMode.BY_REFERENCE) {
+                    lines.add("  " + assignFromString(jn, f, "__refGet(\"" + jn + "\")") + ";");
+                } else if (a.mode == CallMode.BY_CONTENT) {
+                    lines.add("  // BY CONTENT: caller copy not updated for " + jn);
+                } else {
+                    // BY VALUE — refresh from returned slot when callee mutated args[]
+                    lines.add("  " + assignFromString(jn, f, "__callArgs[" + i + "]") + ";");
+                }
             }
-            String javaClass = "Translated" + callee.replace('-', '_');
-            return List.of(javaClass + ".main(" + argsExpr + ");");
+            lines.add("}");
+            return lines;
         }
         String gap = "CALL program (unresolved target): " + s;
         if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
         return List.of("// " + gap);
+    }
+
+    private static String assignFromString(String javaName, Field f, String expr) {
+        String jt = f == null ? "String" : elementType(f);
+        if ("int".equals(jt)) {
+            return javaName + " = Integer.parseInt(" + expr + ")";
+        }
+        if ("long".equals(jt)) {
+            return javaName + " = Long.parseLong(" + expr + ")";
+        }
+        if ("double".equals(jt)) {
+            return javaName + " = Double.parseDouble(" + expr + ")";
+        }
+        if ("java.math.BigDecimal".equals(jt) || "BigDecimal".equals(jt)) {
+            return javaName + " = new java.math.BigDecimal(" + expr + ")";
+        }
+        if ("boolean".equals(jt)) {
+            return javaName + " = Boolean.parseBoolean(" + expr + ")";
+        }
+        return javaName + " = " + expr;
     }
 
     /**
@@ -1095,6 +1330,10 @@ public final class CobolToJavaTranslator {
         }
         String s = stripPeriod(stmt.trim());
         String upper = s.toUpperCase(Locale.ROOT);
+        if (upper.startsWith("CALL ") && upper.contains(" USING ")) {
+            // COBOL CALL USING defaults to BY REFERENCE → shared heap helpers.
+            parsed.needsRefHeap = true;
+        }
         if (upper.startsWith("OPEN ") || upper.startsWith("READ ")
                 || upper.startsWith("WRITE ") || upper.startsWith("CLOSE ")
                 || upper.startsWith("REWRITE ") || upper.startsWith("DELETE ")
@@ -1106,6 +1345,9 @@ public final class CobolToJavaTranslator {
         }
         if (upper.startsWith("EXEC CICS") || upper.contains(" EXEC CICS")) {
             parsed.needsCics = true;
+            if (upper.contains(" SEND MAP") || upper.contains(" RECEIVE MAP")) {
+                parsed.needsBms = true;
+            }
         }
         if (upper.startsWith("EXEC SQL") || upper.contains(" EXEC SQL")) {
             parsed.needsSql = true;
@@ -1268,8 +1510,11 @@ public final class CobolToJavaTranslator {
             String payloadStr;
             if (write.group(2) != null) {
                 payloadStr = "String.valueOf(" + exprOperand(write.group(2)) + ")";
-            } else if (parsed.fields.containsKey(rec) || parsed.recordToFd.containsKey(rec)) {
+            } else if (parsed.fields.containsKey(rec)) {
                 payloadStr = "String.valueOf(" + lhs(rec, parsed) + ")";
+            } else if (parsed.recordToFd.containsKey(rec)) {
+                // Group FD record with no elementary PIC — subordinates hold data.
+                payloadStr = "\"\"";
             } else {
                 payloadStr = "\"\"";
             }
@@ -1411,6 +1656,22 @@ public final class CobolToJavaTranslator {
     private static List<String> translateExecCics(String s, ParsedProgram parsed) {
         parsed.needsCics = true;
         String u = s.toUpperCase(Locale.ROOT);
+        Matcher sendMap = Pattern.compile(
+                "(?i)EXEC\\s+CICS\\s+SEND\\s+MAP\\s*\\(\\s*['\"]?([^'\")]+)['\"]?\\s*\\).*FROM\\s*\\(\\s*([A-Z0-9-]+)\\s*\\)")
+                .matcher(s);
+        if (sendMap.find()) {
+            parsed.needsBms = true;
+            return List.of("__bmsSendMap(\"" + sendMap.group(1).trim() + "\", String.valueOf("
+                    + toJavaIdent(sendMap.group(2)) + "));");
+        }
+        Matcher recvMap = Pattern.compile(
+                "(?i)EXEC\\s+CICS\\s+RECEIVE\\s+MAP\\s*\\(\\s*['\"]?([^'\")]+)['\"]?\\s*\\).*INTO\\s*\\(\\s*([A-Z0-9-]+)\\s*\\)")
+                .matcher(s);
+        if (recvMap.find()) {
+            parsed.needsBms = true;
+            return List.of(toJavaIdent(recvMap.group(2)) + " = __bmsReceiveMap(\""
+                    + recvMap.group(1).trim() + "\");");
+        }
         Matcher link = Pattern.compile("(?i)EXEC\\s+CICS\\s+LINK\\s+PROGRAM\\s*\\(\\s*['\"]?([A-Z0-9-]+)['\"]?\\s*\\)").matcher(s);
         if (link.find()) {
             return List.of("__cicsLink(\"" + link.group(1).toUpperCase(Locale.ROOT) + "\");");

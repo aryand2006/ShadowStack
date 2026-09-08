@@ -332,38 +332,40 @@ public class MetaController {
         body.put("phases", Map.of(
                 "0_baseline", "done",
                 "1_dialect", "done",
-                "2_files", "mvp_plus_indexed",
-                "3_cics", "embedded_mvp",
+                "2_files", "mvp_plus_indexed_deep_fd",
+                "3_cics", "embedded_mvp_plus_bms",
                 "4_ims_sql", "embedded_mvp",
-                "5_jcl", "mvp_plus_cond_include",
-                "6_call_goldens", "done",
+                "5_jcl", "mvp_plus_cond_include_proc",
+                "6_call_goldens", "done_plus_by_reference",
                 "7_productization", "done"
         ));
         body.put("supportedSurfaces", List.of(
                 "WORKING-STORAGE PIC/USAGE COMP/COMP-3",
                 "LINKAGE SECTION + PROCEDURE DIVISION USING + CALL USING marshal",
+                "CALL BY REFERENCE shared-heap MVP + BY CONTENT/VALUE",
+                "Nested / multi PROGRAM-ID → sibling Translated* classes",
                 "OCCURS + subscripts",
                 "REDEFINES (elementary alias)",
                 "IF / EVALUATE / PERFORM UNTIL|TIMES|VARYING|THRU",
                 "COPY / REPLACING",
                 "SECTION entry points",
                 "CALL literal → TranslatedX.main; dynamic CALL via Class.forName",
-                "SELECT … ASSIGN TO + FD / 01 + ORGANIZATION INDEXED/RELATIVE MVP",
+                "SELECT … ASSIGN TO + FD / 01 groups + ORGANIZATION INDEXED/RELATIVE MVP",
                 "OPEN/READ/WRITE/CLOSE/REWRITE/START/DELETE sequential + indexed",
                 "SORT/MERGE USING … GIVING (line sort MVP)",
                 "EXEC CICS LINK/XCTL/WRITEQ/READQ/SYNCPOINT/RETURN (inline MVP)",
+                "EXEC CICS SEND/RECEIVE MAP (inline BMS MVP)",
                 "EXEC DLI GU/GN/ISRT/REPL/DLET (inline IMS MVP)",
                 "EXEC SQL → fail-closed __sqlExec stub (host injects JDBC)",
-                "JCL job graph + JclJobRunner + COND + INCLUDE MEMBER expand",
+                "JCL job graph + JclJobRunner + COND + INCLUDE MEMBER + EXEC PROC= expand",
                 "stdout goldens (HELLOSS)"
         ));
         body.put("knownGaps", List.of(
-                "Nested PROGRAM-ID bodies (detected; not separately emitted)",
-                "Deep FD group items / OCCURS in records",
-                "Bit-identical IBM VSAM (KSDS/ESDS/RRDS) / IDCAMS",
-                "BMS / 3270 screens",
-                "JCL PROC expansion and cataloged datasets",
-                "True BY REFERENCE shared memory / POINTER linkage"
+                "Bit-identical IBM CICS/IMS/VSAM (KSDS/ESDS/RRDS) / BMS / IDCAMS",
+                "POINTER / ADDRESS OF / BASED linkage (beyond string-key BY REFERENCE heap)",
+                "Cataloged dataset resolution for JCL DD (beyond PROC/INCLUDE member expand)",
+                "Licensed Blu Age product clone / bit-identical IBM runtime",
+                "Human review still required for HIGH/CRITICAL residual risk"
         ));
         body.put("failOnGapsProperty", "shadowstack.cobol.fail-on-gaps");
         body.put("patchMetadataKeys", List.of(

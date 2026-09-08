@@ -58,7 +58,8 @@ class CobolBluAgeSurfacesIT {
         var r = CobolToJavaTranslator.translate(cobol);
         String java = r.javaSource();
         assertTrue(java.contains("__bindLinkage"), java);
-        assertTrue(java.contains("LK_ARG = args["), java);
+        assertTrue(java.contains("__writebackLinkage"), java);
+        assertTrue(java.contains("LK_ARG = __in") || java.contains("LK_ARG = args["), java);
     }
 
     @Test

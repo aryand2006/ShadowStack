@@ -87,7 +87,7 @@ class CobolVsamImsSurfacesIT {
     }
 
     @Test
-    void nested_program_id_recorded_as_gap() {
+    void nested_program_id_emits_sibling_class() {
         String cobol = """
                 >>SOURCE FREE
                 IDENTIFICATION DIVISION.
@@ -104,7 +104,8 @@ class CobolVsamImsSurfacesIT {
                     STOP RUN.
                 """;
         var r = CobolToJavaTranslator.translate(cobol);
-        assertTrue(r.unsupportedGaps().stream().anyMatch(g -> g.contains("Nested PROGRAM-ID")),
+        assertTrue(r.javaSource().contains("class TranslatedINNER"), r.javaSource());
+        assertTrue(r.unsupportedGaps().stream().noneMatch(g -> g.contains("Nested PROGRAM-ID")),
                 () -> String.valueOf(r.unsupportedGaps()));
     }
 

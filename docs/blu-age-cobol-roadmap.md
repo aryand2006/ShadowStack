@@ -1,7 +1,8 @@
 # Roadmap — Blu Age–class COBOL → Java
 
 > **Status on `main`:** Phases **0–7 Blu Age–class for supported surfaces**, including
-> INDEXED/RELATIVE MVP, dynamic CALL, EXEC DLI IMS helpers, and JCL INCLUDE expand.
+> nested PROGRAM-ID emit, CALL BY REFERENCE heap MVP, BMS SEND/RECEIVE MAP,
+> deep FD groups, dynamic CALL, EXEC DLI, and JCL INCLUDE + PROC expand.
 >
 > **Claim:** **Blu Age–class for supported surfaces.**
 > Still **not** bit-identical IBM VSAM/BMS/IDCAMS or a licensed Blu Age product clone.
@@ -29,11 +30,11 @@ databases (stub), files, JCL, and cross-program control flow.
 |-------|--------|------------|
 | 0 Baseline | ✅ | cobc preserving + javac translate |
 | 1 Dialect | ✅ | PIC/USAGE/OCCURS/REDEFINES/PERFORM/COPY |
-| 2 Files | ✅ MVP+ | Sequential + INDEXED/RELATIVE in-memory keyed store (`.idxdat`) |
-| 3 CICS | ✅ MVP | Inline `__cics*` + `InMemoryCicsFacade` |
+| 2 Files | ✅ MVP+ | Sequential + INDEXED/RELATIVE + deep FD groups/OCCURS |
+| 3 CICS | ✅ MVP+ | Inline `__cics*` + SEND/RECEIVE MAP (`__bms*`) + façades |
 | 4 IMS/SQL | ✅ MVP | EXEC DLI inline + `InMemoryImsFacade`; EXEC SQL stub |
-| 5 JCL | ✅ MVP+ | Runner + COND + INCLUDE MEMBER expand (PROC still gap) |
-| 6 CALL/goldens | ✅ | Literal + dynamic CALL, LINKAGE, HELLOSS golden |
+| 5 JCL | ✅ MVP+ | Runner + COND + INCLUDE MEMBER + EXEC PROC= expand |
+| 6 CALL/goldens | ✅ | Literal + dynamic CALL, LINKAGE, BY REFERENCE heap, HELLOSS golden |
 | 7 Productization | ✅ | Meta `/cobol-rehost` + review proofArtifacts |
 
 ## Phase 7 exit criteria
@@ -42,6 +43,7 @@ databases (stub), files, JCL, and cross-program control flow.
 - [x] Gaps visible on review (`proofArtifacts.translateGaps` / `resolvedCalls`)
 - [x] Written parity matrix vs Blu Age surfaces (this doc)
 - [x] Deep surfaces MVP: CICS embed, SORT, LINKAGE, PERFORM THRU, JCL COND
+- [x] Nested PROGRAM-ID sibling emit, BY REFERENCE heap, BMS maps, PROC expand
 - [x] Marketing upgrade to **“Blu Age–class for supported surfaces”**
 - [ ] Bit-identical IBM CICS/IMS/VSAM/BMS — **non-goal**
 
@@ -52,23 +54,17 @@ databases (stub), files, JCL, and cross-program control flow.
 | `GET /api/v1/meta/cobol-rehost` | Supported surfaces + known gaps + phase status |
 | Patch metadata `translateGaps` / `resolvedCalls` | Per-patch gap browser |
 
-## Remaining gaps (honest)
+## Remaining gaps (honest non-goals / stretch)
 
-- Nested PROGRAM-ID bodies (detected; not separately emitted)
-- Deep FD groups/OCCURS in records
-- Bit-identical IBM VSAM / IDCAMS
-- BMS / 3270 screens
-- JCL PROC expansion + cataloged datasets
-- True BY REFERENCE shared memory / POINTER
-- BMS / 3270 screens
-- Full IMS DL/I in generated code
-- JCL PROC/INCLUDE + cataloged datasets
-- True BY REFERENCE shared memory / POINTER
-- Dynamic CALL (non-literal target)
+- Bit-identical IBM CICS/IMS/VSAM / BMS / IDCAMS
+- POINTER / ADDRESS OF / BASED linkage (beyond string-key BY REFERENCE heap)
+- Cataloged dataset resolution for JCL DD (PROC/INCLUDE member expand is supported)
+- Licensed Blu Age product clone
+- Skipping human review for HIGH/CRITICAL residual risk
 
 ## Non-goals
 
-- Bit-identical IBM CICS/IMS/VSAM
+- Bit-identical IBM CICS/IMS/VSAM/BMS
 - Claiming a licensed Blu Age product replacement
 - Skipping human review for CRITICAL residual risk
 

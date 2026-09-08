@@ -34,14 +34,18 @@ class MetaControllerCobolRehostTest {
 
         @SuppressWarnings("unchecked")
         Map<String, String> phases = (Map<String, String>) response.getBody().get("phases");
-        assertThat(phases).containsEntry("6_call_goldens", "done");
+        assertThat(phases).containsEntry("6_call_goldens", "done_plus_by_reference");
         assertThat(phases).containsEntry("7_productization", "done");
-        assertThat(phases).containsEntry("3_cics", "embedded_mvp");
+        assertThat(phases).containsEntry("3_cics", "embedded_mvp_plus_bms");
+        assertThat(phases).containsEntry("5_jcl", "mvp_plus_cond_include_proc");
 
         @SuppressWarnings("unchecked")
         List<String> gaps = (List<String>) response.getBody().get("knownGaps");
         assertThat(gaps).isNotEmpty();
-        assertThat(gaps).anyMatch(g -> g.contains("BMS") || g.contains("VSAM") || g.contains("Nested"));
+        assertThat(gaps).anyMatch(g -> g.contains("bit-identical") || g.contains("Bit-identical")
+                || g.contains("licensed Blu Age") || g.contains("Licensed Blu Age"));
+        assertThat(gaps).noneMatch(g -> g.contains("Nested PROGRAM-ID"));
+        assertThat(gaps).noneMatch(g -> g.equals("BMS / 3270 screens"));
 
         @SuppressWarnings("unchecked")
         List<String> keys = (List<String>) response.getBody().get("patchMetadataKeys");
