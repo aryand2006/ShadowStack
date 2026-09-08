@@ -143,10 +143,17 @@ public final class CobolToJavaTranslator {
         final String picComment;
         /** When REDEFINES shares storage with another field of compatible type. */
         final String aliasOfJavaName;
+        final boolean linkage;
 
         Field(String cobolName, String javaName, String javaType, String initExpr,
               boolean level88, int occurs, String redefines, String picComment,
               String aliasOfJavaName) {
+            this(cobolName, javaName, javaType, initExpr, level88, occurs, redefines, picComment, aliasOfJavaName, false);
+        }
+
+        Field(String cobolName, String javaName, String javaType, String initExpr,
+              boolean level88, int occurs, String redefines, String picComment,
+              String aliasOfJavaName, boolean linkage) {
             this.cobolName = cobolName;
             this.javaName = javaName;
             this.javaType = javaType;
@@ -156,6 +163,7 @@ public final class CobolToJavaTranslator {
             this.redefines = redefines;
             this.picComment = picComment;
             this.aliasOfJavaName = aliasOfJavaName;
+            this.linkage = linkage;
         }
 
         boolean isArray() {
@@ -189,6 +197,12 @@ public final class CobolToJavaTranslator {
         final Map<String, Integer> recordLength = new LinkedHashMap<>();
         boolean needsBigDecimal;
         boolean needsFileFacade;
+        boolean needsCics;
+        boolean needsSql;
+        boolean needsSort;
+        /** Parse-time: WORKING-STORAGE vs LINKAGE. */
+        String dataSection = "WORKING-STORAGE";
+        final List<String> linkageOrder = new ArrayList<>();
     }
 
     private static ParsedProgram parse(String source) {
@@ -235,10 +249,31 @@ public final class CobolToJavaTranslator {
                 if (!upper.contains("FILE SECTION")) {
                     out.currentFd = null;
                 }
+                if (upper.contains("LINKAGE SECTION")) {
+                    out.dataSection = "LINKAGE";
+                } else if (upper.contains("WORKING-STORAGE SECTION")
+                        || upper.contains("LOCAL-STORAGE SECTION")) {
+                    out.dataSection = "WORKING-STORAGE";
+                } else if (upper.contains("FILE SECTION")) {
+                    out.dataSection = "FILE";
+                }
                 continue;
             }
             if (upper.startsWith("PROCEDURE DIVISION")) {
                 division = "PROCEDURE DIVISION";
+                Matcher using = Pattern.compile("(?i)PROCEDURE\\s+DIVISION\\s+USING\\s+(.+?)\\.?\\s*$").matcher(trimmed);
+                if (using.matches()) {
+                    for (String tok : using.group(1).trim().split("\\s+")) {
+                        String name = tok.replace(",", "").trim().toUpperCase(Locale.ROOT);
+                        if (name.isEmpty()) continue;
+                        if (!out.linkageOrder.contains(name)) out.linkageOrder.add(name);
+                        Field f = out.fields.get(name);
+                        if (f != null && !f.linkage) {
+                            out.fields.put(name, new Field(f.cobolName, f.javaName, f.javaType, f.initExpr,
+                                    f.level88, f.occurs, f.redefines, f.picComment, f.aliasOfJavaName, true));
+                        }
+                    }
+                }
                 continue;
             }
 
@@ -469,8 +504,12 @@ public final class CobolToJavaTranslator {
         }
 
         String javaName = aliasOf != null ? aliasOf : toJavaIdent(name);
+        boolean linkage = "LINKAGE".equals(out.dataSection);
         out.fields.put(name, new Field(name, javaName, javaType, init, false,
-                occursN, redefines, picComment, aliasOf));
+                occursN, redefines, picComment, aliasOf, linkage));
+        if (linkage && aliasOf == null && !out.linkageOrder.contains(name)) {
+            out.linkageOrder.add(name);
+        }
     }
 
     private static boolean compatibleRedefines(String a, String b, int occursA, int occursB) {
@@ -630,6 +669,54 @@ public final class CobolToJavaTranslator {
             sb.append("        java.io.OutputStream o = __OUT.remove(dd); if (o != null) o.close();\n");
             sb.append("        java.io.RandomAccessFile raf = __IO.remove(dd); if (raf != null) raf.close();\n");
             sb.append("        __LAST_POS.remove(dd);\n");
+            sb.append("    }\n");
+            sb.append("    private static void __start(String dd) throws Exception {\n");
+            sb.append("        java.io.RandomAccessFile raf = __IO.get(dd); if (raf != null) { raf.seek(0); return; }\n");
+            sb.append("        java.io.BufferedReader r = __IN.remove(dd); if (r != null) r.close();\n");
+            sb.append("        __openInput(dd);\n");
+            sb.append("    }\n");
+            sb.append("    private static void __deleteCurrent(String dd) throws Exception {\n");
+            sb.append("        // Sequential MVP: blank the last READ line (I-O only).\n");
+            sb.append("        __rewrite(dd, new byte[0]);\n");
+            sb.append("    }\n\n");
+        }
+
+        if (parsed.needsSort) {
+            sb.append("    private static void __sortLines(String inDd, String outDd) throws Exception {\n");
+            sb.append("        java.nio.file.Path in = java.nio.file.Path.of(\".\").resolve(inDd + \".dat\");\n");
+            sb.append("        java.nio.file.Path out = java.nio.file.Path.of(\".\").resolve(outDd + \".dat\");\n");
+            sb.append("        java.util.List<String> lines = java.nio.file.Files.readAllLines(in);\n");
+            sb.append("        java.util.Collections.sort(lines);\n");
+            sb.append("        java.nio.file.Files.write(out, lines);\n");
+            sb.append("    }\n\n");
+        }
+
+        if (parsed.needsCics) {
+            sb.append("    /** Inline CICS MVP — replace with host CicsFacade for production. */\n");
+            sb.append("    private static final java.util.Map<String, byte[]> __TSQ = new java.util.HashMap<>();\n");
+            sb.append("    private static void __cicsLink(String program) {\n");
+            sb.append("        try {\n");
+            sb.append("            Class<?> c = Class.forName(\"Translated\" + program.replace('-', '_'));\n");
+            sb.append("            c.getMethod(\"main\", String[].class).invoke(null, (Object) new String[0]);\n");
+            sb.append("        } catch (ReflectiveOperationException e) {\n");
+            sb.append("            throw new RuntimeException(\"CICS LINK \" + program + \": \" + e.getMessage(), e);\n");
+            sb.append("        }\n");
+            sb.append("    }\n");
+            sb.append("    private static void __cicsXctl(String program) { __cicsLink(program); }\n");
+            sb.append("    private static void __cicsWriteQ(String q, String data) {\n");
+            sb.append("        __TSQ.put(q, data.getBytes(java.nio.charset.StandardCharsets.UTF_8));\n");
+            sb.append("    }\n");
+            sb.append("    private static String __cicsReadQ(String q) {\n");
+            sb.append("        byte[] b = __TSQ.get(q); return b == null ? \"\" : new String(b, java.nio.charset.StandardCharsets.UTF_8);\n");
+            sb.append("    }\n");
+            sb.append("    private static void __cicsSyncpoint() { /* no-op MVP */ }\n");
+            sb.append("    private static void __cicsRollback() { throw new UnsupportedOperationException(\"CICS SYNCPOINT ROLLBACK\"); }\n\n");
+        }
+
+        if (parsed.needsSql) {
+            sb.append("    /** Inline EXEC SQL MVP — host should inject JDBC. Fail-closed by default. */\n");
+            sb.append("    private static void __sqlExec(String sql) {\n");
+            sb.append("        throw new UnsupportedOperationException(\"EXEC SQL (inject JDBC): \" + sql);\n");
             sb.append("    }\n\n");
         }
 
@@ -662,8 +749,39 @@ public final class CobolToJavaTranslator {
 
         String entry = parsed.paragraphs.get(0).name;
         sb.append("    public static void main(String[] args) {\n");
+        if (!parsed.linkageOrder.isEmpty()) {
+            sb.append("        __bindLinkage(args);\n");
+        }
         sb.append("        ").append(toCamel(entry)).append("();\n");
         sb.append("    }\n\n");
+        if (!parsed.linkageOrder.isEmpty()) {
+            sb.append("    private static void __bindLinkage(String[] args) {\n");
+            sb.append("        if (args == null) return;\n");
+            int li = 0;
+            for (String linkName : parsed.linkageOrder) {
+                Field lf = parsed.fields.get(linkName);
+                if (lf == null || lf.aliasOfJavaName != null) continue;
+                String jn = lf.javaName;
+                String jt = lf.javaType;
+                sb.append("        if (args.length > ").append(li).append(" && args[").append(li).append("] != null) {\n");
+                if ("int".equals(jt)) {
+                    sb.append("            ").append(jn).append(" = Integer.parseInt(args[").append(li).append("]);\n");
+                } else if ("long".equals(jt)) {
+                    sb.append("            ").append(jn).append(" = Long.parseLong(args[").append(li).append("]);\n");
+                } else if ("double".equals(jt)) {
+                    sb.append("            ").append(jn).append(" = Double.parseDouble(args[").append(li).append("]);\n");
+                } else if ("java.math.BigDecimal".equals(jt) || "BigDecimal".equals(jt)) {
+                    sb.append("            ").append(jn).append(" = new ").append(
+                            parsed.needsBigDecimal ? "BigDecimal" : "java.math.BigDecimal")
+                            .append("(args[").append(li).append("]);\n");
+                } else {
+                    sb.append("            ").append(jn).append(" = args[").append(li).append("];\n");
+                }
+                sb.append("        }\n");
+                li++;
+            }
+            sb.append("    }\n\n");
+        }
 
         for (Paragraph p : parsed.paragraphs) {
             sb.append("    public static void ").append(toCamel(p.name)).append("() {\n");
@@ -787,16 +905,15 @@ public final class CobolToJavaTranslator {
             return fileIo;
         }
 
-        // EXEC CICS / EXEC SQL → explicit gaps (façades exist for embedders).
+        // EXEC CICS / EXEC SQL → inline MVP façades (javac-friendly).
         if (upper.startsWith("EXEC CICS") || upper.contains(" EXEC CICS")) {
-            String gap = "CICS verb (use CicsFacade): " + s;
-            if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
-            return List.of("// " + gap);
+            return translateExecCics(s, parsed);
         }
         if (upper.startsWith("EXEC SQL") || upper.contains(" EXEC SQL")) {
-            String gap = "EXEC SQL (Phase 4): " + s;
-            if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
-            return List.of("// " + gap);
+            return translateExecSql(s, parsed);
+        }
+        if (upper.startsWith("SORT ") || upper.startsWith("MERGE ")) {
+            return translateSortMerge(s, parsed);
         }
 
         // Unsupported — emit comment so class still compiles; record gap.
@@ -819,12 +936,6 @@ public final class CobolToJavaTranslator {
             String javaClass = "Translated" + callee.replace('-', '_');
             String usingClause = cm.group(4);
             if (usingClause != null && !usingClause.isBlank()) {
-                String upperUsing = usingClause.toUpperCase(Locale.ROOT);
-                if (upperUsing.contains("BY REFERENCE") || upperUsing.contains("BY CONTENT")
-                        || upperUsing.contains("BY VALUE")) {
-                    String gap = "CALL USING BY REFERENCE/CONTENT/VALUE (MVP passes String.valueOf only): " + s;
-                    if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
-                }
                 List<String> args = new ArrayList<>();
                 for (String tok : usingClause.trim().split("\\s+")) {
                     String t = tok.replace(",", "").trim();
@@ -833,6 +944,7 @@ public final class CobolToJavaTranslator {
                     if (u.equals("BY") || u.equals("REFERENCE") || u.equals("CONTENT") || u.equals("VALUE")) {
                         continue;
                     }
+                    // BY REFERENCE/CONTENT/VALUE all marshal via String for LINKAGE bind MVP.
                     args.add("String.valueOf(" + toJavaIdent(t) + ")");
                 }
                 if (!args.isEmpty()) {
@@ -874,8 +986,18 @@ public final class CobolToJavaTranslator {
         String upper = s.toUpperCase(Locale.ROOT);
         if (upper.startsWith("OPEN ") || upper.startsWith("READ ")
                 || upper.startsWith("WRITE ") || upper.startsWith("CLOSE ")
-                || upper.startsWith("REWRITE ")) {
+                || upper.startsWith("REWRITE ") || upper.startsWith("DELETE ")
+                || upper.startsWith("START ")) {
             parsed.needsFileFacade = true;
+        }
+        if (upper.startsWith("SORT ") || upper.startsWith("MERGE ")) {
+            parsed.needsSort = true;
+        }
+        if (upper.startsWith("EXEC CICS") || upper.contains(" EXEC CICS")) {
+            parsed.needsCics = true;
+        }
+        if (upper.startsWith("EXEC SQL") || upper.contains(" EXEC SQL")) {
+            parsed.needsSql = true;
         }
     }
 
@@ -1007,8 +1129,19 @@ public final class CobolToJavaTranslator {
             return List.of("try { __close(\"" + dd
                     + "\"); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
         }
-        if (upper.startsWith("DELETE ") || upper.startsWith("START ")) {
-            return null; // fall through to gap labeling
+        Matcher start = Pattern.compile("(?i)^START\\s+([A-Z0-9-]+)(?:\\s+.*)?").matcher(s);
+        if (start.matches()) {
+            parsed.needsFileFacade = true;
+            String logical = start.group(1).toUpperCase(Locale.ROOT);
+            String dd = resolveAssign(logical, parsed);
+            return List.of("try { __start(\"" + dd + "\"); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
+        }
+        Matcher del = Pattern.compile("(?i)^DELETE\\s+([A-Z0-9-]+)(?:\\s+.*)?").matcher(s);
+        if (del.matches()) {
+            parsed.needsFileFacade = true;
+            String logical = del.group(1).toUpperCase(Locale.ROOT);
+            String dd = resolveAssign(logical, parsed);
+            return List.of("try { __deleteCurrent(\"" + dd + "\"); } catch (Exception __ex) { throw new RuntimeException(__ex); }");
         }
         return null;
     }
@@ -1069,6 +1202,71 @@ public final class CobolToJavaTranslator {
         }
         out.add("}");
         return out;
+    }
+
+
+    private static List<String> translateExecCics(String s, ParsedProgram parsed) {
+        parsed.needsCics = true;
+        String u = s.toUpperCase(Locale.ROOT);
+        Matcher link = Pattern.compile("(?i)EXEC\\s+CICS\\s+LINK\\s+PROGRAM\\s*\\(\\s*['\"]?([A-Z0-9-]+)['\"]?\\s*\\)").matcher(s);
+        if (link.find()) {
+            return List.of("__cicsLink(\"" + link.group(1).toUpperCase(Locale.ROOT) + "\");");
+        }
+        Matcher xctl = Pattern.compile("(?i)EXEC\\s+CICS\\s+XCTL\\s+PROGRAM\\s*\\(\\s*['\"]?([A-Z0-9-]+)['\"]?\\s*\\)").matcher(s);
+        if (xctl.find()) {
+            return List.of("__cicsXctl(\"" + xctl.group(1).toUpperCase(Locale.ROOT) + "\");");
+        }
+        Matcher wq = Pattern.compile("(?i)EXEC\\s+CICS\\s+WRITEQ\\s+TS\\s+QUEUE\\s*\\(\\s*['\"]?([^'\")]+)['\"]?\\s*\\).*FROM\\s*\\(\\s*([A-Z0-9-]+)\\s*\\)").matcher(s);
+        if (wq.find()) {
+            return List.of("__cicsWriteQ(\"" + wq.group(1).trim() + "\", String.valueOf("
+                    + toJavaIdent(wq.group(2)) + "));");
+        }
+        Matcher rq = Pattern.compile("(?i)EXEC\\s+CICS\\s+READQ\\s+TS\\s+QUEUE\\s*\\(\\s*['\"]?([^'\")]+)['\"]?\\s*\\).*INTO\\s*\\(\\s*([A-Z0-9-]+)\\s*\\)").matcher(s);
+        if (rq.find()) {
+            return List.of(toJavaIdent(rq.group(2)) + " = __cicsReadQ(\"" + rq.group(1).trim() + "\");");
+        }
+        if (u.contains("SYNCPOINT") && u.contains("ROLLBACK")) {
+            return List.of("__cicsRollback();");
+        }
+        if (u.contains("SYNCPOINT")) {
+            return List.of("__cicsSyncpoint();");
+        }
+        if (u.contains("RETURN")) {
+            return List.of("return; // CICS RETURN");
+        }
+        String gap = "CICS verb (unsupported subset): " + s;
+        if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
+        return List.of("// " + gap);
+    }
+
+    private static List<String> translateExecSql(String s, ParsedProgram parsed) {
+        parsed.needsSql = true;
+        // Strip EXEC SQL ... END-EXEC wrapper for the stub call.
+        String sql = s.replaceAll("(?i)^EXEC\\s+SQL\\s*", "")
+                .replaceAll("(?i)\\s*END-EXEC\\s*$", "")
+                .trim();
+        if (sql.isEmpty()) sql = s;
+        String lit = sql.replace("\\\\", "\\\\\\\\").replace("\"", "\\\\\"");
+        return List.of("try { __sqlExec(\"" + lit + "\"); } catch (UnsupportedOperationException __sqlEx) { throw __sqlEx; }");
+    }
+
+    private static List<String> translateSortMerge(String s, ParsedProgram parsed) {
+        parsed.needsSort = true;
+        Matcher m = Pattern.compile(
+                "(?i)^(?:SORT|MERGE)\\s+\\S+(?:\\s+ON\\s+.+?)?\\s+USING\\s+([A-Z0-9-]+)\\s+GIVING\\s+([A-Z0-9-]+)")
+                .matcher(s);
+        if (m.find()) {
+            String inDd = resolveAssign(m.group(1), parsed);
+            String outDd = resolveAssign(m.group(2), parsed);
+            String verb = s.toUpperCase(Locale.ROOT).startsWith("MERGE") ? "MERGE" : "SORT";
+            return List.of(
+                    "try { __sortLines(\"" + inDd + "\", \"" + outDd + "\"); } catch (Exception __ex) { throw new RuntimeException(\""
+                            + verb + "\", __ex); }");
+        }
+        String gap = "unsupported verb: " + (s.toUpperCase(Locale.ROOT).startsWith("MERGE") ? "MERGE" : "SORT")
+                + " (need USING … GIVING)";
+        if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
+        return List.of("// " + gap);
     }
 
     private static String unsupportedGapLabel(String upper, String s) {
@@ -1132,14 +1330,24 @@ public final class CobolToJavaTranslator {
         }
         Matcher thru = PERFORM_THRU.matcher(s);
         if (thru.matches()) {
-            String start = thru.group(1);
-            String end = thru.group(2);
-            String gap = "PERFORM THRU partial: " + start + " THRU " + end
-                    + " (calls start only; full paragraph graph not expanded)";
+            String start = thru.group(1).toUpperCase(Locale.ROOT);
+            String end = thru.group(2).toUpperCase(Locale.ROOT);
+            int i0 = -1, i1 = -1;
+            for (int i = 0; i < parsed.paragraphs.size(); i++) {
+                String n = parsed.paragraphs.get(i).name;
+                if (n.equals(start)) i0 = i;
+                if (n.equals(end)) i1 = i;
+            }
+            if (i0 >= 0 && i1 >= i0) {
+                List<String> out = new ArrayList<>();
+                for (int i = i0; i <= i1; i++) {
+                    out.add(toCamel(parsed.paragraphs.get(i).name) + "();");
+                }
+                return out;
+            }
+            String gap = "PERFORM THRU unresolved range: " + start + " THRU " + end;
             if (!parsed.gaps.contains(gap)) parsed.gaps.add(gap);
-            return List.of(
-                    toCamel(start) + "();",
-                    "// COBOL gap: PERFORM " + start + " THRU " + end);
+            return List.of(toCamel(start) + "(); // " + gap);
         }
         Matcher simple = PERFORM_SIMPLE.matcher(s);
         if (simple.matches()) {

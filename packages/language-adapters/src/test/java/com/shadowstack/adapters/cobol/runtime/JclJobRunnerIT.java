@@ -79,4 +79,12 @@ class JclJobRunnerIT {
         assertTrue(result.steps().get(0).gaps().stream()
                 .anyMatch(g -> g.contains("Missing translated program")));
     }
+
+    @Test
+    void cond_skips_step_when_prior_rc_matches() {
+        assertTrue(JclJobRunner.shouldSkipByCond("(0,EQ)", 0));
+        assertFalse(JclJobRunner.shouldSkipByCond("(0,EQ)", 4));
+        assertTrue(JclJobRunner.shouldSkipByCond("(4,LT)", 0));
+        assertFalse(JclJobRunner.shouldSkipByCond("(4,LT)", 8));
+    }
 }

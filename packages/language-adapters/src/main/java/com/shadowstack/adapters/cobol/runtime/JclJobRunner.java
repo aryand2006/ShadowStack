@@ -15,8 +15,9 @@ import java.util.function.Function;
 
 /**
  * Phase 5 MVP — run a parsed {@link JclJobGraph} against local Translated* Java
- * programs. Maps DD DSN → {@code workDir/<ddName>.dat}; does not implement
- * COND/PROC/cataloged datasets. Fail-closed on missing programs.
+ * programs. Maps DD DSN → {@code workDir/<ddName>.dat}.
+ * Evaluates simple {@code COND=(code,op)} against prior step RC.
+ * PROC/INCLUDE/catalog remain gaps. Fail-closed on missing programs.
  */
 public final class JclJobRunner {
 
@@ -77,9 +78,18 @@ public final class JclJobRunner {
         Files.createDirectories(workDir);
         List<StepResult> results = new ArrayList<>();
         boolean allOk = true;
+        int lastRc = 0;
         for (JclJobGraph.Step step : graph.steps()) {
+            if (shouldSkipByCond(step.cond(), lastRc)) {
+                results.add(new StepResult(step.stepName(), step.program(), false, lastRc, "",
+                        List.of("Skipped by COND=" + step.cond() + " (priorRC=" + lastRc + ")")));
+                continue;
+            }
             StepResult sr = runStep(step);
             results.add(sr);
+            if (sr.ran()) {
+                lastRc = sr.exitCode();
+            }
             if (!sr.ran() || sr.exitCode() != 0) {
                 allOk = false;
             }
@@ -87,11 +97,41 @@ public final class JclJobRunner {
         return new RunResult(graph.jobName(), results, allOk && graph.gaps().isEmpty());
     }
 
+    /**
+     * Classic JCL COND=(code,operator) — skip step when priorRC operator code is true.
+     * Operators: GT GE LT LE EQ NE. Only the first simple pair is evaluated.
+     */
+    static boolean shouldSkipByCond(String cond, int priorRc) {
+        if (cond == null || cond.isBlank()) {
+            return false;
+        }
+        String c = cond.trim().toUpperCase(Locale.ROOT);
+        if (c.startsWith("(") && c.contains(")")) {
+            c = c.substring(c.indexOf('(') + 1, c.indexOf(')')).trim();
+        }
+        String[] parts = c.split(",");
+        if (parts.length < 2) {
+            return false;
+        }
+        try {
+            int code = Integer.parseInt(parts[0].trim());
+            String op = parts[1].trim();
+            return switch (op) {
+                case "GT" -> priorRc > code;
+                case "GE" -> priorRc >= code;
+                case "LT" -> priorRc < code;
+                case "LE" -> priorRc <= code;
+                case "EQ" -> priorRc == code;
+                case "NE" -> priorRc != code;
+                default -> false;
+            };
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
     private StepResult runStep(JclJobGraph.Step step) throws IOException, InterruptedException {
         List<String> gaps = new ArrayList<>();
-        if (step.cond() != null && !step.cond().isBlank()) {
-            gaps.add("JCL COND not evaluated (MVP always runs): " + step.cond());
-        }
         Map<String, Path> ddFiles = materializeDds(step, gaps);
         Path classFile = programClassResolver.apply(step.program());
         if (classFile == null || !Files.isRegularFile(classFile)) {

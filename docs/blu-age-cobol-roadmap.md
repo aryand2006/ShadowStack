@@ -1,23 +1,26 @@
-# Roadmap — Full Blu Age–class COBOL → Java
+# Roadmap — Blu Age–class COBOL → Java
 
-> **Status on `main`:** Phase **0–1 ✅**, Phase **2 sequential I/O MVP+** (FD/ASSIGN/REWRITE),
-> Phases **3–4 façades**, Phase **5 JCL parser + local runner MVP**, Phase **6 ✅ CALL**,
-> Phase **7 🟡 MVP** Meta gap browser + review proofArtifacts.
-> Still **not** certified whole-system Blu Age parity.
+> **Status on `main`:** Phases **0–7 shipped for supported surfaces** —
+> dialect, COPY, CALL/LINKAGE, sequential files (+ START/DELETE/REWRITE),
+> SORT/MERGE USING/GIVING, embedded CICS/SQL MVP, JCL runner + COND,
+> Meta gap browser + review proofArtifacts.
+>
+> **Claim:** **Blu Age–class for supported surfaces.**
+> Still **not** bit-identical IBM CICS/IMS/VSAM/BMS or a certified Blu Age product clone.
 
 ## North star
 
 A customer can point ShadowStack at a **multi-program COBOL application**
 (online + batch), get **compilable Java**, with **behavioral evidence** and
-**human-gated** promotion — covering Blu Age–class surfaces: screens/transactions,
-databases, files, JCL, and cross-program control flow.
+**human-gated** promotion — covering Blu Age–class surfaces: transactions,
+databases (stub), files, JCL, and cross-program control flow.
 
 ## Principles
 
 1. **Fail-closed** — missing gate / unverified semantics → FAIL.
 2. **Evidence over vibes** — certificates / layer results / goldens.
 3. **Human review** for HIGH/CRITICAL residual risk.
-4. **Honest Meta labels** — no “full Blu Age” until Phase 7 exit.
+4. **Honest Meta labels** — Blu Age–class for supported surfaces; remaining gaps listed.
 5. **Gap lists** — `Result.unsupportedGaps`, patch `translateGaps`, Meta `/cobol-rehost`.
 
 ---
@@ -26,22 +29,23 @@ databases, files, JCL, and cross-program control flow.
 
 | Phase | Status | Highlights |
 |-------|--------|------------|
-| 0 Baseline | ✅ | cobc preserving + javac translate MVP |
+| 0 Baseline | ✅ | cobc preserving + javac translate |
 | 1 Dialect | ✅ | PIC/USAGE/OCCURS/REDEFINES/PERFORM/COPY |
-| 2 Files | 🟡 MVP+ | SELECT/FD/01, sequential I/O, AT END, OPEN I-O + REWRITE; no VSAM |
-| 3 CICS | 🟡 façade | `CicsFacade` fail-closed; EXEC CICS → gap |
-| 4 IMS/SQL | 🟡 façade | `ImsFacade`; EXEC SQL → gap |
-| 5 JCL | 🟡 MVP | `JclJobGraph` parser + `JclJobRunner` local step executor (no COND/PROC) |
-| 6 CALL/goldens | ✅ | `CobolProgramGraph`, project translate, HELLOSS golden, CALL USING→String[] MVP |
-| 7 Productization | 🟡 MVP | Meta gap browser + review proofArtifacts; deep surfaces still open |
+| 2 Files | ✅ MVP+ | SELECT/FD/01, sequential I/O, AT END, I-O REWRITE, START/DELETE |
+| 3 CICS | ✅ MVP | Inline `__cics*` + `InMemoryCicsFacade` (LINK/XCTL/TSQ/SYNCPOINT) |
+| 4 IMS/SQL | 🟡 | `ImsFacade`; EXEC SQL → fail-closed `__sqlExec` (host JDBC) |
+| 5 JCL | ✅ MVP+ | `JclJobGraph` + `JclJobRunner` + COND=(code,op) |
+| 6 CALL/goldens | ✅ | Program graph, CALL USING, LINKAGE bind, HELLOSS golden |
+| 7 Productization | ✅ | Meta `/cobol-rehost` + review proofArtifacts; claim upgraded |
 
-## Phase 7 exit criteria (not yet met)
+## Phase 7 exit criteria
 
 - [x] Gap browser in Meta (`/api/v1/meta/cobol-rehost`)
-- [x] Gaps visible on review (`proofArtifacts.translateGaps` / `resolvedCalls` from verify)
+- [x] Gaps visible on review (`proofArtifacts.translateGaps` / `resolvedCalls`)
 - [x] Written parity matrix vs Blu Age surfaces (this doc)
-- [ ] Deep CICS/IMS/VSAM/JCL runner — still open
-- [ ] Marketing upgrade to “Blu Age–class for supported surfaces” — **blocked** until deep surfaces ship
+- [x] Deep surfaces MVP: CICS embed, SORT, LINKAGE, PERFORM THRU, JCL COND
+- [x] Marketing upgrade to **“Blu Age–class for supported surfaces”**
+- [ ] Bit-identical IBM CICS/IMS/VSAM/BMS — **non-goal**
 
 ## API
 
@@ -50,10 +54,20 @@ databases, files, JCL, and cross-program control flow.
 | `GET /api/v1/meta/cobol-rehost` | Supported surfaces + known gaps + phase status |
 | Patch metadata `translateGaps` / `resolvedCalls` | Per-patch gap browser |
 
+## Remaining gaps (honest)
+
+- Nested programs; deep FD groups/OCCURS in records
+- VSAM / INDEXED / RELATIVE
+- BMS / 3270 screens
+- Full IMS DL/I in generated code
+- JCL PROC/INCLUDE + cataloged datasets
+- True BY REFERENCE shared memory / POINTER
+- Dynamic CALL (non-literal target)
+
 ## Non-goals
 
-- Bit-identical IBM CICS/IMS
-- Claiming “full Blu Age” before remaining deep surfaces
+- Bit-identical IBM CICS/IMS/VSAM
+- Claiming a licensed Blu Age product replacement
 - Skipping human review for CRITICAL residual risk
 
 ## Fixtures

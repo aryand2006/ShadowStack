@@ -28,13 +28,15 @@ class MetaControllerCobolRehostTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().get("capability")).isEqualTo("cobol-to-java-semantic-rehost");
-        assertThat(response.getBody().get("claim").toString()).contains("not full Blu Age");
+        assertThat(response.getBody().get("claim").toString()).contains("Blu Age");
+        assertThat(response.getBody().get("parityClass")).isEqualTo("blu-age-class-supported-surfaces");
         assertThat(response.getBody().get("roadmapDoc")).isEqualTo("docs/blu-age-cobol-roadmap.md");
 
         @SuppressWarnings("unchecked")
         Map<String, String> phases = (Map<String, String>) response.getBody().get("phases");
         assertThat(phases).containsEntry("6_call_goldens", "done");
-        assertThat(phases).containsKey("7_productization");
+        assertThat(phases).containsEntry("7_productization", "done");
+        assertThat(phases).containsEntry("3_cics", "embedded_mvp");
 
         @SuppressWarnings("unchecked")
         List<String> gaps = (List<String>) response.getBody().get("knownGaps");
