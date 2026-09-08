@@ -71,3 +71,13 @@ databases (stub), files, JCL, and cross-program control flow.
 ## Fixtures
 
 `HELLOSS`, `RETAIL`, `COPYDEMO`, `BATCHIO`, `DRIVER`/`WORKER`, `PAYDEMO.jcl`, `examples/legacy-cobol/golden/`
+
+## Translate verify: fail-on-gaps
+
+| Profile | Default | Override |
+|---------|---------|----------|
+| `demo` | `false` | `SHADOWSTACK_COBOL_FAIL_ON_GAPS=true` |
+| `prod` | `true` | `SHADOWSTACK_COBOL_FAIL_ON_GAPS=false` |
+| Adapter / CLI | `false` unless `-Dshadowstack.cobol.fail-on-gaps=true` | env or sysprop |
+
+When enabled, non-empty patch metadata `translateGaps` fails the translate verify layer (`CobolAdapter`).

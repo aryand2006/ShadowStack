@@ -1746,12 +1746,29 @@ public class CobolAdapter implements LanguageAdapter {
     }
 
     /**
-     * When {@code shadowstack.cobol.fail-on-gaps=true}, non-empty {@code translateGaps}
-     * metadata fails the translate verify path. Default is false (compat with existing ITs).
+     * When fail-on-gaps is enabled (sysprop/env; prod default true), non-empty
+     * {@code translateGaps} metadata fails the translate verify path.
      */
+
+    /**
+     * Resolve fail-on-gaps: {@code -Dshadowstack.cobol.fail-on-gaps}, else
+     * {@code SHADOWSTACK_COBOL_FAIL_ON_GAPS} env, else {@code false} (demo/compat default).
+     * Production profile sets env/YAML default {@code true} — see application-prod.yml.
+     */
+    static boolean resolveFailOnGaps() {
+        String prop = System.getProperty("shadowstack.cobol.fail-on-gaps");
+        if (prop != null && !prop.isBlank()) {
+            return Boolean.parseBoolean(prop.trim());
+        }
+        String env = System.getenv("SHADOWSTACK_COBOL_FAIL_ON_GAPS");
+        if (env != null && !env.isBlank()) {
+            return Boolean.parseBoolean(env.trim());
+        }
+        return false;
+    }
+
     private VerificationResult.LayerResult verifyTranslateGaps(PatchResult patch) {
-        boolean failOnGaps = Boolean.parseBoolean(
-                System.getProperty("shadowstack.cobol.fail-on-gaps", "false"));
+        boolean failOnGaps = resolveFailOnGaps();
         if (!failOnGaps) return null;
         Object gapsMeta = patch.metadata() != null ? patch.metadata().get("translateGaps") : null;
         String gaps = gapsMeta == null ? "" : String.valueOf(gapsMeta).trim();

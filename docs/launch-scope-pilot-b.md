@@ -36,6 +36,8 @@ Risk: evidence-weighted residual risk + calibration (see `docs/risk-process.md`)
 2. Production secrets / Postgres / worker dequeue / optional encryption + OIDC (`docs/secrets-and-encryption.md`, `docs/deployment-guide.md`)
 3. Demo gate: `scripts/demo.sh` shows pending patches for **all five** seeded languages
 4. Keep claim language aligned with `docs/converter-parity.md` and `docs/blu-age-cobol-roadmap.md`
+5. Web on Next **15.5.x** with CSP; API security headers; `npm audit --audit-level=high` clean
+6. Prod `shadowstack.cobol.fail-on-gaps=true`; enterprise image can require `cobc` via `INSTALL_COBC=1`
 
 ## Out of scope for Pilot B (tracked separately)
 

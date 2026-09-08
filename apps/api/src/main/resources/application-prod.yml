@@ -26,6 +26,10 @@ shadowstack:
     jwt-expiration-ms: ${JWT_EXPIRATION_MS:86400000}
     cors-allowed-origins: ${CORS_ORIGINS:http://localhost:3000}
     encryption-key-base64: ${ENCRYPTION_KEY_BASE64:}
+  cobol:
+    # Production default: fail translate verify when unsupported gaps remain.
+    # Override with SHADOWSTACK_COBOL_FAIL_ON_GAPS=false if needed.
+    fail-on-gaps: ${SHADOWSTACK_COBOL_FAIL_ON_GAPS:true}
 
 logging:
   level:

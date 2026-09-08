@@ -2,7 +2,7 @@
 IDENTIFICATION DIVISION.
 PROGRAM-ID. HELLOSS.
 *> Compact translate-demo program for CobolToJavaTranslator /
-*> javac-gated semantic rehost MVP (toward Blu Age class; not full Blu Age).
+*> javac-gated Blu Age-class semantic rehost for supported surfaces.
 DATA DIVISION.
 WORKING-STORAGE SECTION.
 01 WS-MSG PIC X(20) VALUE "SHADOWSTACK".

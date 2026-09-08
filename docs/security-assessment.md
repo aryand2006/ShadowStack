@@ -45,13 +45,13 @@
 | Hostile CORS origin | **Pass** — no `Access-Control-Allow-Origin` for `evil.example`; preflight 403 | — |
 | Path traversal style project id | **Pass** — 404 | — |
 | Oversized login body | **Pass** — 401 (no crash observed) | — |
-| Headers | Partial — `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`; no HSTS on HTTP demo | Low (prod TLS) |
+| Headers | **Pass** — API nosniff/DENY/Referrer/Permissions/HSTS; Next CSP | — |
 | Swagger UI unauthenticated | **Open** (`/swagger-ui/index.html` → 200) | **Medium** (lock down in prod) |
 | OpenAPI `/api-docs` | 500 on demo probe | Low (fix path / disable in prod) |
 | Demo credentials `admin`/`admin` | Expected on demo; **forbidden in prod** | High if shipped to prod |
 | CSRF disabled | By design for stateless JWT API | Info — ensure cookie auth never added without CSRF |
 | Health unauthenticated | `503` on demo (no DB) but still public | Info |
-| npm (`apps/web`) | **0 critical**, **2 high** (Next 14.2.x + nested postcss; fix needs Next 16 breaking bump) | Medium accepted residual (`docs/web-security.md`) |
+| npm (`apps/web`) | **0 critical / 0 high** after Next `15.5.25` + React 19 + postcss `8.5.28` override | Remediated (`docs/web-security.md`) |
 | Unauth request hang (pre-fix) | Default Basic entry point could stall some clients | **Fixed** — `HttpStatusEntryPoint(UNAUTHORIZED)` |
 | Demo boot with calibration service | Failed without JDBC | **Fixed** — optional `JdbcTemplate` |
 
@@ -65,13 +65,15 @@
 **Risk:** `admin`/`admin` and placeholder JWT on demo profile.  
 **Fix:** Prod profile + `SecurityPropertiesValidator`; override `JWT_SECRET`, `SECURITY_PASSWORD` (`docs/secrets-and-encryption.md`).
 
-### F3 — Next.js 14.2 HIGH advisories (Medium, accepted for Pilot B)
-**Risk:** Known GHSA on Next / postcss; CRITICAL gate already green in CI.  
-**Fix:** Schedule Next 15/16 migration; until then keep latest 14.2.x (`docs/web-security.md`).
+### F3 — Next.js 14.2 HIGH advisories — **Remediated**
+**Was:** Known GHSA on Next 14.2.x / nested postcss; CRITICAL gate green, HIGH residual accepted.  
+**Fix shipped:** Upgraded `apps/web` to Next **15.5.25** + React **19.2.8**; `overrides.postcss` → **8.5.28**.  
+**Status:** `npm audit --audit-level=high` → **0** findings (`docs/web-security.md`).
 
-### F4 — Missing HSTS / CSP on API responses (Low on HTTP demo)
-**Risk:** Browser transport / XSS hardening incomplete at API layer.  
-**Fix:** Terminate TLS at ingress with HSTS; add CSP on Next.js app.
+### F4 — Missing HSTS / CSP — **Remediated for Pilot B**
+**Was:** Browser transport / XSS hardening incomplete (no CSP on Next; no HSTS on API).  
+**Fix shipped:** Next `headers()` sets CSP (self + inline styles for Tailwind, `connect-src` to API origin), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`. API Spring Security adds the same family plus `Strict-Transport-Security` (meaningful behind TLS).  
+**Note:** Prefer terminating TLS at ingress in production so HSTS applies to browsers.
 
 ### F5 — Independent pen-test still required (Process)
 **Risk:** Agent review misses business-logic and multi-tenant isolation abuse at scale.  
@@ -80,7 +82,11 @@
 ## Fixes shipped with this assessment
 
 1. `HttpStatusEntryPoint` for immediate 401 (API + OIDC security configs).  
-2. `RulePriorCalibrationService` works without JDBC (demo profile).
+2. `RulePriorCalibrationService` works without JDBC (demo profile).  
+3. Next.js **15.5.25** + CSP headers (`docs/web-security.md`).  
+4. API security headers (nosniff / DENY / Referrer / Permissions / HSTS).  
+5. COBOL `fail-on-gaps` prod default + goldens (HELLOSS / BATCHIO / DRIVER).  
+6. Enterprise Docker `INSTALL_COBC` build-arg for required `cobc`.
 
 ## Sign-off language
 

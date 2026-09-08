@@ -91,6 +91,9 @@ shadowstack:
     cors-allowed-origins: ${CORS_ORIGINS:http://localhost:3000,http://localhost:5173}
     # Optional AES-256 key (Base64 of 32 bytes). Unset = plaintext patch artifacts (demo OK).
     encryption-key-base64: ${ENCRYPTION_KEY_BASE64:}
+  cobol:
+    # Demo/local default false; application-prod.yml defaults true.
+    fail-on-gaps: ${SHADOWSTACK_COBOL_FAIL_ON_GAPS:false}
   pipeline:
     max-concurrent-analyses: 4
     verification-timeout-seconds: 300

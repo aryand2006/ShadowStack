@@ -63,14 +63,23 @@ LABEL org.opencontainers.image.source="https://github.com/shadowstack/shadowstac
 
 USER root
 
+ARG INSTALL_COBC=0
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-venv \
         nodejs npm \
         curl ca-certificates \
-    && (apt-get install -y --no-install-recommends gnucobol || \
-        apt-get install -y --no-install-recommends open-cobol || \
-        echo "WARN: cobc/gnucobol not available in apt — COBOL full gate needs host toolchain") \
-    && rm -rf /var/lib/apt/lists/*
+    && (apt-get install -y --no-install-recommends gnucobol \
+        || apt-get install -y --no-install-recommends open-cobol \
+        || true) \
+    && rm -rf /var/lib/apt/lists/* \
+    && if command -v cobc >/dev/null 2>&1; then \
+         cobc --version | head -1; \
+       elif [ "$INSTALL_COBC" = "1" ]; then \
+         echo "ERROR: cobc not installed (build with a base that provides gnucobol, or INSTALL_COBC=0)"; \
+         exit 1; \
+       else \
+         echo "WARN: cobc unavailable — COBOL preserving gate needs host toolchain (docker build --build-arg INSTALL_COBC=1 to require it)"; \
+       fi
 
 # Native engines (LibCST requirements + Acorn vendors + optional C# publish)
 COPY packages/language-adapters/native-engines /opt/shadowstack/native-engines
